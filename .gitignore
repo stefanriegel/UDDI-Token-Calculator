@@ -1,0 +1,15 @@
+.planning/
+
+# Go binaries
+ddi-scanner
+ddi-scanner.exe
+
+# frontend/dist is intentionally committed for Phase 1 embedding.
+# Phase 8 CI/CD will build it in GitHub Actions and this line will be uncommented.
+# frontend/dist/
+
+# Node
+frontend/node_modules/
+
+# OS
+.DS_Store
