@@ -855,7 +855,7 @@ export function Wizard() {
                             const COMING_SOON: Record<ProviderType, string[]> = {
                               aws: ['profile', 'assume-role'],
                               azure: ['device-code', 'certificate', 'az-cli'],
-                              gcp: ['adc', 'workload-identity'],
+                              gcp: [],
                               ad: ['kerberos', 'powershell-remote'],
                             };
                             const isComingSoon = COMING_SOON[provId]?.includes(method.id) ?? false;

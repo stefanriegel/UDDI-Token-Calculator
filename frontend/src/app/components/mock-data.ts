@@ -136,18 +136,6 @@ export const PROVIDERS: ProviderOption[] = [
     subscriptionLabel: 'Projects',
     authMethods: [
       {
-        id: 'browser-oauth',
-        name: 'Browser Login (OAuth)',
-        description: 'Sign in interactively via your Google Workspace account',
-        fields: [],
-      },
-      {
-        id: 'adc',
-        name: 'Application Default Credentials',
-        description: 'Use gcloud auth application-default login session',
-        fields: [],
-      },
-      {
         id: 'service-account',
         name: 'Service Account Key (JSON)',
         description: 'Upload or paste a service account key file',
@@ -156,15 +144,10 @@ export const PROVIDERS: ProviderOption[] = [
         ],
       },
       {
-        id: 'workload-identity',
-        name: 'Workload Identity Federation',
-        description: 'Federated identity from AWS, Azure AD, or OIDC provider',
-        fields: [
-          { key: 'projectNumber', label: 'Project Number', placeholder: '123456789012' },
-          { key: 'poolId', label: 'Workload Identity Pool ID', placeholder: 'my-pool' },
-          { key: 'providerId', label: 'Provider ID', placeholder: 'my-provider' },
-          { key: 'serviceAccountEmail', label: 'Service Account Email', placeholder: 'scanner@project.iam.gserviceaccount.com' },
-        ],
+        id: 'adc',
+        name: 'Application Default Credentials',
+        description: 'Uses gcloud auth application-default login credentials — no fields required',
+        fields: [],
       },
     ],
   },
@@ -319,6 +302,7 @@ export function calcTokens(category: TokenCategory, count: number): number {
 export interface FindingRow {
   provider: ProviderType;
   source: string;
+  region: string; // cloud region (e.g. "us-east-1"); empty string for global/non-regional resources
   category: TokenCategory;
   item: string;
   count: number;
@@ -328,7 +312,7 @@ export interface FindingRow {
 
 // Helper to build a FindingRow with auto-calculated tokens
 function row(provider: ProviderType, source: string, category: TokenCategory, item: string, count: number): FindingRow {
-  return { provider, source, category, item, count, tokensPerUnit: TOKEN_RATES[category], managementTokens: calcTokens(category, count) };
+  return { provider, source, region: '', category, item, count, tokensPerUnit: TOKEN_RATES[category], managementTokens: calcTokens(category, count) };
 }
 
 // Mock scan results aligned to cloud-bucket-crosswalk.md labels
