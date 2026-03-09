@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
-import { checkHealth, type HealthResponse, getBaseUrl } from './api-client';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { checkHealth, type HealthResponse, getBaseUrl, getScanStatus, type ScanStatusResponse } from './api-client';
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected';
 
@@ -39,4 +39,50 @@ export function useBackendConnection(): BackendState {
     isDemo: status !== 'connected',
     retry: ping,
   };
+}
+
+// ─── Scan Polling ──────────────────────────────────────────────────────────────
+
+export interface ScanPollingCallbacks {
+  onStatus: (status: ScanStatusResponse) => void;
+  onComplete: () => void;
+  onError: (message: string) => void;
+}
+
+/**
+ * useScanPolling — polls GET /api/v1/scan/{scanId}/status every 1.5 seconds.
+ * Stops automatically when status === 'complete' or on unmount.
+ * Call with scanId='' (empty string) to disable polling.
+ */
+export function useScanPolling(scanId: string, callbacks: ScanPollingCallbacks): void {
+  const callbacksRef = useRef(callbacks);
+  callbacksRef.current = callbacks; // keep callbacks fresh without restarting effect
+
+  useEffect(() => {
+    if (!scanId) return;
+
+    let stopped = false;
+
+    const id = setInterval(async () => {
+      try {
+        const status = await getScanStatus(scanId);
+        if (stopped) return;
+        callbacksRef.current.onStatus(status);
+        if (status.status === 'complete') {
+          stopped = true;
+          clearInterval(id);
+          callbacksRef.current.onComplete();
+        }
+      } catch (err: unknown) {
+        if (stopped) return;
+        const msg = err instanceof Error ? err.message : 'Polling error';
+        callbacksRef.current.onError(msg);
+      }
+    }, 1500);
+
+    return () => {
+      stopped = true;
+      clearInterval(id);
+    };
+  }, [scanId]);
 }

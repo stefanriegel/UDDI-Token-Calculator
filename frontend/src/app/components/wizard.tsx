@@ -27,11 +27,10 @@ import {
   Plus,
   Trash2,
 } from 'lucide-react';
-import { useBackendConnection } from './use-backend';
+import { useBackendConnection, useScanPolling } from './use-backend';
 import {
   validateCredentials as apiValidate,
   startScan as apiStartScan,
-  startScanEvents,
   getScanResults as apiGetScanResults,
   getSessionId,
   cloneSession,
@@ -347,80 +346,44 @@ export function Wizard() {
     return () => clearScanIntervals();
   }, [clearScanIntervals]);
 
-  // SSE scan event listener — wires EventSource to scan progress state
-  useEffect(() => {
-    if (!scanId) return;
-
-    // Track resource-level progress per provider (count resources done)
-    const providerResourcesDone: Record<string, number> = {};
-
-    const stopEvents = startScanEvents(
-      scanId,
-      (event) => {
-        if (event.type === 'resource_progress' && event.provider) {
-          providerResourcesDone[event.provider] = (providerResourcesDone[event.provider] ?? 0) + 1;
-          // Capture resource-level errors (e.g. API not enabled, permission denied)
-          if (event.status === 'error' && event.resource && event.message) {
-            setProviderErrors((prev) => [
-              ...prev,
-              { provider: event.provider!, resource: event.resource!, message: event.message! },
-            ]);
-          }
-          // Show indeterminate progress: increment by small amount per resource
-          setProviderScanProgress((prev) => {
-            const cur = prev[event.provider as ProviderType] ?? 0;
-            return { ...prev, [event.provider as ProviderType]: Math.min(95, cur + 10) };
-          });
-          // Overall progress = average of all selected provider progresses
-          setScanProgress((prev) => Math.min(95, prev + Math.floor(5 / selectedProviders.length)));
-        } else if (event.type === 'provider_complete' && event.provider) {
-          setProviderScanProgress((prev) => ({
-            ...prev,
-            [event.provider as ProviderType]: 100,
-          }));
-        } else if (event.type === 'scan_complete') {
-          setScanProgress(100);
-          // Fetch final results
-          apiGetScanResults(scanId).then((results) => {
-            setScanResults(results);
-            setProviderErrors(results.errors ?? []);
-            const mapped: FindingRow[] = results.findings.map((f) => ({
-              provider: f.provider as ProviderType,
-              source: f.source,
-              region: f.region ?? '',
-              category: f.category as import('./mock-data').TokenCategory,
-              item: f.item,
-              count: f.count,
-              tokensPerUnit: f.tokensPerUnit,
-              managementTokens: f.managementTokens,
-            }));
-            setFindings(mapped);
-          }).catch((err: unknown) => {
-            const msg = err instanceof Error ? err.message : 'Failed to load results';
-            setScanError(msg);
-          });
-        } else if (event.type === 'error') {
-          if (event.provider && event.resource && event.message) {
-            setProviderErrors((prev) => [
-              ...prev,
-              { provider: event.provider!, resource: event.resource!, message: event.message! },
-            ]);
-          }
-        }
-      },
-      () => {
-        // SSE connection error — only show if scan not yet complete
-        setScanProgress((prev) => {
-          if (prev < 100) {
-            setScanError('Lost connection to backend during scan.');
-          }
-          return prev;
-        });
-      },
-    );
-
-    return stopEvents;
-  }, [scanId, selectedProviders]);
+  // Polling scan listener — replaces SSE; polls GET /api/v1/scan/{scanId}/status every 1.5s
+  useScanPolling(scanId, {
+    onStatus: (status) => {
+      setScanProgress(status.progress);
+      // Map per-provider progress from polling response
+      status.providers.forEach((p) => {
+        setProviderScanProgress((prev) => ({
+          ...prev,
+          [p.provider as ProviderType]: p.progress,
+        }));
+      });
+    },
+    onComplete: () => {
+      setScanProgress(100);
+      // Fetch final results once scan is complete
+      apiGetScanResults(scanId).then((results) => {
+        setScanResults(results);
+        setProviderErrors(results.errors ?? []);
+        const mapped: FindingRow[] = results.findings.map((f) => ({
+          provider: f.provider as ProviderType,
+          source: f.source,
+          region: f.region ?? '',
+          category: f.category as import('./mock-data').TokenCategory,
+          item: f.item,
+          count: f.count,
+          tokensPerUnit: f.tokensPerUnit,
+          managementTokens: f.managementTokens,
+        }));
+        setFindings(mapped);
+      }).catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : 'Failed to load results';
+        setScanError(msg);
+      });
+    },
+    onError: (msg) => {
+      setScanError(msg);
+    },
+  });
 
   // Start scan — uses real API when connected, mock when in demo mode
   const startScan = useCallback(() => {
