@@ -9,7 +9,6 @@ import (
 	"github.com/infoblox/uddi-go-token-calculator/internal/broker"
 	"github.com/infoblox/uddi-go-token-calculator/internal/calculator"
 	adstub "github.com/infoblox/uddi-go-token-calculator/internal/scanner/ad"
-	azurestub "github.com/infoblox/uddi-go-token-calculator/internal/scanner/azure"
 
 	"github.com/infoblox/uddi-go-token-calculator/internal/orchestrator"
 	"github.com/infoblox/uddi-go-token-calculator/internal/scanner"
@@ -81,7 +80,7 @@ func TestOrchestratorAllStubs(t *testing.T) {
 
 	scanners := map[string]scanner.Scanner{
 		"aws":   &noopScanner{},
-		"azure": &azurestub.Stub{},
+		"azure": &noopScanner{},
 		"gcp":   &noopScanner{},
 		"ad":    &adstub.Stub{},
 	}
