@@ -188,7 +188,7 @@ func TestValidate_GCPStructuralOK(t *testing.T) {
 	rec := postValidate(t, store, h, "gcp", map[string]interface{}{
 		"authMethod": "service_account",
 		"credentials": map[string]string{
-			"service_account_json": `{"type":"service_account","project_id":"my-project"}`,
+			"serviceAccountJson": `{"type":"service_account","project_id":"my-project"}`,
 		},
 	})
 
@@ -214,7 +214,7 @@ func TestValidate_GCPMissingField(t *testing.T) {
 	rec := postValidate(t, store, h, "gcp", map[string]interface{}{
 		"authMethod": "service_account",
 		"credentials": map[string]string{
-			"service_account_json": "",
+			"serviceAccountJson": "",
 		},
 	})
 

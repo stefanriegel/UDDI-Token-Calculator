@@ -154,7 +154,7 @@ func storeCredentials(sess *session.Session, provider, authMethod string, creds 
 	case "gcp":
 		sess.GCP = &session.GCPCredentials{
 			AuthMethod:         authMethod,
-			ServiceAccountJSON: creds["service_account_json"],
+			ServiceAccountJSON: creds["serviceAccountJson"],
 		}
 	case "ad":
 		sess.AD = &session.ADCredentials{
@@ -268,8 +268,8 @@ func realGCPValidator(_ context.Context, creds map[string]string) ([]Subscriptio
 		return nil, errors.New("Coming soon — not yet implemented in this version")
 	}
 
-	if creds["service_account_json"] == "" {
-		return nil, errors.New("service_account_json is required")
+	if creds["serviceAccountJson"] == "" {
+		return nil, errors.New("serviceAccountJson is required")
 	}
 
 	return []SubscriptionItem{{

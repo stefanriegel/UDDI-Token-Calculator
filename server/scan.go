@@ -36,6 +36,13 @@ func (h *ScanHandler) HandleStartScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Fall back to the httpOnly session cookie when the body omits sessionId.
+	// JS cannot read httpOnly cookies, so the frontend sends "" and we resolve it here.
+	if req.SessionID == "" {
+		if cookie, err := r.Cookie("ddi_session"); err == nil {
+			req.SessionID = cookie.Value
+		}
+	}
 	if req.SessionID == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "sessionId is required"})
 		return
