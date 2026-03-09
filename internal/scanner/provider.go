@@ -7,6 +7,7 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/infoblox/uddi-go-token-calculator/internal/calculator"
+	"golang.org/x/oauth2"
 )
 
 // Provider name constants used as stable identifiers across the codebase.
@@ -35,6 +36,10 @@ type ScanRequest struct {
 	// from the validate step so the scanner does not trigger a second browser login.
 	// Nil for all non-browser-sso auth methods.
 	CachedAzureCredential azcore.TokenCredential
+	// CachedGCPTokenSource carries a pre-authenticated OAuth2 token source obtained
+	// during browser-oauth validation so the GCP scanner does not re-open the browser.
+	// Nil for all non-browser-oauth auth methods.
+	CachedGCPTokenSource oauth2.TokenSource
 }
 
 // Event carries scan progress information published over the SSE stream.

@@ -11,6 +11,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/infoblox/uddi-go-token-calculator/internal/broker"
 	"github.com/infoblox/uddi-go-token-calculator/internal/calculator"
+	"golang.org/x/oauth2"
 )
 
 // ScanState is a string type so log messages are human-readable without a lookup table.
@@ -62,6 +63,9 @@ type GCPCredentials struct {
 	AuthMethod         string
 	ServiceAccountJSON string
 	ProjectID          string
+	// CachedTokenSource holds the live OAuth2 token source obtained during browser-oauth
+	// validation. The scanner reuses it to avoid triggering a second browser popup.
+	CachedTokenSource oauth2.TokenSource
 }
 
 // ADCredentials holds Active Directory / WinRM authentication material.
