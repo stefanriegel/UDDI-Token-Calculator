@@ -82,6 +82,37 @@ type CloneSessionResponse struct {
 	SessionID string `json:"sessionId"`
 }
 
+// ProviderScanStatus is per-provider progress snapshot for the polling endpoint.
+type ProviderScanStatus struct {
+	Provider   string `json:"provider"`
+	Progress   int    `json:"progress"`   // 0–100
+	Status     string `json:"status"`     // "pending" | "running" | "complete" | "error"
+	ItemsFound int    `json:"itemsFound"` // items discovered so far
+}
+
+// ScanStatusResponse is the body for GET /api/v1/scan/{scanId}/status.
+type ScanStatusResponse struct {
+	ScanID    string               `json:"scanId"`
+	Status    string               `json:"status"`    // "running" | "complete"
+	Progress  int                  `json:"progress"`  // 0–100 overall (100 = complete)
+	Providers []ProviderScanStatus `json:"providers"`
+}
+
+// NiosGridMember is one Grid Member returned by the upload endpoint.
+type NiosGridMember struct {
+	Hostname string `json:"hostname"`
+	Role     string `json:"role"` // "Master" | "Candidate" | "Regular"
+}
+
+// NiosUploadResponse is the body for POST /api/v1/providers/nios/upload.
+type NiosUploadResponse struct {
+	Valid       bool             `json:"valid"`
+	Error       string           `json:"error,omitempty"`
+	GridName    string           `json:"gridName,omitempty"`
+	NiosVersion string           `json:"niosVersion,omitempty"`
+	Members     []NiosGridMember `json:"members"`
+}
+
 // ScanResultsResponse is the body for GET /api/v1/scan/{id}/results.
 type ScanResultsResponse struct {
 	ScanID                string                  `json:"scanId"`

@@ -1,10 +1,16 @@
 package server
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"context"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
+	"io"
 	"net/http"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -81,12 +87,14 @@ func (h *ScanHandler) HandleStartScan(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, ScanStartResponse{ScanID: req.SessionID})
 }
 
-// HandleScanEvents handles GET /api/v1/scan/{scanId}/events.
+// HandleGetScanStatus handles GET /api/v1/scan/{scanId}/status.
 //
-// It streams SSE events from the session broker until the broker is closed
-// (scan complete) or the client disconnects. A heartbeat is sent every 15 s
-// to keep the connection alive through proxies.
-func (h *ScanHandler) HandleScanEvents(w http.ResponseWriter, r *http.Request) {
+// Returns a polling-friendly JSON snapshot of the scan progress.
+// Returns 404 for an unknown scanId.
+// Returns status="running" with progress=0 while the scan is in progress.
+// Returns status="complete" with progress=100 once the scan finishes.
+// The providers slice is empty for Phase 9; Phase 10 will populate per-provider progress.
+func (h *ScanHandler) HandleGetScanStatus(w http.ResponseWriter, r *http.Request) {
 	scanID := chi.URLParam(r, "scanId")
 
 	sess, ok := h.store.Get(scanID)
@@ -95,46 +103,185 @@ func (h *ScanHandler) HandleScanEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "streaming not supported", http.StatusInternalServerError)
+	resp := ScanStatusResponse{
+		ScanID:    scanID,
+		Providers: []ProviderScanStatus{},
+	}
+
+	if sess.State == session.ScanStateComplete {
+		resp.Status = "complete"
+		resp.Progress = 100
+	} else {
+		resp.Status = "running"
+		resp.Progress = 0
+	}
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// niosXMLObject represents an OBJECT element in onedb.xml.
+type niosXMLObject struct {
+	Values []niosXMLValue `xml:"VALUE"`
+}
+
+// niosXMLValue represents a VALUE element inside an OBJECT.
+type niosXMLValue struct {
+	Name  string `xml:"name,attr"`
+	Value string `xml:"value,attr"`
+}
+
+// HandleUploadNiosBackup handles POST /api/v1/providers/nios/upload.
+//
+// Accepts a multipart form upload with a "file" field containing a .tar.gz, .tgz, or .bak
+// NIOS backup file (max 500 MB). Parses the embedded onedb.xml to extract Grid Member
+// hostnames and roles. Returns a NiosUploadResponse JSON body.
+func HandleUploadNiosBackup(w http.ResponseWriter, r *http.Request) {
+	// Limit the entire request body to 500 MB before parsing.
+	r.Body = http.MaxBytesReader(w, r.Body, 500<<20)
+
+	if err := r.ParseMultipartForm(500 << 20); err != nil {
+		if strings.Contains(err.Error(), "request body too large") || strings.Contains(err.Error(), "http: request body too large") {
+			http.Error(w, "file too large (max 500 MB)", http.StatusRequestEntityTooLarge)
+			return
+		}
+		writeJSON(w, http.StatusBadRequest, NiosUploadResponse{Valid: false, Error: "failed to parse multipart form: " + err.Error(), Members: []NiosGridMember{}})
 		return
 	}
 
-	// Set SSE headers before writing any body.
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("X-Accel-Buffering", "no")
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, NiosUploadResponse{Valid: false, Error: "missing file field", Members: []NiosGridMember{}})
+		return
+	}
+	defer file.Close()
 
-	ch := sess.Broker.Subscribe()
-	defer sess.Broker.Unsubscribe(ch)
+	name := strings.ToLower(header.Filename)
+	if !strings.HasSuffix(name, ".tar.gz") && !strings.HasSuffix(name, ".tgz") && !strings.HasSuffix(name, ".bak") {
+		writeJSON(w, http.StatusOK, NiosUploadResponse{Valid: false, Error: "unsupported file type: must be .tar.gz, .tgz, or .bak", Members: []NiosGridMember{}})
+		return
+	}
 
-	ticker := time.NewTicker(15 * time.Second)
-	defer ticker.Stop()
+	members, err := parseNiosBackup(file)
+	if err != nil {
+		writeJSON(w, http.StatusOK, NiosUploadResponse{Valid: false, Error: err.Error(), Members: []NiosGridMember{}})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, NiosUploadResponse{
+		Valid:    true,
+		Members:  members,
+	})
+}
+
+// parseNiosBackup reads a gzip+tar archive (regardless of extension) and extracts
+// Grid Member information from the embedded onedb.xml file.
+func parseNiosBackup(r io.Reader) ([]NiosGridMember, error) {
+	gz, err := gzip.NewReader(r)
+	if err != nil {
+		return nil, fmt.Errorf("not a valid gzip archive: %w", err)
+	}
+	defer gz.Close()
+
+	tr := tar.NewReader(gz)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("error reading archive: %w", err)
+		}
+
+		if filepath.Base(hdr.Name) != "onedb.xml" {
+			continue
+		}
+
+		// Found onedb.xml — parse it.
+		return parseOneDBXML(tr)
+	}
+
+	return nil, fmt.Errorf("no onedb.xml found in backup")
+}
+
+// parseOneDBXML extracts Grid Member records from a NIOS onedb.xml stream.
+// It looks for OBJECT elements that have a VALUE[name=type, value=Member] child.
+func parseOneDBXML(r io.Reader) ([]NiosGridMember, error) {
+	var members []NiosGridMember
+
+	decoder := xml.NewDecoder(r)
+	var current *niosXMLObject
+	inObject := false
 
 	for {
-		select {
-		case event, open := <-ch:
-			if !open {
-				// Broker was closed — scan is done. Exit the loop.
-				return
-			}
-			data, err := json.Marshal(event)
-			if err != nil {
-				continue
-			}
-			fmt.Fprintf(w, "data: %s\n\n", data)
-			flusher.Flush()
+		tok, err := decoder.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("XML parse error: %w", err)
+		}
 
-		case <-ticker.C:
-			fmt.Fprintf(w, "data: {\"type\":\"heartbeat\"}\n\n")
-			flusher.Flush()
-
-		case <-r.Context().Done():
-			return
+		switch t := tok.(type) {
+		case xml.StartElement:
+			if t.Name.Local == "OBJECT" {
+				inObject = true
+				current = &niosXMLObject{}
+			} else if inObject && t.Name.Local == "VALUE" {
+				v := niosXMLValue{}
+				for _, attr := range t.Attr {
+					switch attr.Name.Local {
+					case "name":
+						v.Name = attr.Value
+					case "value":
+						v.Value = attr.Value
+					}
+				}
+				current.Values = append(current.Values, v)
+			}
+		case xml.EndElement:
+			if t.Name.Local == "OBJECT" && inObject {
+				inObject = false
+				if m, ok := objectToMember(current); ok {
+					members = append(members, m)
+				}
+				current = nil
+			}
 		}
 	}
+
+	return members, nil
+}
+
+// objectToMember converts a parsed OBJECT element into a NiosGridMember if it
+// represents a Grid Member. Returns (member, true) on success, (_, false) otherwise.
+func objectToMember(obj *niosXMLObject) (NiosGridMember, bool) {
+	if obj == nil {
+		return NiosGridMember{}, false
+	}
+
+	vals := make(map[string]string, len(obj.Values))
+	for _, v := range obj.Values {
+		vals[v.Name] = v.Value
+	}
+
+	// Only process objects with type=Member.
+	if vals["type"] != "Member" {
+		return NiosGridMember{}, false
+	}
+
+	hostname := vals["host_name"]
+	if hostname == "" {
+		return NiosGridMember{}, false
+	}
+
+	role := "Regular"
+	if vals["is_grid_master"] == "true" {
+		role = "Master"
+	} else if vals["is_candidate_master"] == "true" {
+		role = "Candidate"
+	}
+
+	return NiosGridMember{Hostname: hostname, Role: role}, true
 }
 
 // HandleScanResults handles GET /api/v1/scan/{scanId}/results.

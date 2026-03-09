@@ -12,10 +12,11 @@ import (
 )
 
 // NewRouter builds the chi router with:
-//   - Middleware: Logger (SSE polling endpoints suppressed), Recoverer
+//   - Middleware: Logger (polling status endpoints suppressed), Recoverer
 //   - /api/v1/health → HandleHealth
 //   - /api/v1/providers/{provider}/validate → ValidateHandler (credential validation + session creation)
-//   - /api/v1/scan → scan lifecycle handlers (start, events, results)
+//   - /api/v1/scan → scan lifecycle handlers (start, status, results)
+//   - /api/v1/providers/nios/upload → HandleUploadNiosBackup
 //   - /* → staticHandler (embedded React SPA)
 //
 // staticHandler is created by NewStaticHandler and passed in from main.go.
@@ -24,13 +25,13 @@ import (
 // orch may be nil when only the validate handler needs to be exercised (tests).
 func NewRouter(staticHandler http.Handler, store *session.Store, orch *orchestrator.Orchestrator) *chi.Mux {
 	r := chi.NewRouter()
-	// Suppress logger for SSE polling endpoints (/api/v1/scan/.../events) — they fire
-	// every 3 seconds and produce nothing but noise in the console.
+	// Suppress logger for polling status endpoint (/api/v1/scan/.../status) — the frontend
+	// polls it every 1.5 seconds and it would produce nothing but noise in the console.
 	r.Use(func(next http.Handler) http.Handler {
 		logger := middleware.Logger
 		loggerHandler := logger(next)
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-			if strings.HasSuffix(req.URL.Path, "/events") {
+			if strings.HasSuffix(req.URL.Path, "/status") {
 				next.ServeHTTP(w, req)
 				return
 			}
@@ -49,10 +50,11 @@ func NewRouter(staticHandler http.Handler, store *session.Store, orch *orchestra
 			r.Get("/health", HandleHealth)
 			r.Get("/version", HandleVersion)
 			r.Post("/scan", scanHandler.HandleStartScan)
-			r.Get("/scan/{scanId}/events", scanHandler.HandleScanEvents)
+			r.Get("/scan/{scanId}/status", scanHandler.HandleGetScanStatus)
 			r.Get("/scan/{scanId}/results", scanHandler.HandleScanResults)
 			r.Get("/scan/{scanId}/export", exportHandler.HandleExport)
 			r.Post("/session/clone", scanHandler.HandleCloneSession)
+			r.Post("/providers/nios/upload", HandleUploadNiosBackup)
 		})
 	} else {
 		r.Route("/api/v1", func(r chi.Router) {

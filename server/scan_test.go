@@ -1,9 +1,7 @@
 package server_test
 
 import (
-	"bufio"
 	"bytes"
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -11,27 +9,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/infoblox/uddi-go-token-calculator/internal/broker"
 	"github.com/infoblox/uddi-go-token-calculator/internal/calculator"
 	"github.com/infoblox/uddi-go-token-calculator/internal/orchestrator"
 	"github.com/infoblox/uddi-go-token-calculator/internal/session"
 	"github.com/infoblox/uddi-go-token-calculator/server"
 )
-
-// flusherRecorder is an httptest.ResponseRecorder that also implements http.Flusher.
-// The SSE handler asserts http.Flusher; httptest.ResponseRecorder does not implement it.
-type flusherRecorder struct {
-	*httptest.ResponseRecorder
-}
-
-func (f *flusherRecorder) Flush() {
-	f.ResponseRecorder.Flush()
-}
-
-// newFlusherRecorder creates a response recorder that implements http.Flusher.
-func newFlusherRecorder() *flusherRecorder {
-	return &flusherRecorder{ResponseRecorder: httptest.NewRecorder()}
-}
 
 // noopStatic satisfies the NewRouter staticHandler parameter in these tests.
 var noopStatic = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -124,88 +106,47 @@ func TestHandleStartScan_BadBody(t *testing.T) {
 	}
 }
 
-// TestHandleScanEvents_ContentType: GET /events with valid scanId → Content-Type: text/event-stream.
-func TestHandleScanEvents_ContentType(t *testing.T) {
+// TestHandleGetScanStatus_Running: POST a scan then GET /status → 200, status="running".
+func TestHandleGetScanStatus_Running(t *testing.T) {
 	store := session.NewStore()
 	sess := store.New()
-	// Close the broker immediately so the SSE handler drains and exits.
-	sess.Broker.Close()
+	sess.State = session.ScanStateScanning
 
 	orch := orchestrator.New(nil)
 	router := newTestRouter(store, orch)
 
-	ts := httptest.NewServer(router)
-	defer ts.Close()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/scan/"+sess.ID+"/status", nil)
+	rec := httptest.NewRecorder()
 
-	resp, err := http.Get(ts.URL + "/api/v1/scan/" + sess.ID + "/events")
-	if err != nil {
-		t.Fatalf("GET /events: %v", err)
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	defer resp.Body.Close()
 
-	ct := resp.Header.Get("Content-Type")
-	if !strings.HasPrefix(ct, "text/event-stream") {
-		t.Errorf("expected Content-Type text/event-stream, got %q", ct)
+	var resp server.ScanStatusResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Status != "running" {
+		t.Errorf("expected status=running, got %q", resp.Status)
+	}
+	if resp.Progress != 0 {
+		t.Errorf("expected progress=0, got %d", resp.Progress)
+	}
+	if resp.ScanID != sess.ID {
+		t.Errorf("expected scanId=%q, got %q", sess.ID, resp.ScanID)
 	}
 }
 
-// TestHandleScanEvents_EventsReceived: SSE body contains published events as "data: {...}\n\n" lines.
-func TestHandleScanEvents_EventsReceived(t *testing.T) {
-	store := session.NewStore()
-	sess := store.New()
-
-	orch := orchestrator.New(nil)
-	router := newTestRouter(store, orch)
-
-	ts := httptest.NewServer(router)
-	defer ts.Close()
-
-	// Publish events and then close the broker — the SSE handler will drain and exit.
-	go func() {
-		time.Sleep(20 * time.Millisecond)
-		sess.Broker.Publish(broker.Event{Type: "scan_start"})
-		sess.Broker.Publish(broker.Event{Type: "scan_complete"})
-		sess.Broker.Close()
-	}()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/api/v1/scan/"+sess.ID+"/events", nil)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("GET /events: %v", err)
-	}
-	defer resp.Body.Close()
-
-	sc := bufio.NewScanner(resp.Body)
-	var dataLines []string
-	for sc.Scan() {
-		line := sc.Text()
-		if strings.HasPrefix(line, "data: ") {
-			dataLines = append(dataLines, line)
-		}
-	}
-
-	if len(dataLines) < 2 {
-		t.Errorf("expected at least 2 data: lines, got %d: %v", len(dataLines), dataLines)
-	}
-	for _, dl := range dataLines {
-		payload := strings.TrimPrefix(dl, "data: ")
-		if !strings.HasPrefix(payload, "{") {
-			t.Errorf("expected JSON object payload in data line, got: %q", payload)
-		}
-	}
-}
-
-// TestHandleScanEvents_NotFound: GET /events with unknown scanId → 404.
-func TestHandleScanEvents_NotFound(t *testing.T) {
+// TestHandleGetScanStatus_NotFound: GET /status with unknown scanId → 404.
+func TestHandleGetScanStatus_NotFound(t *testing.T) {
 	store := session.NewStore()
 	orch := orchestrator.New(nil)
 	router := newTestRouter(store, orch)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/scan/notreal/events", nil)
-	rec := newFlusherRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/scan/notreal/status", nil)
+	rec := httptest.NewRecorder()
 
 	router.ServeHTTP(rec, req)
 
