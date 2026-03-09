@@ -5,6 +5,7 @@ package scanner
 import (
 	"context"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/infoblox/uddi-go-token-calculator/internal/calculator"
 )
 
@@ -30,6 +31,10 @@ type ScanRequest struct {
 	// SelectionMode controls whether Subscriptions is an allowlist or denylist.
 	// Valid values: "include" | "exclude".
 	SelectionMode string
+	// CachedAzureCredential carries a pre-authenticated Azure token credential
+	// from the validate step so the scanner does not trigger a second browser login.
+	// Nil for all non-browser-sso auth methods.
+	CachedAzureCredential azcore.TokenCredential
 }
 
 // Event carries scan progress information published over the SSE stream.

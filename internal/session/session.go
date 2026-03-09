@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/infoblox/uddi-go-token-calculator/internal/broker"
 	"github.com/infoblox/uddi-go-token-calculator/internal/calculator"
 )
@@ -34,6 +35,11 @@ type AWSCredentials struct {
 	RoleARN         string
 	SSOStartURL     string
 	SSORegion       string
+	// SSOAccessToken is the short-lived OIDC access token obtained during the
+	// SSO device-authorization flow in the validate handler. It is used by the
+	// scanner to call sso:GetRoleCredentials, which exchanges it for temporary
+	// STS credentials without requiring a local ~/.aws/config SSO profile.
+	SSOAccessToken string
 }
 
 // AzureCredentials holds Azure-specific authentication material.
@@ -44,6 +50,10 @@ type AzureCredentials struct {
 	ClientID       string
 	ClientSecret   string
 	SubscriptionID string
+	// CachedCredential holds the live token credential obtained during browser-SSO
+	// validation. It must never be serialized (no json tag). When non-nil the scanner
+	// reuses it, preventing a second browser popup.
+	CachedCredential azcore.TokenCredential
 }
 
 // GCPCredentials holds GCP-specific authentication material.

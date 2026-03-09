@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sync"
 	"time"
 
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
@@ -13,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sso"
 	"github.com/aws/aws-sdk-go-v2/service/ssooidc"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	armsubscriptions "github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armsubscriptions"
@@ -20,6 +22,16 @@ import (
 	pkgbrowser "github.com/pkg/browser"
 
 	"github.com/infoblox/uddi-go-token-calculator/internal/session"
+)
+
+// azureCredCache is an in-process store for live Azure token credentials obtained
+// during browser-SSO validation. Keys are nanosecond timestamps stored in the
+// credentials map as "azure_cred_cache_key" so storeCredentials can attach the
+// live credential to the session for reuse by the scanner.
+// Entries are never explicitly evicted — the process is single-user and short-lived.
+var (
+	azureCredCacheMu sync.Mutex
+	azureCredCache   = make(map[string]azcore.TokenCredential)
 )
 
 // ValidateHandler handles POST /api/v1/providers/{provider}/validate.
@@ -114,8 +126,10 @@ func (h *ValidateHandler) HandleValidate(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Validation succeeded — create session and store credentials.
+	// Pass merged (not req.Credentials) so that any tokens written back by the
+	// validator (e.g. sso_access_token written by realAWSSSO) are captured.
 	sess := h.store.New()
-	storeCredentials(sess, provider, req.AuthMethod, req.Credentials)
+	storeCredentials(sess, provider, req.AuthMethod, merged)
 
 	http.SetCookie(w, &http.Cookie{
 		Name:     "ddi_session",
@@ -152,13 +166,23 @@ func storeCredentials(sess *session.Session, provider, authMethod string, creds 
 			RoleARN:         creds["roleArn"],
 			SSOStartURL:     creds["ssoStartUrl"],
 			SSORegion:       creds["ssoRegion"],
+			// sso_access_token is written back into merged by realAWSSSO so it is
+			// available here. For non-SSO auth methods this will be an empty string.
+			SSOAccessToken:  creds["sso_access_token"],
 		}
 	case "azure":
+		var cachedCred azcore.TokenCredential
+		if cacheKey := creds["azure_cred_cache_key"]; cacheKey != "" {
+			azureCredCacheMu.Lock()
+			cachedCred = azureCredCache[cacheKey]
+			azureCredCacheMu.Unlock()
+		}
 		sess.Azure = &session.AzureCredentials{
-			AuthMethod:   authMethod,
-			TenantID:     creds["tenantId"],
-			ClientID:     creds["clientId"],
-			ClientSecret: creds["clientSecret"],
+			AuthMethod:       authMethod,
+			TenantID:         creds["tenantId"],
+			ClientID:         creds["clientId"],
+			ClientSecret:     creds["clientSecret"],
+			CachedCredential: cachedCred,
 		}
 	case "gcp":
 		sess.GCP = &session.GCPCredentials{
@@ -166,9 +190,15 @@ func storeCredentials(sess *session.Session, provider, authMethod string, creds 
 			ServiceAccountJSON: creds["serviceAccountJson"],
 		}
 	case "ad":
+		// Frontend sends "server" (matching the field key in mock-data.ts).
+		// Fall back to "host" for any direct API callers that use the old key.
+		adHost := creds["server"]
+		if adHost == "" {
+			adHost = creds["host"]
+		}
 		sess.AD = &session.ADCredentials{
 			AuthMethod: authMethod,
-			Host:       creds["host"],
+			Host:       adHost,
 			Username:   creds["username"],
 			Password:   creds["password"],
 			Domain:     creds["domain"],
@@ -180,6 +210,8 @@ func storeCredentials(sess *session.Session, provider, authMethod string, creds 
 // It registers an OIDC client, starts device authorization, opens the system browser for
 // the user to approve, then polls until a token is received or the 120-second timeout fires.
 // On success it lists all accessible AWS accounts via the SSO service.
+// The access token is stored in creds["sso_access_token"] so that HandleValidate can persist
+// it to the session for later use by the scanner.
 func realAWSSSO(ctx context.Context, creds map[string]string) ([]SubscriptionItem, error) {
 	startURL := creds["ssoStartUrl"]
 	ssoRegion := creds["ssoRegion"]
@@ -270,6 +302,12 @@ func realAWSSSO(ctx context.Context, creds map[string]string) ([]SubscriptionIte
 	if accessToken == "" {
 		return nil, errors.New("SSO login timed out — please try again and approve within 2 minutes")
 	}
+
+	// Persist the access token back into the caller's creds map.
+	// HandleValidate passes the mutable merged map, so storeCredentials can read
+	// sso_access_token when it creates the session, enabling the scanner to call
+	// sso:GetRoleCredentials without re-running the browser flow.
+	creds["sso_access_token"] = accessToken
 
 	// Use the access token to list accessible AWS accounts.
 	ssoClient := sso.NewFromConfig(cfg)
@@ -396,6 +434,15 @@ func realAzureBrowserSSO(ctx context.Context, creds map[string]string) ([]Subscr
 		return nil, fmt.Errorf("browser SSO login failed: %w", err)
 	}
 
+	// Cache the live credential so the scanner can reuse it without triggering
+	// a second browser popup. The cache key is written into creds so storeCredentials
+	// can retrieve the credential and attach it to the session.
+	cacheKey := fmt.Sprintf("azcred-%d", time.Now().UnixNano())
+	azureCredCacheMu.Lock()
+	azureCredCache[cacheKey] = cred
+	azureCredCacheMu.Unlock()
+	creds["azure_cred_cache_key"] = cacheKey
+
 	// List subscriptions accessible with this credential.
 	client, err := armsubscriptions.NewClient(cred, nil)
 	if err != nil {
@@ -510,11 +557,16 @@ func realADValidator(_ context.Context, creds map[string]string) ([]Subscription
 		return nil, errors.New("Coming soon — not yet implemented in this version")
 	}
 
-	host := creds["host"]
+	// The frontend sends credentials with key "server" (matching the field key in mock-data.ts).
+	// Accept both "server" and "host" for backwards compatibility.
+	host := creds["server"]
+	if host == "" {
+		host = creds["host"]
+	}
 	username := creds["username"]
 	password := creds["password"]
 	if host == "" || username == "" || password == "" {
-		return nil, errors.New("host, username, and password are required")
+		return nil, errors.New("server address, username, and password are required")
 	}
 
 	return []SubscriptionItem{{
