@@ -201,6 +201,41 @@ func (h *ScanHandler) HandleScanResults(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+// HandleCloneSession handles POST /api/v1/session/clone.
+//
+// It reads the current "ddi_session" cookie, clones that session's credentials
+// into a fresh ScanStateCreated session, sets a new ddi_session cookie, and
+// returns {"sessionId": newID}.
+//
+// Live token objects (azcore.TokenCredential, oauth2.TokenSource) are shared
+// between the old and new sessions so SSO/browser-OAuth providers do not trigger
+// a second browser popup on re-scan.
+func (h *ScanHandler) HandleCloneSession(w http.ResponseWriter, r *http.Request) {
+	cookie, err := r.Cookie("ddi_session")
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "no active session"})
+		return
+	}
+
+	newSess, ok := h.store.CloneSession(cookie.Value)
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "session not found"})
+		return
+	}
+
+	http.SetCookie(w, &http.Cookie{
+		Name:     "ddi_session",
+		Value:    newSess.ID,
+		HttpOnly: true,
+		Secure:   false, // localhost — HTTPS not applicable
+		SameSite: http.SameSiteStrictMode,
+		Path:     "/",
+		MaxAge:   3600,
+	})
+
+	writeJSON(w, http.StatusOK, CloneSessionResponse{SessionID: newSess.ID})
+}
+
 // toOrchestratorProviders converts the HTTP request provider list to the
 // orchestrator's ScanProviderRequest slice.
 func toOrchestratorProviders(specs []ScanProviderSpec) []orchestrator.ScanProviderRequest {
