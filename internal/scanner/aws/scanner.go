@@ -82,7 +82,7 @@ func buildConfig(ctx context.Context, creds map[string]string) (awssdk.Config, e
 		return awsconfig.LoadDefaultConfig(ctx,
 			append(retryOpts,
 				awsconfig.WithCredentialsProvider(
-					credentials.NewStaticCredentialsProvider(keyID, secret, ""),
+					credentials.NewStaticCredentialsProvider(keyID, secret, creds["session_token"]),
 				),
 			)...,
 		)

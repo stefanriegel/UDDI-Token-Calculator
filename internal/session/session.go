@@ -28,6 +28,7 @@ type AWSCredentials struct {
 	AuthMethod      string
 	AccessKeyID     string
 	SecretAccessKey string
+	SessionToken    string
 	Region          string
 	ProfileName     string
 	RoleARN         string

@@ -162,6 +162,7 @@ func buildScanRequest(p ScanProviderRequest, sess *session.Session) scanner.Scan
 			req.Credentials["auth_method"] = sess.AWS.AuthMethod
 			req.Credentials["access_key_id"] = sess.AWS.AccessKeyID
 			req.Credentials["secret_access_key"] = sess.AWS.SecretAccessKey
+			req.Credentials["session_token"] = sess.AWS.SessionToken
 			req.Credentials["region"] = sess.AWS.Region
 			req.Credentials["profile_name"] = sess.AWS.ProfileName
 			req.Credentials["role_arn"] = sess.AWS.RoleARN
