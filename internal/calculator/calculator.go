@@ -24,6 +24,8 @@ type FindingRow struct {
 	Provider string
 	// Source is the account identifier (AWS account ID, Azure subscription ID, GCP project ID, AD domain).
 	Source string
+	// Region is the cloud region this row was scanned from (e.g. "us-east-1"). Empty for global resources.
+	Region string
 	// Category is one of CategoryDDIObjects, CategoryActiveIPs, or CategoryManagedAssets.
 	Category string
 	// Item is the resource type name (e.g. "vpc", "subnet", "vm").

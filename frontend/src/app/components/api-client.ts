@@ -169,6 +169,7 @@ export function startScanEvents(
 export interface FindingRowAPI {
   provider: string;
   source: string;
+  region: string; // cloud region (e.g. "us-east-1"); empty string for global resources
   category: 'DDI Objects' | 'Active IPs' | 'Managed Assets';
   item: string;
   count: number;
