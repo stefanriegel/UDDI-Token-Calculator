@@ -9,7 +9,6 @@ import (
 	"github.com/infoblox/uddi-go-token-calculator/internal/broker"
 	"github.com/infoblox/uddi-go-token-calculator/internal/calculator"
 	adstub "github.com/infoblox/uddi-go-token-calculator/internal/scanner/ad"
-	awsstub "github.com/infoblox/uddi-go-token-calculator/internal/scanner/aws"
 	azurestub "github.com/infoblox/uddi-go-token-calculator/internal/scanner/azure"
 	gcpstub "github.com/infoblox/uddi-go-token-calculator/internal/scanner/gcp"
 
@@ -17,6 +16,15 @@ import (
 	"github.com/infoblox/uddi-go-token-calculator/internal/scanner"
 	"github.com/infoblox/uddi-go-token-calculator/internal/session"
 )
+
+// noopScanner is a test helper that returns zero findings instantly.
+// Used wherever the AWS stub was formerly needed in orchestrator tests.
+// The AWS stub.go was deleted in Phase 3 when the real scanner was wired in.
+type noopScanner struct{}
+
+func (n *noopScanner) Scan(_ context.Context, _ scanner.ScanRequest, _ func(scanner.Event)) ([]calculator.FindingRow, error) {
+	return nil, nil
+}
 
 // failingScanner is a test helper that always returns an error from Scan.
 type failingScanner struct {
@@ -73,7 +81,7 @@ func TestOrchestratorAllStubs(t *testing.T) {
 	t.Parallel()
 
 	scanners := map[string]scanner.Scanner{
-		"aws":   &awsstub.Stub{},
+		"aws":   &noopScanner{},
 		"azure": &azurestub.Stub{},
 		"gcp":   &gcpstub.Stub{},
 		"ad":    &adstub.Stub{},
@@ -130,7 +138,7 @@ func TestOrchestratorSkipsDisabled(t *testing.T) {
 
 	// Use a failing scanner for disabled providers — if invoked, they'd add errors.
 	scanners := map[string]scanner.Scanner{
-		"aws":   &awsstub.Stub{},
+		"aws":   &noopScanner{},
 		"azure": &failingScanner{errMsg: "should not be called"},
 		"gcp":   &gcpstub.Stub{},
 		"ad":    &failingScanner{errMsg: "should not be called"},
@@ -181,7 +189,7 @@ func TestOrchestratorPartialFailure(t *testing.T) {
 	t.Parallel()
 
 	scanners := map[string]scanner.Scanner{
-		"aws":   &awsstub.Stub{},
+		"aws":   &noopScanner{},
 		"azure": &failingScanner{errMsg: "azure API timeout"},
 		"gcp":   &gcpstub.Stub{},
 		"ad":    &adstub.Stub{},
@@ -229,7 +237,7 @@ func TestOrchestratorPublishesEvents(t *testing.T) {
 	t.Parallel()
 
 	scanners := map[string]scanner.Scanner{
-		"aws": &awsstub.Stub{},
+		"aws": &noopScanner{},
 	}
 	o := orchestrator.New(scanners)
 
@@ -271,7 +279,7 @@ func TestOrchestratorPublishesScanComplete(t *testing.T) {
 	t.Parallel()
 
 	scanners := map[string]scanner.Scanner{
-		"aws": &awsstub.Stub{},
+		"aws": &noopScanner{},
 	}
 	o := orchestrator.New(scanners)
 
