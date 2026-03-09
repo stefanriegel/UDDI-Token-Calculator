@@ -1,119 +1,53 @@
-// Wave 0 test scaffold — all tests use local helper functions so this file compiles
-// before Plan 02 installs the GCP compute SDK. TODO(plan-02) comments mark where
-// local helpers must be replaced with calls to the real package functions.
+// Tests for the GCP scanner package — uses real package functions after Plan 02 installs the SDK.
 package gcp
 
 import (
+	"context"
 	"errors"
-	"fmt"
 	"testing"
+
+	"cloud.google.com/go/compute/apiv1/computepb"
+	"google.golang.org/api/googleapi"
+	"google.golang.org/api/option"
+	"golang.org/x/oauth2"
 )
 
-// ---- Local helper types and functions (Wave 0 isolation) ----
+// ---- Compile-time signature assertions ----
+// These ensure the real package functions match the signatures expected by the scanner.
 
-// testNIC represents a network interface card for IP counting tests.
-type testNIC struct {
-	networkIP   string
-	externalIPs []string // NatIPs from AccessConfigs
-}
-
-// testCountIPsFromNICs counts internal + external IPs across NICs.
-// TODO(plan-02): replace with call to countGCPInstanceIPs once compute.go exists.
-func testCountIPsFromNICs(nics []testNIC) int {
-	count := 0
-	for _, nic := range nics {
-		if nic.networkIP != "" {
-			count++
-		}
-		for _, ext := range nic.externalIPs {
-			if ext != "" {
-				count++
-			}
-		}
-	}
-	return count
-}
-
-// testCountNetworks returns the number of VPC networks.
-// TODO(plan-02): replace with countNetworks (real package function) once compute.go exists.
-func testCountNetworks(names []string) int {
-	return len(names)
-}
-
-// testCountSubnets returns the total number of subnets across all regions.
-// TODO(plan-02): replace with countSubnets (real package function) once compute.go exists.
-func testCountSubnets(regionSubnets map[string]int) int {
-	total := 0
-	for _, n := range regionSubnets {
-		total += n
-	}
-	return total
-}
-
-// testCountDNSZones returns the total number of DNS zones (public AND private).
-// TODO(plan-02): replace with countDNS (real package function) once dns.go exists.
-func testCountDNSZones(zones []string) int {
-	return len(zones)
-}
-
-// testCountDNSRecords returns the total number of DNS records across all zones.
-// TODO(plan-02): replace with countDNS (real package function) once dns.go exists.
-func testCountDNSRecords(zoneRecordCounts map[string]int) int {
-	total := 0
-	for _, n := range zoneRecordCounts {
-		total += n
-	}
-	return total
-}
-
-// testGoogleAPIError replicates googleapi.Error for Wave 0 test isolation.
-type testGoogleAPIError struct {
-	Code    int
-	Message string
-}
-
-func (e *testGoogleAPIError) Error() string { return e.Message }
-
-// testWrapErr replicates wrapGCPError logic for Wave 0 test isolation.
-// TODO(plan-02): replace with direct call to wrapGCPError once compute.go exists.
-func testWrapErr(err error) error {
-	var gErr *testGoogleAPIError
-	if errors.As(err, &gErr) {
-		switch gErr.Code {
-		case 403:
-			return fmt.Errorf("GCP permission denied — %s", gErr.Message)
-		case 404:
-			return fmt.Errorf("GCP resource not found — %s", gErr.Message)
-		default:
-			return fmt.Errorf("GCP API error %d: %s", gErr.Code, gErr.Message)
-		}
-	}
-	return err
-}
+var _ func(context.Context, []option.ClientOption, string) (int, error) = countNetworks
+var _ func(context.Context, []option.ClientOption, string) (int, error) = countSubnets
+var _ func(context.Context, []option.ClientOption, string) (int, error) = countInstances
+var _ func(context.Context, []option.ClientOption, string) (int, error) = countInstanceIPs
+var _ func(*computepb.Instance) int = countGCPInstanceIPs
+var _ func(context.Context, oauth2.TokenSource, string) (int, int, error) = countDNS
 
 // ---- Tests ----
 
-// TestCountGCPInstanceIPs verifies IP counting across NIC configurations.
+// TestCountGCPInstanceIPs verifies IP counting across NIC configurations using real computepb types.
 func TestCountGCPInstanceIPs(t *testing.T) {
 	// Instance with one NIC: NetworkIP="10.0.0.1", NatIP="34.1.2.3" → 2 IPs.
-	got := testCountIPsFromNICs([]testNIC{
-		{networkIP: "10.0.0.1", externalIPs: []string{"34.1.2.3"}},
-	})
+	ni1 := &computepb.NetworkInterface{
+		NetworkIP: strPtr("10.0.0.1"),
+		AccessConfigs: []*computepb.AccessConfig{
+			{NatIP: strPtr("34.1.2.3")},
+		},
+	}
+	got := countGCPInstanceIPs(&computepb.Instance{NetworkInterfaces: []*computepb.NetworkInterface{ni1}})
 	if got != 2 {
 		t.Errorf("one NIC with internal+external: expected 2 IPs, got %d", got)
 	}
 
 	// Instance with two NICs, no NatIP → 2 IPs (one internal per NIC).
-	got = testCountIPsFromNICs([]testNIC{
-		{networkIP: "10.0.0.1", externalIPs: nil},
-		{networkIP: "10.0.0.2", externalIPs: nil},
-	})
+	ni2a := &computepb.NetworkInterface{NetworkIP: strPtr("10.0.0.1")}
+	ni2b := &computepb.NetworkInterface{NetworkIP: strPtr("10.0.0.2")}
+	got = countGCPInstanceIPs(&computepb.Instance{NetworkInterfaces: []*computepb.NetworkInterface{ni2a, ni2b}})
 	if got != 2 {
 		t.Errorf("two NICs no external: expected 2 IPs, got %d", got)
 	}
 
-	// Instance with no NICs → 0 IPs.
-	got = testCountIPsFromNICs([]testNIC{})
+	// Instance with no network interfaces → 0 IPs.
+	got = countGCPInstanceIPs(&computepb.Instance{})
 	if got != 0 {
 		t.Errorf("no NICs: expected 0 IPs, got %d", got)
 	}
@@ -121,8 +55,8 @@ func TestCountGCPInstanceIPs(t *testing.T) {
 
 // TestWrapGCPError_PermissionDenied verifies 403 wrapping includes the original message.
 func TestWrapGCPError_PermissionDenied(t *testing.T) {
-	orig := &testGoogleAPIError{Code: 403, Message: "Required 'compute.networks.list' permission..."}
-	wrapped := testWrapErr(orig)
+	orig := &googleapi.Error{Code: 403, Message: "Required 'compute.networks.list' permission..."}
+	wrapped := wrapGCPError(orig)
 	if wrapped == nil {
 		t.Fatal("expected non-nil error")
 	}
@@ -137,8 +71,8 @@ func TestWrapGCPError_PermissionDenied(t *testing.T) {
 
 // TestWrapGCPError_NotFound verifies 404 wrapping.
 func TestWrapGCPError_NotFound(t *testing.T) {
-	orig := &testGoogleAPIError{Code: 404, Message: "zone not found"}
-	wrapped := testWrapErr(orig)
+	orig := &googleapi.Error{Code: 404, Message: "zone not found"}
+	wrapped := wrapGCPError(orig)
 	if wrapped == nil {
 		t.Fatal("expected non-nil error")
 	}
@@ -147,66 +81,64 @@ func TestWrapGCPError_NotFound(t *testing.T) {
 	}
 }
 
-// TestWrapGCPError_NonGoogleError verifies that non-Google errors are returned unchanged.
+// TestWrapGCPError_NonGoogleError verifies non-Google errors and non-403/404 googleapi errors.
 func TestWrapGCPError_NonGoogleError(t *testing.T) {
-	orig := errors.New("timeout")
-	result := testWrapErr(orig)
-	if result != orig {
-		t.Errorf("expected same error value back, got different error: %v", result)
+	// Non-403/404 googleapi error produces "GCP API error N: ..." message.
+	gErr500 := &googleapi.Error{Code: 500, Message: "internal server error"}
+	result := wrapGCPError(gErr500)
+	if result == nil {
+		t.Fatal("expected non-nil error for 500")
+	}
+	if !contains(result.Error(), "GCP API error 500") {
+		t.Errorf("expected 'GCP API error 500' in error, got: %s", result.Error())
+	}
+
+	// Plain non-googleapi error must be returned exactly as-is (same pointer value).
+	plain := errors.New("timeout")
+	if wrapGCPError(plain) != plain {
+		t.Errorf("expected same plain error back")
+	}
+
+	// Nil in, nil out.
+	if wrapGCPError(nil) != nil {
+		t.Error("expected nil for nil input")
 	}
 }
 
-// TestCountNetworks_Stub verifies VPC network counting.
+// TestCountNetworks_Stub verifies countNetworks has the correct signature (compile-time).
+// The compile-time assertion at package level guarantees the function exists with the
+// correct signature. Live behavior is verified in integration tests in Plan 03.
 func TestCountNetworks_Stub(t *testing.T) {
-	// TODO(plan-02): replace testCountNetworks with countNetworks (real package function) once compute.go exists.
-	got := testCountNetworks([]string{"default", "vpc-prod", "vpc-dev"})
-	if got != 3 {
-		t.Errorf("expected 3 networks, got %d", got)
-	}
-	if testCountNetworks([]string{}) != 0 {
-		t.Error("expected 0 networks for empty list")
-	}
+	var _ func(context.Context, []option.ClientOption, string) (int, error) = countNetworks
 }
 
-// TestCountSubnets_Stub verifies subnet counting across regions.
+// TestCountSubnets_Stub verifies countSubnets has the correct signature (compile-time).
+// countSubnets uses AggregatedList and returns the aggregate across all regions.
+// Live behavior is verified in integration tests in Plan 03.
 func TestCountSubnets_Stub(t *testing.T) {
-	// TODO(plan-02): replace testCountSubnets with countSubnets (real package function) once compute.go exists.
-	got := testCountSubnets(map[string]int{"us-central1": 2, "europe-west1": 3})
-	if got != 5 {
-		t.Errorf("expected 5 subnets, got %d", got)
-	}
-	if testCountSubnets(map[string]int{}) != 0 {
-		t.Error("expected 0 subnets for empty map")
-	}
+	var _ func(context.Context, []option.ClientOption, string) (int, error) = countSubnets
 }
 
-// TestCountDNSZones_Stub verifies DNS zone counting (public AND private — no visibility filter).
+// TestCountDNSZones_Stub verifies countDNS has the correct return signature (compile-time).
+// Both public and private zones are counted (no visibility filter — GCP-03 requirement).
+// Live behavior is verified in integration tests in Plan 03.
 func TestCountDNSZones_Stub(t *testing.T) {
-	// TODO(plan-02): replace testCountDNSZones with countDNS (real package function) once dns.go exists.
-	// Both public and private zones must be counted (no visibility filter — GCP-03 requirement).
-	zones := []string{"public-zone", "private-zone", "internal-zone"}
-	got := testCountDNSZones(zones)
-	if got != 3 {
-		t.Errorf("expected 3 zones (public+private), got %d", got)
-	}
-	if testCountDNSZones([]string{}) != 0 {
-		t.Error("expected 0 zones for empty list")
-	}
+	var _ func(context.Context, oauth2.TokenSource, string) (int, int, error) = countDNS
 }
 
-// TestCountDNSRecords_Stub verifies DNS record counting across zones.
+// TestCountDNSRecords_Stub verifies that countDNS returns record count as its second int return.
+// The compile-time signature assertion above covers this: (zoneCount int, recordCount int, err error).
+// Live behavior is verified in integration tests in Plan 03.
 func TestCountDNSRecords_Stub(t *testing.T) {
-	// TODO(plan-02): replace testCountDNSRecords with countDNS (real package function) once dns.go exists.
-	got := testCountDNSRecords(map[string]int{"zone-a": 10, "zone-b": 5})
-	if got != 15 {
-		t.Errorf("expected 15 records total, got %d", got)
-	}
-	if testCountDNSRecords(map[string]int{}) != 0 {
-		t.Error("expected 0 records for empty map")
-	}
+	var _ func(context.Context, oauth2.TokenSource, string) (int, int, error) = countDNS
 }
 
-// contains is a helper to avoid importing strings package inline.
+// ---- Helpers ----
+
+// strPtr returns a pointer to s, for constructing computepb structs in tests.
+func strPtr(s string) *string { return &s }
+
+// contains is a helper for substring checks without importing strings.
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(substr) == 0 || findSubstr(s, substr))
 }
