@@ -10,7 +10,6 @@ import (
 	"github.com/infoblox/uddi-go-token-calculator/internal/calculator"
 	adstub "github.com/infoblox/uddi-go-token-calculator/internal/scanner/ad"
 	azurestub "github.com/infoblox/uddi-go-token-calculator/internal/scanner/azure"
-	gcpstub "github.com/infoblox/uddi-go-token-calculator/internal/scanner/gcp"
 
 	"github.com/infoblox/uddi-go-token-calculator/internal/orchestrator"
 	"github.com/infoblox/uddi-go-token-calculator/internal/scanner"
@@ -83,7 +82,7 @@ func TestOrchestratorAllStubs(t *testing.T) {
 	scanners := map[string]scanner.Scanner{
 		"aws":   &noopScanner{},
 		"azure": &azurestub.Stub{},
-		"gcp":   &gcpstub.Stub{},
+		"gcp":   &noopScanner{},
 		"ad":    &adstub.Stub{},
 	}
 	o := orchestrator.New(scanners)
@@ -140,7 +139,7 @@ func TestOrchestratorSkipsDisabled(t *testing.T) {
 	scanners := map[string]scanner.Scanner{
 		"aws":   &noopScanner{},
 		"azure": &failingScanner{errMsg: "should not be called"},
-		"gcp":   &gcpstub.Stub{},
+		"gcp":   &noopScanner{},
 		"ad":    &failingScanner{errMsg: "should not be called"},
 	}
 	o := orchestrator.New(scanners)
@@ -191,7 +190,7 @@ func TestOrchestratorPartialFailure(t *testing.T) {
 	scanners := map[string]scanner.Scanner{
 		"aws":   &noopScanner{},
 		"azure": &failingScanner{errMsg: "azure API timeout"},
-		"gcp":   &gcpstub.Stub{},
+		"gcp":   &noopScanner{},
 		"ad":    &adstub.Stub{},
 	}
 	o := orchestrator.New(scanners)
