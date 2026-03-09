@@ -138,7 +138,7 @@ export const PROVIDERS: ProviderOption[] = [
       {
         id: 'service-account',
         name: 'Service Account Key (JSON)',
-        description: 'Upload or paste a service account key file',
+        description: 'Upload or paste a service account key file. The service account must have the Compute Viewer and DNS Reader predefined roles (or equivalent: compute.readonly + dns.readonly OAuth2 scopes).',
         fields: [
           { key: 'serviceAccountJson', label: 'Service Account Key', placeholder: 'Paste JSON key contents or path to .json file', multiline: true },
         ],
@@ -146,7 +146,7 @@ export const PROVIDERS: ProviderOption[] = [
       {
         id: 'adc',
         name: 'Application Default Credentials',
-        description: 'Uses gcloud auth application-default login credentials — no fields required',
+        description: 'Uses gcloud auth application-default login credentials — no fields required. The authenticated identity must have Compute Viewer and DNS Reader roles.',
         fields: [],
       },
     ],

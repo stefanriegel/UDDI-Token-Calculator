@@ -17,6 +17,19 @@ import (
 	"github.com/infoblox/uddi-go-token-calculator/internal/scanner"
 )
 
+// GCP OAuth2 scopes required for discovery.
+// These map to the following GCP predefined roles and Infoblox permission requirements:
+//
+//	compute.readonly — equivalent to "Compute Viewer" predefined role.
+//	  Grants: compute.networks.list/get, compute.subnetworks.aggregatedList,
+//	          compute.instances.aggregatedList, compute.addresses.aggregatedList
+//	  Satisfies: Infoblox Asset Discovery (VPC networks, subnets, compute instances, IPs)
+//
+//	dns.readonly — equivalent to "DNS Reader" predefined role.
+//	  Grants: dns.managedZones.list/get, dns.resourceRecordSets.list/get, dns.projects.get
+//	  Satisfies: Infoblox DNS Discovery (outbound, read-only)
+//
+// Reference: https://docs.infoblox.com/space/BloxOneDDI/684492268/Permissions+required+in+GCP+(Discovery)
 const (
 	scopeComputeReadonly = "https://www.googleapis.com/auth/compute.readonly"
 	scopeDNSReadonly     = "https://www.googleapis.com/auth/dns.readonly"
