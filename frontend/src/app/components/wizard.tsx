@@ -34,6 +34,7 @@ import {
   startScanEvents,
   getScanResults as apiGetScanResults,
   getSessionId,
+  cloneSession,
   type ScanResultsResponse,
 } from './api-client';
 import {
@@ -204,6 +205,35 @@ export function Wizard() {
     setFindingsProviderFilter(new Set());
     setFindingsCategoryFilter(new Set());
     setFindingsSort(null);
+  };
+
+  // Re-scan with same credentials — clones the session server-side so SSO/OAuth
+  // providers do not trigger a second browser popup. Falls back to full restart
+  // if the old session has expired or cannot be found.
+  const rescan = async () => {
+    clearScanIntervals();
+    try {
+      await cloneSession(); // sets new ddi_session cookie server-side
+    } catch {
+      // Session expired or server unreachable — fall back to full restart.
+      restart();
+      return;
+    }
+    // Reset only scan-phase state; preserve providers, credentials, authMethods,
+    // adServers, subscriptions, and credentialStatus (all still 'valid').
+    setScanProgress(0);
+    setProviderScanProgress({ aws: 0, azure: 0, gcp: 0, ad: 0 });
+    setFindings([]);
+    setScanResults(null);
+    setProviderErrors([]);
+    setScanError('');
+    setScanId('');
+    setFindingsProviderFilter(new Set());
+    setFindingsCategoryFilter(new Set());
+    setFindingsSort(null);
+    setExpandedGroups(new Set());
+    // Return to sources step — subscriptions are already populated and selected.
+    setCurrentStep('sources');
   };
 
   // Provider toggle
@@ -1996,6 +2026,16 @@ export function Wizard() {
                   <FileSpreadsheet className="w-4 h-4" />
                   Download Excel
                 </button>
+                {!backend.isDemo && (
+                  <button
+                    onClick={rescan}
+                    className="flex items-center justify-center gap-2 px-5 py-3 bg-[var(--infoblox-orange)] text-white rounded-xl hover:bg-[var(--infoblox-orange)]/90 transition-colors"
+                    style={{ fontWeight: 500 }}
+                  >
+                    <RotateCcw className="w-4 h-4" />
+                    Re-scan
+                  </button>
+                )}
                 <button
                   onClick={restart}
                   className="flex items-center justify-center gap-2 px-5 py-3 bg-white border border-[var(--border)] text-[var(--foreground)] rounded-xl hover:bg-gray-50 transition-colors"

@@ -92,6 +92,33 @@ export function getSessionId(): string {
   return match ? decodeURIComponent(match[1]) : '';
 }
 
+// ─── Session Clone ─────────────────────────────────────────────────────────────
+
+export interface CloneSessionResponse {
+  sessionId: string;
+}
+
+/**
+ * Clone the current session on the backend, preserving all credentials.
+ * The server reads the ddi_session cookie automatically (no body needed)
+ * and sets a new ddi_session cookie in the response.
+ *
+ * Use this before re-scanning so SSO/browser-OAuth providers do not trigger
+ * a second browser popup — their live token objects are shared between the
+ * old and new sessions.
+ */
+export async function cloneSession(): Promise<CloneSessionResponse> {
+  const res = await fetch(apiUrl('/session/clone'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as { error?: string }).error || `Clone session failed: ${res.status}`);
+  }
+  return res.json();
+}
+
 // ─── Scan ──────────────────────────────────────────────────────────────────────
 
 export interface ScanRequest {
