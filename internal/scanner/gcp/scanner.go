@@ -31,14 +31,14 @@ func New() *Scanner {
 }
 
 // buildTokenSource returns an OAuth2 token source for GCP API calls.
-// For browser-oauth auth method, it returns the cached token source from validation.
+// For adc auth method, it returns the cached token source from validation.
 // For service-account auth method, it parses the service_account_json credential.
 func buildTokenSource(ctx context.Context, creds map[string]string, cached oauth2.TokenSource) (oauth2.TokenSource, error) {
-	if creds["auth_method"] == "browser-oauth" {
+	if creds["auth_method"] == "adc" {
 		if cached != nil {
 			return cached, nil
 		}
-		return nil, fmt.Errorf("gcp: no cached token source for browser-oauth — re-validate")
+		return nil, fmt.Errorf("gcp: no cached token source for ADC — re-validate")
 	}
 	// Service account (or empty auth_method defaults to service account).
 	saJSON := creds["service_account_json"]
