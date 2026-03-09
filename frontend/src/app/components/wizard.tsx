@@ -34,7 +34,9 @@ import {
   getScanResults as apiGetScanResults,
   getSessionId,
   cloneSession,
+  uploadNiosBackup,
   type ScanResultsResponse,
+  type NiosGridMember,
 } from './api-client';
 import {
   PROVIDERS,
@@ -70,12 +72,14 @@ export function Wizard() {
     azure: {},
     gcp: {},
     ad: {},
+    nios: {},
   });
   const [credentialStatus, setCredentialStatus] = useState<Record<ProviderType, 'idle' | 'validating' | 'valid' | 'error'>>({
     aws: 'idle',
     azure: 'idle',
     gcp: 'idle',
     ad: 'idle',
+    nios: 'idle',
   });
   const [subscriptions, setSubscriptions] = useState<
     Record<ProviderType, { id: string; name: string; selected: boolean }[]>
@@ -84,16 +88,17 @@ export function Wizard() {
     azure: [],
     gcp: [],
     ad: [],
+    nios: [],
   });
   const [scanProgress, setScanProgress] = useState(0);
   const [providerScanProgress, setProviderScanProgress] = useState<Record<ProviderType, number>>({
-    aws: 0, azure: 0, gcp: 0, ad: 0,
+    aws: 0, azure: 0, gcp: 0, ad: 0, nios: 0,
   });
   const [findings, setFindings] = useState<FindingRow[]>([]);
   const [scanResults, setScanResults] = useState<ScanResultsResponse | null>(null);
   const [providerErrors, setProviderErrors] = useState<{ provider: string; resource: string; message: string }[]>([]);
   const [credentialError, setCredentialError] = useState<Record<ProviderType, string>>({
-    aws: '', azure: '', gcp: '', ad: '',
+    aws: '', azure: '', gcp: '', ad: '', nios: '',
   });
   const [scanError, setScanError] = useState<string>('');
   const [scanId, setScanId] = useState<string>('');
@@ -104,6 +109,7 @@ export function Wizard() {
     azure: 'service-principal',
     gcp: 'service-account',
     ad: 'ntlm',
+    nios: 'backup-upload',
   });
   // AD-specific: dynamic list of Domain Controller hostnames
   const [adServers, setAdServers] = useState<string[]>(['']);
@@ -113,8 +119,36 @@ export function Wizard() {
   const updateDCServer = (index: number, value: string) =>
     setAdServers(prev => prev.map((s, i) => i === index ? value : s));
 
+  const handleNiosFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setNiosUploadStatus('uploading');
+    setNiosUploadError('');
+    setNiosMembers([]);
+    setNiosSelectedMembers(new Set());
+    setCredentialStatus((prev) => ({ ...prev, nios: 'validating' }));
+    try {
+      const resp = await uploadNiosBackup(file);
+      if (!resp.valid) {
+        setNiosUploadStatus('error');
+        setNiosUploadError(resp.error ?? 'Upload failed');
+        setCredentialStatus((prev) => ({ ...prev, nios: 'error' }));
+        return;
+      }
+      setNiosMembers(resp.members);
+      setNiosSelectedMembers(new Set(resp.members.map((m) => m.hostname)));
+      setNiosUploadStatus('done');
+      setCredentialStatus((prev) => ({ ...prev, nios: 'valid' }));
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Upload failed';
+      setNiosUploadStatus('error');
+      setNiosUploadError(msg);
+      setCredentialStatus((prev) => ({ ...prev, nios: 'error' }));
+    }
+  }, []);
+
   const [sourceSearch, setSourceSearch] = useState<Record<ProviderType, string>>({
-    aws: '', azure: '', gcp: '', ad: '',
+    aws: '', azure: '', gcp: '', ad: '', nios: '',
   });
   // Findings table filters & sorting
   const [findingsProviderFilter, setFindingsProviderFilter] = useState<Set<ProviderType>>(new Set());
@@ -125,8 +159,14 @@ export function Wizard() {
 
   // Selection mode: 'include' = checked items will be scanned; 'exclude' = checked items will be SKIPPED
   const [selectionMode, setSelectionMode] = useState<Record<ProviderType, 'include' | 'exclude'>>({
-    aws: 'include', azure: 'include', gcp: 'include', ad: 'include',
+    aws: 'include', azure: 'include', gcp: 'include', ad: 'include', nios: 'include',
   });
+
+  // NIOS-specific state
+  const [niosMembers, setNiosMembers] = useState<NiosGridMember[]>([]);
+  const [niosSelectedMembers, setNiosSelectedMembers] = useState<Set<string>>(new Set());
+  const [niosUploadStatus, setNiosUploadStatus] = useState<'idle' | 'uploading' | 'done' | 'error'>('idle');
+  const [niosUploadError, setNiosUploadError] = useState<string>('');
 
   // Compute effective selection (what actually gets scanned) based on mode
   const getEffectiveSelected = useCallback((provId: ProviderType): Set<string> => {
@@ -150,7 +190,13 @@ export function Wizard() {
       case 'providers':
         return selectedProviders.length > 0;
       case 'credentials':
-        return selectedProviders.every((p) => credentialStatus[p] === 'valid');
+        return selectedProviders.every((p) => {
+          if (p === 'nios') {
+            // NIOS is "validated" after a successful upload with at least one member selected
+            return credentialStatus['nios'] === 'valid' && niosSelectedMembers.size > 0;
+          }
+          return credentialStatus[p] === 'valid';
+        });
       case 'sources':
         return selectedProviders.some((p) =>
           getEffectiveSelectedCount(p) > 0
@@ -187,23 +233,27 @@ export function Wizard() {
     clearScanIntervals();
     setCurrentStep('providers');
     setSelectedProviders([]);
-    setCredentials({ aws: {}, azure: {}, gcp: {}, ad: {} });
-    setCredentialStatus({ aws: 'idle', azure: 'idle', gcp: 'idle', ad: 'idle' });
-    setSubscriptions({ aws: [], azure: [], gcp: [], ad: [] });
+    setCredentials({ aws: {}, azure: {}, gcp: {}, ad: {}, nios: {} });
+    setCredentialStatus({ aws: 'idle', azure: 'idle', gcp: 'idle', ad: 'idle', nios: 'idle' });
+    setSubscriptions({ aws: [], azure: [], gcp: [], ad: [], nios: [] });
     setScanProgress(0);
-    setProviderScanProgress({ aws: 0, azure: 0, gcp: 0, ad: 0 });
+    setProviderScanProgress({ aws: 0, azure: 0, gcp: 0, ad: 0, nios: 0 });
     setFindings([]);
     setScanResults(null);
     setProviderErrors([]);
-    setCredentialError({ aws: '', azure: '', gcp: '', ad: '' });
+    setCredentialError({ aws: '', azure: '', gcp: '', ad: '', nios: '' });
     setScanError('');
     setScanId('');
     setAdServers(['']);
-    setSourceSearch({ aws: '', azure: '', gcp: '', ad: '' });
-    setSelectionMode({ aws: 'include', azure: 'include', gcp: 'include', ad: 'include' });
+    setSourceSearch({ aws: '', azure: '', gcp: '', ad: '', nios: '' });
+    setSelectionMode({ aws: 'include', azure: 'include', gcp: 'include', ad: 'include', nios: 'include' });
     setFindingsProviderFilter(new Set());
     setFindingsCategoryFilter(new Set());
     setFindingsSort(null);
+    setNiosMembers([]);
+    setNiosSelectedMembers(new Set());
+    setNiosUploadStatus('idle');
+    setNiosUploadError('');
   };
 
   // Re-scan with same credentials — clones the session server-side so SSO/OAuth
@@ -221,7 +271,7 @@ export function Wizard() {
     // Reset only scan-phase state; preserve providers, credentials, authMethods,
     // adServers, subscriptions, and credentialStatus (all still 'valid').
     setScanProgress(0);
-    setProviderScanProgress({ aws: 0, azure: 0, gcp: 0, ad: 0 });
+    setProviderScanProgress({ aws: 0, azure: 0, gcp: 0, ad: 0, nios: 0 });
     setFindings([]);
     setScanResults(null);
     setProviderErrors([]);
@@ -390,7 +440,7 @@ export function Wizard() {
     clearScanIntervals();
     setScanProgress(0);
     setScanError('');
-    const initProgress: Record<ProviderType, number> = { aws: 0, azure: 0, gcp: 0, ad: 0 };
+    const initProgress: Record<ProviderType, number> = { aws: 0, azure: 0, gcp: 0, ad: 0, nios: 0 };
     setProviderScanProgress(initProgress);
     setFindings([]);
 
@@ -445,8 +495,10 @@ export function Wizard() {
           sessionId,
           providers: selectedProviders.map((provId) => ({
             provider: provId,
-            subscriptions: Array.from(getEffectiveSelected(provId)),
-            selectionMode: selectionMode[provId],
+            subscriptions: provId === 'nios'
+              ? Array.from(niosSelectedMembers)
+              : Array.from(getEffectiveSelected(provId)),
+            selectionMode: provId === 'nios' ? 'include' : selectionMode[provId],
           })),
         };
         const { scanId: newScanId } = await apiStartScan(scanReq);
@@ -456,7 +508,7 @@ export function Wizard() {
         setScanError(msg);
       }
     })();
-  }, [backend.isDemo, selectedProviders, selectionMode, clearScanIntervals, getEffectiveSelected]);
+  }, [backend.isDemo, selectedProviders, selectionMode, clearScanIntervals, getEffectiveSelected, niosSelectedMembers]);
 
   // Export
   const totalTokens = useMemo(
@@ -829,6 +881,104 @@ export function Wizard() {
                   const provider = PROVIDERS.find((p) => p.id === provId)!;
                   const status = credentialStatus[provId];
                   const Icon = provId === 'ad' ? Server : Cloud;
+
+                  // NIOS: render file upload instead of credential form
+                  if (provider.isFileUpload) {
+                    return (
+                      <div key={provId} className="border border-[var(--border)] rounded-xl p-4">
+                        <div className="flex items-center gap-3 mb-4">
+                          <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ backgroundColor: '#00A1FF15' }}>
+                            <Server className="w-4 h-4" style={{ color: '#00A1FF' }} />
+                          </div>
+                          <div>
+                            <h3 className="text-[14px]" style={{ fontWeight: 600 }}>NIOS Grid Backup</h3>
+                            <p className="text-[12px] text-[var(--muted-foreground)]">Upload a .tar.gz, .tgz, or .bak backup file</p>
+                          </div>
+                        </div>
+
+                        {/* File dropzone */}
+                        <label className={`flex flex-col items-center justify-center w-full h-28 border-2 border-dashed rounded-lg cursor-pointer transition-colors ${
+                          niosUploadStatus === 'done' ? 'border-green-400 bg-green-50/50' :
+                          niosUploadStatus === 'error' ? 'border-red-300 bg-red-50/50' :
+                          'border-[var(--border)] hover:border-gray-400 bg-gray-50/50'
+                        }`}>
+                          <input
+                            type="file"
+                            accept=".tar.gz,.tgz,.bak"
+                            className="hidden"
+                            onChange={handleNiosFileChange}
+                            disabled={niosUploadStatus === 'uploading'}
+                          />
+                          {niosUploadStatus === 'idle' && (
+                            <>
+                              <Download className="w-6 h-6 text-gray-400 mb-1" />
+                              <p className="text-[13px] text-[var(--muted-foreground)]">Click to select backup file</p>
+                              <p className="text-[11px] text-gray-400 mt-0.5">.tar.gz, .tgz, or .bak — max 500 MB</p>
+                            </>
+                          )}
+                          {niosUploadStatus === 'uploading' && (
+                            <><Loader2 className="w-6 h-6 text-blue-500 animate-spin mb-1" /><p className="text-[13px] text-blue-600">Parsing backup...</p></>
+                          )}
+                          {niosUploadStatus === 'done' && (
+                            <><CheckCircle2 className="w-6 h-6 text-green-500 mb-1" /><p className="text-[13px] text-green-700" style={{ fontWeight: 500 }}>Upload successful — {niosMembers.length} Grid Member{niosMembers.length !== 1 ? 's' : ''} found</p></>
+                          )}
+                          {niosUploadStatus === 'error' && (
+                            <><AlertCircle className="w-5 h-5 text-red-500 mb-1" /><p className="text-[13px] text-red-700">{niosUploadError || 'Upload failed'}</p></>
+                          )}
+                        </label>
+
+                        {/* Member checkbox list */}
+                        {niosMembers.length > 0 && (
+                          <div className="mt-4">
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="text-[13px]" style={{ fontWeight: 500 }}>Grid Members</span>
+                              <button
+                                className="text-[12px] text-blue-600 hover:text-blue-800"
+                                onClick={() => {
+                                  if (niosSelectedMembers.size === niosMembers.length) {
+                                    setNiosSelectedMembers(new Set());
+                                  } else {
+                                    setNiosSelectedMembers(new Set(niosMembers.map((m) => m.hostname)));
+                                  }
+                                }}
+                              >
+                                {niosSelectedMembers.size === niosMembers.length ? 'Deselect All' : 'Select All'}
+                              </button>
+                            </div>
+                            <div className="space-y-1 max-h-40 overflow-y-auto">
+                              {niosMembers.map((member) => {
+                                const checked = niosSelectedMembers.has(member.hostname);
+                                return (
+                                  <label key={member.hostname} className="flex items-center gap-2 py-1 cursor-pointer">
+                                    <input
+                                      type="checkbox"
+                                      checked={checked}
+                                      onChange={() => {
+                                        setNiosSelectedMembers((prev) => {
+                                          const next = new Set(prev);
+                                          if (next.has(member.hostname)) next.delete(member.hostname);
+                                          else next.add(member.hostname);
+                                          return next;
+                                        });
+                                      }}
+                                      className="w-4 h-4 accent-[var(--infoblox-orange)]"
+                                    />
+                                    <span className="text-[13px] flex-1">{member.hostname}</span>
+                                    <span className={`text-[11px] px-2 py-0.5 rounded-full ${
+                                      member.role === 'Master' ? 'bg-blue-100 text-blue-700' :
+                                      member.role === 'Candidate' ? 'bg-purple-100 text-purple-700' :
+                                      'bg-gray-100 text-gray-600'
+                                    }`}>{member.role}</span>
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  }
+
                   const currentAuthId = selectedAuthMethod[provId];
                   const currentAuth = provider.authMethods.find((m) => m.id === currentAuthId) || provider.authMethods[0];
                   const hasFields = currentAuth.fields.length > 0;
@@ -880,6 +1030,7 @@ export function Wizard() {
                               azure: ['device-code', 'certificate', 'az-cli'],
                               gcp: [],
                               ad: [],
+                              nios: [],
                             };
                             const isComingSoon = COMING_SOON[provId]?.includes(method.id) ?? false;
                             return (
