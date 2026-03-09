@@ -8,9 +8,9 @@ import (
 
 	"github.com/infoblox/uddi-go-token-calculator/internal/broker"
 	"github.com/infoblox/uddi-go-token-calculator/internal/calculator"
+	adstub "github.com/infoblox/uddi-go-token-calculator/internal/scanner/ad"
 	awsstub "github.com/infoblox/uddi-go-token-calculator/internal/scanner/aws"
 	azurestub "github.com/infoblox/uddi-go-token-calculator/internal/scanner/azure"
-	adstub "github.com/infoblox/uddi-go-token-calculator/internal/scanner/ad"
 	gcpstub "github.com/infoblox/uddi-go-token-calculator/internal/scanner/gcp"
 
 	"github.com/infoblox/uddi-go-token-calculator/internal/orchestrator"
@@ -42,21 +42,29 @@ func (s *slowScanner) Scan(ctx context.Context, _ scanner.ScanRequest, _ func(sc
 // newTestSession creates a minimal session with a fresh broker for testing.
 func newTestSession() *session.Session {
 	return &session.Session{
-		ID:    "test-session",
-		State: session.ScanStateScanning,
+		ID:     "test-session",
+		State:  session.ScanStateScanning,
 		Broker: broker.New(),
 	}
 }
 
-// drainBroker drains all events from broker before it closes, returning the
-// event slice. Must be called before Run() to register before Close().
-func drainBroker(b *broker.Broker) []broker.Event {
+// subscribeBroker subscribes to the broker synchronously and returns a function
+// that blocks until all events are collected (channel closed by broker.Close).
+// Must be called before Run() to avoid the race where the broker is closed
+// before Subscribe is called.
+func subscribeBroker(b *broker.Broker) func() []broker.Event {
 	ch := b.Subscribe()
-	var events []broker.Event
-	for e := range ch {
-		events = append(events, e)
+	resultCh := make(chan []broker.Event, 1)
+	go func() {
+		var events []broker.Event
+		for e := range ch {
+			events = append(events, e)
+		}
+		resultCh <- events
+	}()
+	return func() []broker.Event {
+		return <-resultCh
 	}
-	return events
 }
 
 // TestOrchestratorAllStubs runs all four stub scanners and verifies the orchestrator
@@ -73,11 +81,8 @@ func TestOrchestratorAllStubs(t *testing.T) {
 	o := orchestrator.New(scanners)
 
 	sess := newTestSession()
-	// Subscribe before Run so we collect all events.
-	eventsCh := make(chan []broker.Event, 1)
-	go func() {
-		eventsCh <- drainBroker(sess.Broker)
-	}()
+	// Subscribe synchronously before Run so we collect all events.
+	collect := subscribeBroker(sess.Broker)
 
 	providers := []orchestrator.ScanProviderRequest{
 		{Provider: "aws"},
@@ -87,8 +92,7 @@ func TestOrchestratorAllStubs(t *testing.T) {
 	}
 
 	result := o.Run(context.Background(), sess, providers)
-
-	events := <-eventsCh
+	events := collect()
 
 	if len(result.Errors) != 0 {
 		t.Errorf("expected 0 errors, got %d: %v", len(result.Errors), result.Errors)
@@ -134,10 +138,7 @@ func TestOrchestratorSkipsDisabled(t *testing.T) {
 	o := orchestrator.New(scanners)
 
 	sess := newTestSession()
-	eventsCh := make(chan []broker.Event, 1)
-	go func() {
-		eventsCh <- drainBroker(sess.Broker)
-	}()
+	collect := subscribeBroker(sess.Broker)
 
 	// Only enable aws and gcp.
 	providers := []orchestrator.ScanProviderRequest{
@@ -146,8 +147,7 @@ func TestOrchestratorSkipsDisabled(t *testing.T) {
 	}
 
 	result := o.Run(context.Background(), sess, providers)
-
-	events := <-eventsCh
+	events := collect()
 
 	if len(result.Errors) != 0 {
 		t.Errorf("expected 0 errors (disabled scanners must not run), got %d: %v", len(result.Errors), result.Errors)
@@ -160,7 +160,7 @@ func TestOrchestratorSkipsDisabled(t *testing.T) {
 		}
 	}
 
-	// Verify aws and gcp events are present.
+	// Verify aws and gcp provider_start events are present.
 	providerStarts := map[string]bool{}
 	for _, e := range events {
 		if e.Type == "provider_start" {
@@ -189,10 +189,7 @@ func TestOrchestratorPartialFailure(t *testing.T) {
 	o := orchestrator.New(scanners)
 
 	sess := newTestSession()
-	eventsCh := make(chan []broker.Event, 1)
-	go func() {
-		eventsCh <- drainBroker(sess.Broker)
-	}()
+	collect := subscribeBroker(sess.Broker)
 
 	providers := []orchestrator.ScanProviderRequest{
 		{Provider: "aws"},
@@ -202,8 +199,7 @@ func TestOrchestratorPartialFailure(t *testing.T) {
 	}
 
 	result := o.Run(context.Background(), sess, providers)
-
-	<-eventsCh // drain events
+	collect() // drain events (not needed for assertions here)
 
 	// Exactly one error for the failing provider.
 	if len(result.Errors) != 1 {
@@ -238,18 +234,14 @@ func TestOrchestratorPublishesEvents(t *testing.T) {
 	o := orchestrator.New(scanners)
 
 	sess := newTestSession()
-	eventsCh := make(chan []broker.Event, 1)
-	go func() {
-		eventsCh <- drainBroker(sess.Broker)
-	}()
+	collect := subscribeBroker(sess.Broker)
 
 	providers := []orchestrator.ScanProviderRequest{
 		{Provider: "aws"},
 	}
 
 	o.Run(context.Background(), sess, providers)
-
-	events := <-eventsCh
+	events := collect()
 
 	var startEvent, completeEvent *broker.Event
 	for i := range events {
@@ -285,8 +277,8 @@ func TestOrchestratorContextCancel(t *testing.T) {
 	o := orchestrator.New(scanners)
 
 	sess := newTestSession()
-	// Don't drain — we just want Run() to return promptly.
-	go drainBroker(sess.Broker)
+	// Subscribe before Run to avoid race, but we don't need events.
+	collect := subscribeBroker(sess.Broker)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -310,4 +302,6 @@ func TestOrchestratorContextCancel(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Error("orchestrator did not return within 5 seconds after context cancel")
 	}
+
+	collect() // drain to unblock broker goroutine
 }
