@@ -36,13 +36,8 @@ builds:
 
 archives:
   - id: default
-    name_template: "ddi-scanner_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
-    # Windows: zip, macOS: tar.gz (convention)
-    format_overrides:
-      - goos: windows
-        format: zip
-    files:
-      - none*
+    name_template: "ddi-scanner_{{ .Os }}_{{ .Arch }}"
+    format: binary
 
 checksum:
   name_template: "checksums.txt"
