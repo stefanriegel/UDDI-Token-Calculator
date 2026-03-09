@@ -1,10 +1,11 @@
-import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
+import { useState, useMemo, useRef, useEffect, useCallback, Fragment } from 'react';
 import {
   Shield,
   CheckCircle2,
   Circle,
   ChevronRight,
   ChevronLeft,
+  ChevronDown,
   Cloud,
   Server,
   Eye,
@@ -109,6 +110,8 @@ export function Wizard() {
   const [findingsProviderFilter, setFindingsProviderFilter] = useState<Set<ProviderType>>(new Set());
   const [findingsCategoryFilter, setFindingsCategoryFilter] = useState<Set<TokenCategory>>(new Set());
   const [findingsSort, setFindingsSort] = useState<{ col: SortColumn; dir: SortDir } | null>(null);
+  // Expandable rows: set of group keys that are currently expanded
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
 
   // Selection mode: 'include' = checked items will be scanned; 'exclude' = checked items will be SKIPPED
   const [selectionMode, setSelectionMode] = useState<Record<ProviderType, 'include' | 'exclude'>>({
@@ -296,6 +299,7 @@ export function Wizard() {
             const mapped: FindingRow[] = results.findings.map((f) => ({
               provider: f.provider as ProviderType,
               source: f.source,
+              region: f.region ?? '',
               category: f.category as import('./mock-data').TokenCategory,
               item: f.item,
               count: f.count,
@@ -422,7 +426,7 @@ export function Wizard() {
     return totals;
   }, [findings]);
 
-  // Filtered + sorted findings for the table
+  // Filtered + sorted findings (flat) — used for token totals and CSV/XLS exports
   const filteredSortedFindings = useMemo(() => {
     let rows = findings;
     // Filter by provider
@@ -459,6 +463,58 @@ export function Wizard() {
     return rows;
   }, [findings, findingsProviderFilter, findingsCategoryFilter, findingsSort]);
 
+  // Grouped findings for the table: each group aggregates rows by (provider, source, item, category)
+  // Sub-rows show per-region breakdown
+  type GroupedFinding = {
+    key: string;
+    provider: import('./mock-data').ProviderType;
+    source: string;
+    category: import('./mock-data').TokenCategory;
+    item: string;
+    totalCount: number;
+    totalTokens: number;
+    tokensPerUnit: number;
+    subRows: { region: string; count: number; tokens: number }[];
+    multiRegion: boolean;
+  };
+
+  const groupedFindings = useMemo((): GroupedFinding[] => {
+    const map = new Map<string, GroupedFinding>();
+    filteredSortedFindings.forEach((f) => {
+      const key = `${f.provider}|${f.source}|${f.item}|${f.category}`;
+      const existing = map.get(key);
+      if (existing) {
+        existing.totalCount += f.count;
+        existing.totalTokens += f.managementTokens;
+        const regionLabel = f.region || 'global';
+        const sub = existing.subRows.find((r) => r.region === regionLabel);
+        if (sub) {
+          sub.count += f.count;
+          sub.tokens += f.managementTokens;
+        } else {
+          existing.subRows.push({ region: regionLabel, count: f.count, tokens: f.managementTokens });
+        }
+      } else {
+        map.set(key, {
+          key,
+          provider: f.provider,
+          source: f.source,
+          category: f.category,
+          item: f.item,
+          totalCount: f.count,
+          totalTokens: f.managementTokens,
+          tokensPerUnit: f.tokensPerUnit,
+          subRows: [{ region: f.region || 'global', count: f.count, tokens: f.managementTokens }],
+          multiRegion: false,
+        });
+      }
+    });
+    // Determine multiRegion flag
+    const groups = Array.from(map.values());
+    groups.forEach((g) => { g.multiRegion = g.subRows.length > 1; });
+    return groups;
+  }, [filteredSortedFindings]);
+
   const filteredTokenTotal = useMemo(
     () => filteredSortedFindings.reduce((sum, f) => sum + f.managementTokens, 0),
     [filteredSortedFindings]
@@ -490,11 +546,19 @@ export function Wizard() {
     });
   };
 
+  const toggleGroupExpand = (key: string) => {
+    setExpandedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  };
+
   const exportCSV = () => {
-    const header = 'Provider,Source,Token Category,Item,Count,Tokens/Unit,Management Tokens';
+    const header = 'Provider,Source,Region,Token Category,Item,Count,Tokens/Unit,Management Tokens';
     const rows = findings.map(
       (f) =>
-        `${PROVIDERS.find((p) => p.id === f.provider)?.name},${f.source},${f.category},${f.item},${f.count},${f.tokensPerUnit},${f.managementTokens}`
+        `${PROVIDERS.find((p) => p.id === f.provider)?.name},${f.source},${f.region || 'global'},${f.category},${f.item},${f.count},${f.tokensPerUnit},${f.managementTokens}`
     );
     const summary = `\n\nTotal Management Tokens,,,,,,${totalTokens}`;
     const csv = [header, ...rows].join('\n') + summary;
@@ -507,11 +571,11 @@ export function Wizard() {
     html += '<h2>Infoblox Universal DDI - Management Token Assessment</h2>';
     html += `<p>Generated: ${new Date().toLocaleString()}</p>`;
     html += '<table border="1" cellpadding="4" cellspacing="0">';
-    html += '<tr style="background:#002B49;color:white"><th>Provider</th><th>Source</th><th>Token Category</th><th>Item</th><th>Count</th><th>Tokens/Unit</th><th>Management Tokens</th></tr>';
+    html += '<tr style="background:#002B49;color:white"><th>Provider</th><th>Source</th><th>Region</th><th>Token Category</th><th>Item</th><th>Count</th><th>Tokens/Unit</th><th>Management Tokens</th></tr>';
     findings.forEach((f) => {
-      html += `<tr><td>${PROVIDERS.find((p) => p.id === f.provider)?.name}</td><td>${f.source}</td><td>${f.category}</td><td>${f.item}</td><td>${f.count}</td><td>${f.tokensPerUnit}</td><td>${f.managementTokens}</td></tr>`;
+      html += `<tr><td>${PROVIDERS.find((p) => p.id === f.provider)?.name}</td><td>${f.source}</td><td>${f.region || 'global'}</td><td>${f.category}</td><td>${f.item}</td><td>${f.count}</td><td>${f.tokensPerUnit}</td><td>${f.managementTokens}</td></tr>`;
     });
-    html += `<tr style="background:#f5f5f5;font-weight:bold"><td colspan="6">Total Management Tokens</td><td>${totalTokens.toLocaleString()}</td></tr>`;
+    html += `<tr style="background:#f5f5f5;font-weight:bold"><td colspan="7">Total Management Tokens</td><td>${totalTokens.toLocaleString()}</td></tr>`;
     html += '</table></body></html>';
     downloadFile(html, 'ddi-token-assessment.xls', 'application/vnd.ms-excel');
   };
@@ -756,8 +820,8 @@ export function Wizard() {
                             const isSelected = currentAuthId === method.id;
                             // Methods not yet implemented in the Go backend are disabled
                             const COMING_SOON: Record<ProviderType, string[]> = {
-                              aws: ['sso', 'profile', 'assume-role'],
-                              azure: ['browser-sso', 'device-code', 'certificate', 'az-cli'],
+                              aws: ['profile', 'assume-role'],
+                              azure: ['device-code', 'certificate', 'az-cli'],
                               gcp: ['browser-oauth', 'adc', 'workload-identity'],
                               ad: ['kerberos', 'powershell-remote'],
                             };
@@ -1637,7 +1701,7 @@ export function Wizard() {
                 {/* Filter summary */}
                 {(findingsProviderFilter.size > 0 || findingsCategoryFilter.size > 0) && (
                   <div className="px-4 py-2 bg-blue-50/50 border-b border-[var(--border)] text-[12px] text-[var(--muted-foreground)]">
-                    Showing {filteredSortedFindings.length} of {findings.length} rows · {filteredTokenTotal.toLocaleString()} of {totalTokens.toLocaleString()} tokens
+                    Showing {groupedFindings.length} of {findings.length} item types · {filteredTokenTotal.toLocaleString()} of {totalTokens.toLocaleString()} tokens
                   </div>
                 )}
 
@@ -1645,6 +1709,8 @@ export function Wizard() {
                   <table className="w-full text-[13px]">
                     <thead>
                       <tr className="border-b border-[var(--border)] text-left text-[var(--muted-foreground)]">
+                        {/* expand toggle placeholder */}
+                        <th className="px-2 py-2.5 w-8" />
                         {([
                           { col: 'provider' as SortColumn, label: 'Provider', align: 'left' },
                           { col: 'source' as SortColumn, label: 'Source', align: 'left' },
@@ -1680,54 +1746,88 @@ export function Wizard() {
                       </tr>
                     </thead>
                     <tbody>
-                      {filteredSortedFindings.length === 0 ? (
+                      {groupedFindings.length === 0 ? (
                         <tr>
-                          <td colSpan={6} className="px-4 py-8 text-center text-[var(--muted-foreground)]">
+                          <td colSpan={7} className="px-4 py-8 text-center text-[var(--muted-foreground)]">
                             No findings match the current filters.
                           </td>
                         </tr>
                       ) : (
-                        filteredSortedFindings.map((f, i) => (
-                          <tr
-                            key={`${f.provider}-${f.item}-${i}`}
-                            className="border-b border-[var(--border)] last:border-0 hover:bg-gray-50/50"
-                          >
-                            <td className="px-4 py-2.5">
-                              <span
-                                className="inline-block w-2 h-2 rounded-full mr-2"
-                                style={{
-                                  backgroundColor: PROVIDERS.find((p) => p.id === f.provider)
-                                    ?.color,
-                                }}
-                              />
-                              {PROVIDERS.find((p) => p.id === f.provider)?.name}
-                            </td>
-                            <td className="px-4 py-2.5 text-[var(--muted-foreground)]">{f.source}</td>
-                            <td className="px-4 py-2.5">
-                              <span
-                                className={`px-2 py-0.5 rounded-full text-[11px] ${
-                                  f.category === 'DDI Objects'
-                                    ? 'bg-blue-100 text-blue-700'
-                                    : f.category === 'Active IPs'
-                                      ? 'bg-purple-100 text-purple-700'
-                                      : 'bg-green-100 text-green-700'
-                                }`}
-                                style={{ fontWeight: 500 }}
+                        groupedFindings.map((g) => {
+                          const isExpanded = expandedGroups.has(g.key);
+                          const providerColor = PROVIDERS.find((p) => p.id === g.provider)?.color;
+                          const providerName = PROVIDERS.find((p) => p.id === g.provider)?.name;
+                          return (
+                            <Fragment key={g.key}>
+                              {/* Summary (aggregated) row */}
+                              <tr
+                                className={`border-b border-[var(--border)] ${g.multiRegion ? 'hover:bg-gray-50/70 cursor-pointer' : 'hover:bg-gray-50/50'}`}
+                                onClick={g.multiRegion ? () => toggleGroupExpand(g.key) : undefined}
                               >
-                                {f.category}
-                              </span>
-                            </td>
-                            <td className="px-4 py-2.5">{f.item}</td>
-                            <td className="px-4 py-2.5 text-right tabular-nums">
-                              {f.count.toLocaleString()}
-                            </td>
-                            <td className="px-4 py-2.5 text-right tabular-nums" style={{ fontWeight: 600 }}>
-                              {f.managementTokens.toLocaleString()}
-                            </td>
-                          </tr>
-                        ))
+                                {/* Expand toggle */}
+                                <td className="px-2 py-2.5 w-8 text-center">
+                                  {g.multiRegion ? (
+                                    isExpanded
+                                      ? <ChevronDown className="w-3.5 h-3.5 text-[var(--muted-foreground)] mx-auto" />
+                                      : <ChevronRight className="w-3.5 h-3.5 text-[var(--muted-foreground)] mx-auto" />
+                                  ) : null}
+                                </td>
+                                <td className="px-4 py-2.5">
+                                  <span
+                                    className="inline-block w-2 h-2 rounded-full mr-2"
+                                    style={{ backgroundColor: providerColor }}
+                                  />
+                                  {providerName}
+                                </td>
+                                <td className="px-4 py-2.5 text-[var(--muted-foreground)]">{g.source}</td>
+                                <td className="px-4 py-2.5">
+                                  <span
+                                    className={`px-2 py-0.5 rounded-full text-[11px] ${
+                                      g.category === 'DDI Objects'
+                                        ? 'bg-blue-100 text-blue-700'
+                                        : g.category === 'Active IPs'
+                                          ? 'bg-purple-100 text-purple-700'
+                                          : 'bg-green-100 text-green-700'
+                                    }`}
+                                    style={{ fontWeight: 500 }}
+                                  >
+                                    {g.category}
+                                  </span>
+                                </td>
+                                <td className="px-4 py-2.5">{g.item}</td>
+                                <td className="px-4 py-2.5 text-right tabular-nums">
+                                  {g.totalCount.toLocaleString()}
+                                </td>
+                                <td className="px-4 py-2.5 text-right tabular-nums" style={{ fontWeight: 600 }}>
+                                  {g.totalTokens.toLocaleString()}
+                                </td>
+                              </tr>
+                              {/* Per-region sub-rows (shown when expanded) */}
+                              {g.multiRegion && isExpanded && g.subRows.map((sub) => (
+                                <tr
+                                  key={`${g.key}|${sub.region}`}
+                                  className="border-b border-[var(--border)] bg-gray-50/40"
+                                >
+                                  {/* indent: toggle cell + provider cell merged via padding */}
+                                  <td className="px-2 py-1.5 w-8" />
+                                  <td colSpan={3} className="px-4 py-1.5 pl-10 text-[var(--muted-foreground)] text-[12px]">
+                                    <span className="font-mono">{sub.region}</span>
+                                  </td>
+                                  <td className="px-4 py-1.5" />
+                                  <td className="px-4 py-1.5 text-right tabular-nums text-[12px] text-[var(--muted-foreground)]">
+                                    {sub.count.toLocaleString()}
+                                  </td>
+                                  <td className="px-4 py-1.5 text-right tabular-nums text-[12px] text-[var(--muted-foreground)]">
+                                    {sub.tokens.toLocaleString()}
+                                  </td>
+                                </tr>
+                              ))}
+                            </Fragment>
+                          );
+                        })
                       )}
                       <tr className="bg-gray-50">
+                        <td colSpan={1} />
                         <td
                           colSpan={5}
                           className="px-4 py-3 text-right"
