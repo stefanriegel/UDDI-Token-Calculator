@@ -544,13 +544,13 @@ func str(v interface{}) string {
 // Kerberos requires a domain-joined machine and is out of scope for this tool.
 func BuildNTLMClient(host, username, password string) (*winrm.Client, error) {
 	endpoint := winrm.NewEndpoint(host, winrmPort, false, false, nil, nil, nil, winrmTimeout)
-	params := winrm.DefaultParameters
+	params := *winrm.DefaultParameters
 	enc, err := winrm.NewEncryption("ntlm")
 	if err != nil {
 		return nil, fmt.Errorf("winrm encryption init: %w", err)
 	}
 	params.TransportDecorator = func() winrm.Transporter { return enc }
-	return winrm.NewClientWithParameters(endpoint, username, password, params)
+	return winrm.NewClientWithParameters(endpoint, username, password, &params)
 }
 
 // runPS executes a PowerShell script via WinRM and returns stdout.
