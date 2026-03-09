@@ -1,6 +1,6 @@
 # GoReleaser OSS v2 — prebuilt builder pattern
 # Binaries are cross-compiled by the GitHub Actions workflow before GoReleaser runs.
-# GoReleaser ingests the pre-built binaries, creates checksums, archives, and GitHub Release.
+# GoReleaser ingests the pre-built binaries, creates checksums, and uploads to GitHub Release.
 version: 2
 
 builds:
@@ -12,16 +12,6 @@ builds:
       - amd64
     prebuilt:
       path: dist/ddi-scanner_{{ .Os }}_{{ .Arch }}/ddi-scanner.exe
-    binary: ddi-scanner
-
-  - id: macos-amd64
-    builder: prebuilt
-    goos:
-      - darwin
-    goarch:
-      - amd64
-    prebuilt:
-      path: dist/ddi-scanner_{{ .Os }}_{{ .Arch }}/ddi-scanner
     binary: ddi-scanner
 
   - id: macos-arm64
