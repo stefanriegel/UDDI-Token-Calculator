@@ -16,6 +16,7 @@ const (
 	ProviderAzure = "azure"
 	ProviderGCP   = "gcp"
 	ProviderAD    = "ad"
+	ProviderNIOS  = "nios"
 )
 
 // ScanRequest carries the opaque, provider-specific inputs for a single provider scan.
