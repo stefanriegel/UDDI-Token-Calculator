@@ -1,5 +1,11 @@
 package server
 
+// VersionResponse is the JSON body for GET /api/v1/version.
+type VersionResponse struct {
+	Version string `json:"version"` // e.g. "v1.0.0-5-gabcdef1" or "dev"
+	Commit  string `json:"commit"`  // e.g. "abcdef12" or "none"
+}
+
 // HealthResponse is the JSON body for GET /api/v1/health.
 type HealthResponse struct {
 	Status  string `json:"status"`

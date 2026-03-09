@@ -47,6 +47,7 @@ func NewRouter(staticHandler http.Handler, store *session.Store, orch *orchestra
 		exportHandler := NewExportHandler(store)
 		r.Route("/api/v1", func(r chi.Router) {
 			r.Get("/health", HandleHealth)
+			r.Get("/version", HandleVersion)
 			r.Post("/scan", scanHandler.HandleStartScan)
 			r.Get("/scan/{scanId}/events", scanHandler.HandleScanEvents)
 			r.Get("/scan/{scanId}/results", scanHandler.HandleScanResults)
@@ -56,6 +57,7 @@ func NewRouter(staticHandler http.Handler, store *session.Store, orch *orchestra
 	} else {
 		r.Route("/api/v1", func(r chi.Router) {
 			r.Get("/health", HandleHealth)
+			r.Get("/version", HandleVersion)
 		})
 	}
 
