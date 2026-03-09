@@ -32,6 +32,8 @@ type AWSCredentials struct {
 	Region          string
 	ProfileName     string
 	RoleARN         string
+	SSOStartURL     string
+	SSORegion       string
 }
 
 // AzureCredentials holds Azure-specific authentication material.

@@ -4,14 +4,20 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"time"
 
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/sso"
+	"github.com/aws/aws-sdk-go-v2/service/ssooidc"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	armsubscriptions "github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armsubscriptions"
 	"github.com/go-chi/chi/v5"
+	pkgbrowser "github.com/pkg/browser"
 
 	"github.com/infoblox/uddi-go-token-calculator/internal/session"
 )
@@ -144,6 +150,8 @@ func storeCredentials(sess *session.Session, provider, authMethod string, creds 
 			Region:          creds["region"],
 			ProfileName:     creds["profileName"],
 			RoleARN:         creds["roleArn"],
+			SSOStartURL:     creds["ssoStartUrl"],
+			SSORegion:       creds["ssoRegion"],
 		}
 	case "azure":
 		sess.Azure = &session.AzureCredentials{
@@ -168,11 +176,155 @@ func storeCredentials(sess *session.Session, provider, authMethod string, creds 
 	}
 }
 
+// realAWSSSO implements the AWS IAM Identity Center (SSO) OIDC device authorization flow.
+// It registers an OIDC client, starts device authorization, opens the system browser for
+// the user to approve, then polls until a token is received or the 120-second timeout fires.
+// On success it lists all accessible AWS accounts via the SSO service.
+func realAWSSSO(ctx context.Context, creds map[string]string) ([]SubscriptionItem, error) {
+	startURL := creds["ssoStartUrl"]
+	ssoRegion := creds["ssoRegion"]
+	if startURL == "" || ssoRegion == "" {
+		return nil, errors.New("ssoStartUrl and ssoRegion are required for SSO authentication")
+	}
+
+	cfg, err := awsconfig.LoadDefaultConfig(ctx,
+		awsconfig.WithRegion(ssoRegion),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load AWS config: %w", err)
+	}
+
+	oidcClient := ssooidc.NewFromConfig(cfg)
+
+	// Register a public OIDC client — no secret needed for device authorization flow.
+	regResp, err := oidcClient.RegisterClient(ctx, &ssooidc.RegisterClientInput{
+		ClientName: strPtr("ddi-scanner"),
+		ClientType: strPtr("public"),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("OIDC RegisterClient failed: %w", err)
+	}
+
+	// Start device authorization — returns a verification URI and user code.
+	authResp, err := oidcClient.StartDeviceAuthorization(ctx, &ssooidc.StartDeviceAuthorizationInput{
+		ClientId:     regResp.ClientId,
+		ClientSecret: regResp.ClientSecret,
+		StartUrl:     &startURL,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("OIDC StartDeviceAuthorization failed: %w", err)
+	}
+
+	// Open the verification URL in the system browser.
+	openURL := ""
+	if authResp.VerificationUriComplete != nil && *authResp.VerificationUriComplete != "" {
+		openURL = *authResp.VerificationUriComplete
+	} else if authResp.VerificationUri != nil {
+		openURL = *authResp.VerificationUri
+	}
+	if openURL != "" {
+		_ = pkgbrowser.OpenURL(openURL)
+	}
+
+	// Determine polling interval; AWS recommends 5 seconds minimum.
+	pollInterval := 5 * time.Second
+	if authResp.Interval != 0 {
+		pollInterval = time.Duration(authResp.Interval) * time.Second
+	}
+
+	deadline := time.Now().Add(120 * time.Second)
+
+	var accessToken string
+	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return nil, errors.New("SSO login cancelled")
+		case <-time.After(pollInterval):
+		}
+
+		tokenResp, err := oidcClient.CreateToken(ctx, &ssooidc.CreateTokenInput{
+			ClientId:     regResp.ClientId,
+			ClientSecret: regResp.ClientSecret,
+			DeviceCode:   authResp.DeviceCode,
+			GrantType:    strPtr("urn:ietf:params:oauth:grant-type:device_code"),
+		})
+		if err != nil {
+			errStr := err.Error()
+			// These are expected transient errors during polling.
+			if contains(errStr, "AuthorizationPendingException") || contains(errStr, "authorization_pending") {
+				continue
+			}
+			if contains(errStr, "SlowDownException") || contains(errStr, "slow_down") {
+				pollInterval *= 2
+				continue
+			}
+			return nil, fmt.Errorf("SSO login failed: %w", err)
+		}
+
+		if tokenResp.AccessToken != nil {
+			accessToken = *tokenResp.AccessToken
+			break
+		}
+	}
+
+	if accessToken == "" {
+		return nil, errors.New("SSO login timed out — please try again and approve within 2 minutes")
+	}
+
+	// Use the access token to list accessible AWS accounts.
+	ssoClient := sso.NewFromConfig(cfg)
+	var items []SubscriptionItem
+	paginator := sso.NewListAccountsPaginator(ssoClient, &sso.ListAccountsInput{
+		AccessToken: &accessToken,
+	})
+	for paginator.HasMorePages() {
+		page, err := paginator.NextPage(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to list SSO accounts: %w", err)
+		}
+		for _, acc := range page.AccountList {
+			id := ""
+			name := ""
+			if acc.AccountId != nil {
+				id = *acc.AccountId
+			}
+			if acc.AccountName != nil {
+				name = *acc.AccountName
+			}
+			items = append(items, SubscriptionItem{ID: id, Name: name})
+		}
+	}
+
+	if len(items) == 0 {
+		return nil, errors.New("no AWS accounts accessible via this SSO session")
+	}
+
+	return items, nil
+}
+
+// strPtr returns a pointer to the given string value.
+func strPtr(s string) *string { return &s }
+
+// contains reports whether substr is present in s (case-insensitive not needed here).
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
+		func() bool {
+			for i := 0; i <= len(s)-len(substr); i++ {
+				if s[i:i+len(substr)] == substr {
+					return true
+				}
+			}
+			return false
+		}())
+}
+
 // realAWSValidator calls sts:GetCallerIdentity with the supplied static credentials.
-// Only "access_key" authMethod is supported in Phase 2; others return a coming-soon message.
+// SSO is handled by realAWSSSO; profile and assume-role return a coming-soon message.
 func realAWSValidator(ctx context.Context, creds map[string]string) ([]SubscriptionItem, error) {
 	switch creds["authMethod"] {
-	case "sso", "profile", "assume_role":
+	case "sso":
+		return realAWSSSO(ctx, creds)
+	case "profile", "assume_role", "assume-role":
 		return nil, errors.New("Coming soon — not yet implemented in this version")
 	}
 
@@ -213,11 +365,78 @@ func realAWSValidator(ctx context.Context, creds map[string]string) ([]Subscript
 	}}, nil
 }
 
+// realAzureBrowserSSO implements interactive browser login via azidentity.InteractiveBrowserCredential.
+// It uses the well-known Azure CLI public client ID so users do not need their own app registration.
+// The SDK opens a localhost redirect listener and launches the system browser automatically.
+func realAzureBrowserSSO(ctx context.Context, creds map[string]string) ([]SubscriptionItem, error) {
+	tenantID := creds["tenantId"]
+	if tenantID == "" {
+		return nil, errors.New("tenantId is required for browser SSO authentication")
+	}
+
+	// Use the Azure CLI well-known public client ID — no client secret required.
+	const azureCLIClientID = "04b07795-8ddb-461a-bbee-02f9e1bf7b46"
+
+	cred, err := azidentity.NewInteractiveBrowserCredential(&azidentity.InteractiveBrowserCredentialOptions{
+		TenantID: tenantID,
+		ClientID: azureCLIClientID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create browser credential: %w", err)
+	}
+
+	// GetToken triggers the browser open and blocks until login completes or ctx is cancelled.
+	_, err = cred.GetToken(ctx, policy.TokenRequestOptions{
+		Scopes: []string{"https://management.azure.com/.default"},
+	})
+	if err != nil {
+		if errors.Is(ctx.Err(), context.Canceled) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return nil, errors.New("browser SSO login cancelled or timed out")
+		}
+		return nil, fmt.Errorf("browser SSO login failed: %w", err)
+	}
+
+	// List subscriptions accessible with this credential.
+	client, err := armsubscriptions.NewClient(cred, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var items []SubscriptionItem
+	pager := client.NewListPager(nil)
+	for pager.More() {
+		page, err := pager.NextPage(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, sub := range page.Value {
+			id := ""
+			name := ""
+			if sub.SubscriptionID != nil {
+				id = *sub.SubscriptionID
+			}
+			if sub.DisplayName != nil {
+				name = *sub.DisplayName
+			}
+			items = append(items, SubscriptionItem{ID: id, Name: name})
+		}
+	}
+
+	if len(items) == 0 {
+		return nil, errors.New("no Azure subscriptions found for this account — ensure the account has Reader role on at least one subscription")
+	}
+
+	return items, nil
+}
+
 // realAzureValidator lists subscriptions using ClientSecretCredential.
 // DefaultAzureCredential is explicitly prohibited — it may pick up ambient credentials
 // from the developer machine and bypass the user-supplied credentials entirely.
 func realAzureValidator(ctx context.Context, creds map[string]string) ([]SubscriptionItem, error) {
-	if creds["authMethod"] == "device_code" {
+	switch creds["authMethod"] {
+	case "browser-sso":
+		return realAzureBrowserSSO(ctx, creds)
+	case "device_code", "device-code":
 		return nil, errors.New("Coming soon — not yet implemented in this version")
 	}
 
@@ -256,6 +475,10 @@ func realAzureValidator(ctx context.Context, creds map[string]string) ([]Subscri
 			}
 			items = append(items, SubscriptionItem{ID: id, Name: name})
 		}
+	}
+
+	if len(items) == 0 {
+		return nil, errors.New("no Azure subscriptions found — ensure the service principal has Reader role on at least one subscription")
 	}
 
 	return items, nil
