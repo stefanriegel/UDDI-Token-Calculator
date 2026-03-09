@@ -41,6 +41,7 @@ type dcResult struct {
 	leaseKeys       map[string]struct{}
 	reservationKeys map[string]struct{}
 	userKeys        map[string]struct{}
+	computerName    string
 }
 
 // dcAggregator accumulates dcResult values from multiple DCs under a caller-held mutex.
@@ -51,6 +52,7 @@ type dcAggregator struct {
 	leaseKeys       map[string]struct{}
 	reservationKeys map[string]struct{}
 	userKeys        map[string]struct{}
+	dcNames         []string
 }
 
 // init allocates all maps. Call before the first merge.
@@ -82,6 +84,9 @@ func (a *dcAggregator) merge(r *dcResult) {
 	}
 	for k := range r.userKeys {
 		a.userKeys[k] = struct{}{}
+	}
+	if r.computerName != "" {
+		a.dcNames = append(a.dcNames, r.computerName)
 	}
 }
 
@@ -124,9 +129,12 @@ func (s *Scanner) Scan(ctx context.Context, req scanner.ScanRequest, publish fun
 
 	username := req.Credentials["username"]
 	password := req.Credentials["password"]
-	source := hosts[0]
 
 	agg := scanAllDCs(ctx, hosts, username, password, publish)
+	// source uses resolved DC computer names so the Detailed Findings table shows
+	// meaningful names (DC01, DC02) instead of raw IPs. Falls back to user-entered
+	// host if COMPUTERNAME query failed for that DC.
+	source := strings.Join(agg.dcNames, ", ")
 
 	// Emit final resource_progress events from aggregated counts.
 	zoneCount := len(agg.zoneNames)
@@ -305,6 +313,11 @@ func scanOneDC(ctx context.Context, host, username, password string, publish fun
 		return nil
 	}
 
+	computerName, cnErr := runPS(ctx, client, `$env:COMPUTERNAME`)
+	if cnErr != nil || strings.TrimSpace(computerName) == "" {
+		computerName = host
+	}
+
 	result := &dcResult{
 		zoneNames:       make(map[string]struct{}),
 		recordKeys:      make(map[string]struct{}),
@@ -313,6 +326,7 @@ func scanOneDC(ctx context.Context, host, username, password string, publish fun
 		reservationKeys: make(map[string]struct{}),
 		userKeys:        make(map[string]struct{}),
 	}
+	result.computerName = computerName
 
 	// DNS — error isolated
 	dnsResult, err := collectDNS(ctx, client)
