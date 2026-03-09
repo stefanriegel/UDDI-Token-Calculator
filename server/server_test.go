@@ -8,6 +8,8 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/infoblox/uddi-go-token-calculator/internal/orchestrator"
+	"github.com/infoblox/uddi-go-token-calculator/internal/session"
 	"github.com/infoblox/uddi-go-token-calculator/server"
 )
 
@@ -21,8 +23,14 @@ func fakeFS() http.Handler {
 	return http.FileServer(http.FS(memFS))
 }
 
+// testRouterDefaults returns a router with nil store+orch for tests that only
+// exercise static serving and do not need the scan endpoints.
+func testRouterDefaults(staticHandler http.Handler) http.Handler {
+	return server.NewRouter(staticHandler, session.NewStore(), orchestrator.New(nil))
+}
+
 func TestStaticServing(t *testing.T) {
-	router := server.NewRouter(fakeFS())
+	router := testRouterDefaults(fakeFS())
 	ts := httptest.NewServer(router)
 	defer ts.Close()
 
@@ -43,7 +51,7 @@ func TestStaticServing(t *testing.T) {
 }
 
 func TestStaticAssets(t *testing.T) {
-	router := server.NewRouter(fakeFS())
+	router := testRouterDefaults(fakeFS())
 	ts := httptest.NewServer(router)
 	defer ts.Close()
 

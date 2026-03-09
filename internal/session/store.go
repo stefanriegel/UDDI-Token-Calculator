@@ -5,6 +5,8 @@ import (
 	"encoding/hex"
 	"sync"
 	"time"
+
+	"github.com/infoblox/uddi-go-token-calculator/internal/broker"
 )
 
 // Store is a sync.Map-backed in-memory session store.
@@ -25,6 +27,7 @@ func (s *Store) New() *Session {
 		ID:        newSessionID(),
 		State:     ScanStateCreated,
 		StartedAt: time.Now(),
+		Broker:    broker.New(),
 	}
 	s.m.Store(sess.ID, sess)
 	return sess

@@ -12,6 +12,14 @@ import (
 
 	"github.com/pkg/browser"
 
+	awsstub "github.com/infoblox/uddi-go-token-calculator/internal/scanner/aws"
+	azurestub "github.com/infoblox/uddi-go-token-calculator/internal/scanner/azure"
+	gcpstub "github.com/infoblox/uddi-go-token-calculator/internal/scanner/gcp"
+	adstub "github.com/infoblox/uddi-go-token-calculator/internal/scanner/ad"
+
+	"github.com/infoblox/uddi-go-token-calculator/internal/orchestrator"
+	"github.com/infoblox/uddi-go-token-calculator/internal/scanner"
+	"github.com/infoblox/uddi-go-token-calculator/internal/session"
 	"github.com/infoblox/uddi-go-token-calculator/server"
 )
 
@@ -35,10 +43,20 @@ func main() {
 		log.Fatalf("static handler init: %v", err)
 	}
 
-	// 3. Build the chi router (health endpoint + static fallback).
-	router := server.NewRouter(staticHandler)
+	// 3. Create the session store and orchestrator with all four stub scanners.
+	//    Stub scanners are replaced phase-by-phase (3=AWS, 4=Azure, 5=GCP, 6=AD).
+	store := session.NewStore()
+	orch := orchestrator.New(map[string]scanner.Scanner{
+		scanner.ProviderAWS:   &awsstub.Stub{},
+		scanner.ProviderAzure: &azurestub.Stub{},
+		scanner.ProviderGCP:   &gcpstub.Stub{},
+		scanner.ProviderAD:    &adstub.Stub{},
+	})
 
-	// 4. Start HTTP server in background goroutine.
+	// 4. Build the chi router (health endpoint + scan lifecycle + static fallback).
+	router := server.NewRouter(staticHandler, store, orch)
+
+	// 5. Start HTTP server in background goroutine.
 	//    The socket is already bound — http.Serve begins accepting immediately.
 	go func() {
 		if err := http.Serve(ln, router); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -46,12 +64,12 @@ func main() {
 		}
 	}()
 
-	// 5. Open the default browser. The socket is bound before this call — no race (INFRA-03).
+	// 6. Open the default browser. The socket is bound before this call — no race (INFRA-03).
 	if err := browser.OpenURL(url); err != nil {
 		log.Printf("could not open browser automatically; visit %s manually", url)
 	}
 
-	// 6. Block until Ctrl+C or SIGTERM.
+	// 7. Block until Ctrl+C or SIGTERM.
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
 	<-quit

@@ -6,15 +6,17 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/infoblox/uddi-go-token-calculator/internal/orchestrator"
+	"github.com/infoblox/uddi-go-token-calculator/internal/session"
 	"github.com/infoblox/uddi-go-token-calculator/server"
 )
 
 func TestHealthEndpoint(t *testing.T) {
-	// NewRouter requires a static handler — use a minimal no-op for this test
+	// NewRouter requires a static handler — use a minimal no-op for this test.
 	staticHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 	})
-	router := server.NewRouter(staticHandler)
+	router := server.NewRouter(staticHandler, session.NewStore(), orchestrator.New(nil))
 	ts := httptest.NewServer(router)
 	defer ts.Close()
 
