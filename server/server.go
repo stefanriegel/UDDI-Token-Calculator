@@ -44,11 +44,13 @@ func NewRouter(staticHandler http.Handler, store *session.Store, orch *orchestra
 
 	if orch != nil {
 		scanHandler := NewScanHandler(store, orch)
+		exportHandler := NewExportHandler(store)
 		r.Route("/api/v1", func(r chi.Router) {
 			r.Get("/health", HandleHealth)
 			r.Post("/scan", scanHandler.HandleStartScan)
 			r.Get("/scan/{scanId}/events", scanHandler.HandleScanEvents)
 			r.Get("/scan/{scanId}/results", scanHandler.HandleScanResults)
+			r.Get("/scan/{scanId}/export", exportHandler.HandleExport)
 			r.Post("/session/clone", scanHandler.HandleCloneSession)
 		})
 	} else {
