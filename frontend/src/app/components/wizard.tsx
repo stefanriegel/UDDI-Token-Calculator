@@ -226,6 +226,34 @@ export function Wizard() {
     try {
       const authMethod = selectedAuthMethod[providerId];
       const creds = credentials[providerId] || {};
+
+      // Client-side field validation — guard against React state not capturing input values
+      // (e.g. browser autocomplete that bypasses onChange, or rapid clicking before state commits).
+      // This prevents confusing backend-generated error messages when fields appear visually
+      // filled but React's controlled-input state hasn't updated (common with browser autocomplete).
+      // Non-secret, non-optional required fields must be non-empty before the API call is made.
+      const providerDef = PROVIDERS.find((p) => p.id === providerId);
+      const currentAuth = providerDef?.authMethods.find((m) => m.id === authMethod) ?? providerDef?.authMethods[0];
+      // Keys that have backend defaults or are semantically optional (despite not having
+      // "(optional)" in the label). These are skipped in the client-side required check.
+      const OPTIONAL_KEYS = new Set(['region', 'ssoRegion', 'sourceProfile', 'externalId', 'useSSL']);
+      const missingRequired = (currentAuth?.fields ?? []).filter(
+        (f) =>
+          !f.secret &&
+          !OPTIONAL_KEYS.has(f.key) &&
+          !f.label.toLowerCase().includes('(optional)') &&
+          !creds[f.key]?.trim()
+      );
+      if (missingRequired.length > 0) {
+        const labels = missingRequired.map((f) => f.label).join(' and ');
+        setCredentialStatus((prev) => ({ ...prev, [providerId]: 'error' }));
+        setCredentialError((prev) => ({
+          ...prev,
+          [providerId]: `${labels} ${missingRequired.length === 1 ? 'is' : 'are'} required`,
+        }));
+        return;
+      }
+
       const result = await apiValidate(providerId, authMethod, creds);
       if (result.valid) {
         setCredentialStatus((prev) => ({ ...prev, [providerId]: 'valid' }));
