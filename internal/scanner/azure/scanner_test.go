@@ -1,8 +1,7 @@
-//go:build ignore
-
-// Package azure — Wave 0 test scaffold.
-// The //go:build ignore gate above keeps this file excluded from go test ./...
-// until Plan 02 installs armprivatedns, renames countVMs→countVMIPs, and removes the gate.
+// Package azure — test scaffold activated in Plan 02.
+// Plan 01 used a //go:build ignore gate while armprivatedns and countVMIPs
+// were not yet present. Plan 02 removes the gate, installs armprivatedns,
+// and renames countVMs→countVMIPs so all assertions compile.
 package azure
 
 import (
