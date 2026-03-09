@@ -1,6 +1,3 @@
-//go:build ignore
-// Build constraint removed in plan 02 once ec2 SDK is in go.mod.
-
 package aws
 
 import (
