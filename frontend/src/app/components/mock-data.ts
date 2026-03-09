@@ -1,4 +1,4 @@
-export type ProviderType = 'aws' | 'azure' | 'gcp' | 'microsoft';
+export type ProviderType = 'aws' | 'azure' | 'gcp' | 'ad';
 
 export interface CredentialField {
   key: string;
@@ -168,7 +168,7 @@ export const PROVIDERS: ProviderOption[] = [
     ],
   },
   {
-    id: 'microsoft',
+    id: 'ad',
     name: 'MS DHCP/DNS',
     fullName: 'Microsoft DHCP & DNS Server',
     color: '#7fba00',
@@ -291,7 +291,7 @@ export const MOCK_SUBSCRIPTIONS: Record<ProviderType, { id: string; name: string
     },
     false,
   ),
-  microsoft: [
+  ad: [
     { id: 'ms-001', name: 'DC01.corp.example.com', selected: true },
     { id: 'ms-002', name: 'DC02.corp.example.com', selected: true },
     { id: 'ms-003', name: 'BRANCH-NYC.corp.example.com', selected: false },
@@ -422,24 +422,24 @@ export function generateMockFindings(selectedProviders: ProviderType[]): Finding
       row('gcp', 'infra-prod-2026', 'Active IPs', 'GKE Service IPs', 86),
       // Assets — crosswalk notes: no explicit asset rows for GCP collector
     ],
-    microsoft: [
+    ad: [
       // Microsoft DHCP/DNS — not in the cloud crosswalk; keeping on-prem labels
       // DDI Objects
-      row('microsoft', 'DC01.corp.example.com', 'DDI Objects', 'DNS Forward Zones', 24),
-      row('microsoft', 'DC01.corp.example.com', 'DDI Objects', 'DNS Reverse Zones', 8),
-      row('microsoft', 'DC01.corp.example.com', 'DDI Objects', 'DNS Resource Records', 4567),
-      row('microsoft', 'DC01.corp.example.com', 'DDI Objects', 'DNS Views', 3),
-      row('microsoft', 'DC01.corp.example.com', 'DDI Objects', 'DHCP Scopes', 45),
-      row('microsoft', 'DC01.corp.example.com', 'DDI Objects', 'DHCP Reservations', 312),
-      row('microsoft', 'DC01.corp.example.com', 'DDI Objects', 'IP Subnets', 64),
-      row('microsoft', 'DC01.corp.example.com', 'DDI Objects', 'Address Blocks', 12),
+      row('ad', 'DC01.corp.example.com', 'DDI Objects', 'DNS Forward Zones', 24),
+      row('ad', 'DC01.corp.example.com', 'DDI Objects', 'DNS Reverse Zones', 8),
+      row('ad', 'DC01.corp.example.com', 'DDI Objects', 'DNS Resource Records', 4567),
+      row('ad', 'DC01.corp.example.com', 'DDI Objects', 'DNS Views', 3),
+      row('ad', 'DC01.corp.example.com', 'DDI Objects', 'DHCP Scopes', 45),
+      row('ad', 'DC01.corp.example.com', 'DDI Objects', 'DHCP Reservations', 312),
+      row('ad', 'DC01.corp.example.com', 'DDI Objects', 'IP Subnets', 64),
+      row('ad', 'DC01.corp.example.com', 'DDI Objects', 'Address Blocks', 12),
       // Active IPs
-      row('microsoft', 'DC01.corp.example.com', 'Active IPs', 'DHCP Active Leases', 8920),
-      row('microsoft', 'DC01.corp.example.com', 'Active IPs', 'Static IP Assignments', 1245),
+      row('ad', 'DC01.corp.example.com', 'Active IPs', 'DHCP Active Leases', 8920),
+      row('ad', 'DC01.corp.example.com', 'Active IPs', 'Static IP Assignments', 1245),
       // Assets
-      row('microsoft', 'DC01.corp.example.com', 'Managed Assets', 'Physical Appliances', 2),
-      row('microsoft', 'DC01.corp.example.com', 'Managed Assets', 'Virtual Appliances', 4),
-      row('microsoft', 'DC01.corp.example.com', 'Managed Assets', 'HA Nodes', 2),
+      row('ad', 'DC01.corp.example.com', 'Managed Assets', 'Physical Appliances', 2),
+      row('ad', 'DC01.corp.example.com', 'Managed Assets', 'Virtual Appliances', 4),
+      row('ad', 'DC01.corp.example.com', 'Managed Assets', 'HA Nodes', 2),
     ],
   };
 

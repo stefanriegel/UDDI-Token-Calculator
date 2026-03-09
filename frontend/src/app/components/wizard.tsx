@@ -66,13 +66,13 @@ export function Wizard() {
     aws: {},
     azure: {},
     gcp: {},
-    microsoft: {},
+    ad: {},
   });
   const [credentialStatus, setCredentialStatus] = useState<Record<ProviderType, 'idle' | 'validating' | 'valid' | 'error'>>({
     aws: 'idle',
     azure: 'idle',
     gcp: 'idle',
-    microsoft: 'idle',
+    ad: 'idle',
   });
   const [subscriptions, setSubscriptions] = useState<
     Record<ProviderType, { id: string; name: string; selected: boolean }[]>
@@ -80,17 +80,17 @@ export function Wizard() {
     aws: [],
     azure: [],
     gcp: [],
-    microsoft: [],
+    ad: [],
   });
   const [scanProgress, setScanProgress] = useState(0);
   const [providerScanProgress, setProviderScanProgress] = useState<Record<ProviderType, number>>({
-    aws: 0, azure: 0, gcp: 0, microsoft: 0,
+    aws: 0, azure: 0, gcp: 0, ad: 0,
   });
   const [findings, setFindings] = useState<FindingRow[]>([]);
   const [scanResults, setScanResults] = useState<ScanResultsResponse | null>(null);
   const [providerErrors, setProviderErrors] = useState<{ provider: string; resource: string; message: string }[]>([]);
   const [credentialError, setCredentialError] = useState<Record<ProviderType, string>>({
-    aws: '', azure: '', gcp: '', microsoft: '',
+    aws: '', azure: '', gcp: '', ad: '',
   });
   const [scanError, setScanError] = useState<string>('');
   const [scanId, setScanId] = useState<string>('');
@@ -100,10 +100,10 @@ export function Wizard() {
     aws: 'access-key',
     azure: 'service-principal',
     gcp: 'service-account',
-    microsoft: 'ntlm',
+    ad: 'ntlm',
   });
   const [sourceSearch, setSourceSearch] = useState<Record<ProviderType, string>>({
-    aws: '', azure: '', gcp: '', microsoft: '',
+    aws: '', azure: '', gcp: '', ad: '',
   });
   // Findings table filters & sorting
   const [findingsProviderFilter, setFindingsProviderFilter] = useState<Set<ProviderType>>(new Set());
@@ -112,7 +112,7 @@ export function Wizard() {
 
   // Selection mode: 'include' = checked items will be scanned; 'exclude' = checked items will be SKIPPED
   const [selectionMode, setSelectionMode] = useState<Record<ProviderType, 'include' | 'exclude'>>({
-    aws: 'include', azure: 'include', gcp: 'include', microsoft: 'include',
+    aws: 'include', azure: 'include', gcp: 'include', ad: 'include',
   });
 
   // Compute effective selection (what actually gets scanned) based on mode
@@ -174,19 +174,19 @@ export function Wizard() {
     clearScanIntervals();
     setCurrentStep('providers');
     setSelectedProviders([]);
-    setCredentials({ aws: {}, azure: {}, gcp: {}, microsoft: {} });
-    setCredentialStatus({ aws: 'idle', azure: 'idle', gcp: 'idle', microsoft: 'idle' });
-    setSubscriptions({ aws: [], azure: [], gcp: [], microsoft: [] });
+    setCredentials({ aws: {}, azure: {}, gcp: {}, ad: {} });
+    setCredentialStatus({ aws: 'idle', azure: 'idle', gcp: 'idle', ad: 'idle' });
+    setSubscriptions({ aws: [], azure: [], gcp: [], ad: [] });
     setScanProgress(0);
-    setProviderScanProgress({ aws: 0, azure: 0, gcp: 0, microsoft: 0 });
+    setProviderScanProgress({ aws: 0, azure: 0, gcp: 0, ad: 0 });
     setFindings([]);
     setScanResults(null);
     setProviderErrors([]);
-    setCredentialError({ aws: '', azure: '', gcp: '', microsoft: '' });
+    setCredentialError({ aws: '', azure: '', gcp: '', ad: '' });
     setScanError('');
     setScanId('');
-    setSourceSearch({ aws: '', azure: '', gcp: '', microsoft: '' });
-    setSelectionMode({ aws: 'include', azure: 'include', gcp: 'include', microsoft: 'include' });
+    setSourceSearch({ aws: '', azure: '', gcp: '', ad: '' });
+    setSelectionMode({ aws: 'include', azure: 'include', gcp: 'include', ad: 'include' });
     setFindingsProviderFilter(new Set());
     setFindingsCategoryFilter(new Set());
     setFindingsSort(null);
@@ -335,7 +335,7 @@ export function Wizard() {
     clearScanIntervals();
     setScanProgress(0);
     setScanError('');
-    const initProgress: Record<ProviderType, number> = { aws: 0, azure: 0, gcp: 0, microsoft: 0 };
+    const initProgress: Record<ProviderType, number> = { aws: 0, azure: 0, gcp: 0, ad: 0 };
     setProviderScanProgress(initProgress);
     setFindings([]);
 
@@ -655,7 +655,7 @@ export function Wizard() {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {PROVIDERS.map((provider) => {
                   const selected = selectedProviders.includes(provider.id);
-                  const Icon = provider.id === 'microsoft' ? Server : Cloud;
+                  const Icon = provider.id === 'ad' ? Server : Cloud;
                   return (
                     <button
                       key={provider.id}
@@ -713,7 +713,7 @@ export function Wizard() {
                 {selectedProviders.map((provId) => {
                   const provider = PROVIDERS.find((p) => p.id === provId)!;
                   const status = credentialStatus[provId];
-                  const Icon = provId === 'microsoft' ? Server : Cloud;
+                  const Icon = provId === 'ad' ? Server : Cloud;
                   const currentAuthId = selectedAuthMethod[provId];
                   const currentAuth = provider.authMethods.find((m) => m.id === currentAuthId) || provider.authMethods[0];
                   const hasFields = currentAuth.fields.length > 0;
@@ -759,7 +759,7 @@ export function Wizard() {
                               aws: ['sso', 'profile', 'assume-role'],
                               azure: ['browser-sso', 'device-code', 'certificate', 'az-cli'],
                               gcp: ['browser-oauth', 'adc', 'workload-identity'],
-                              microsoft: ['kerberos', 'powershell-remote'],
+                              ad: ['kerberos', 'powershell-remote'],
                             };
                             const isComingSoon = COMING_SOON[provId]?.includes(method.id) ?? false;
                             return (
@@ -937,7 +937,7 @@ export function Wizard() {
                 {selectedProviders.map((provId) => {
                   const provider = PROVIDERS.find((p) => p.id === provId)!;
                   const subs = subscriptions[provId] || [];
-                  const Icon = provId === 'microsoft' ? Server : Cloud;
+                  const Icon = provId === 'ad' ? Server : Cloud;
                   const mode = selectionMode[provId];
                   const isExcludeMode = mode === 'exclude';
                   // In include mode: checked = will scan. In exclude mode: checked = will SKIP.
