@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/infoblox/uddi-go-token-calculator/internal/broker"
+	"github.com/infoblox/uddi-go-token-calculator/internal/calculator"
 )
 
 // ScanState is a string type so log messages are human-readable without a lookup table.
@@ -85,6 +86,10 @@ type Session struct {
 
 	Errors []ProviderError
 	Broker *broker.Broker
+
+	// TokenResult is set by the scan goroutine when the orchestrator finishes.
+	// Protected by mu; read only after State == ScanStateComplete.
+	TokenResult calculator.TokenResult
 
 	mu sync.RWMutex // guards concurrent access to mutable fields
 }
