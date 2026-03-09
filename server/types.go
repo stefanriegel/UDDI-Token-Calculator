@@ -45,6 +45,29 @@ type ProviderErrorResponse struct {
 	Message  string `json:"message"`
 }
 
+// ValidateRequest is the body for POST /api/v1/providers/{provider}/validate.
+// Credentials are write-once into the session store and must never appear in
+// any log statement or response body.
+type ValidateRequest struct {
+	AuthMethod  string            `json:"authMethod"`
+	Credentials map[string]string `json:"credentials"`
+}
+
+// SubscriptionItem is one entry in the subscriptions array returned by validate.
+type SubscriptionItem struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// ValidateResponse is the response from POST /api/v1/providers/{provider}/validate.
+// On success: valid=true, sessionId set in cookie, subscriptions populated.
+// On failure: valid=false, error set, no session created.
+type ValidateResponse struct {
+	Valid         bool               `json:"valid"`
+	Error         string             `json:"error,omitempty"`
+	Subscriptions []SubscriptionItem `json:"subscriptions"`
+}
+
 // ScanResultsResponse is the body for GET /api/v1/scan/{id}/results.
 type ScanResultsResponse struct {
 	ScanID                string                  `json:"scanId"`
