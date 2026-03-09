@@ -181,10 +181,16 @@ func realAWSValidator(ctx context.Context, creds map[string]string) ([]Subscript
 		return nil, errors.New("accessKeyId and secretAccessKey are required")
 	}
 
+	region := creds["region"]
+	if region == "" {
+		region = "us-east-1" // STS is a global service; any region works for GetCallerIdentity
+	}
+
 	cfg, err := awsconfig.LoadDefaultConfig(ctx,
 		awsconfig.WithCredentialsProvider(
 			credentials.NewStaticCredentialsProvider(accessKeyID, secretAccessKey, ""),
 		),
+		awsconfig.WithRegion(region),
 	)
 	if err != nil {
 		return nil, err
