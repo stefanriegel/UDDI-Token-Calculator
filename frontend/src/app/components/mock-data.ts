@@ -1,4 +1,4 @@
-export type ProviderType = 'aws' | 'azure' | 'gcp' | 'ad';
+export type ProviderType = 'aws' | 'azure' | 'gcp' | 'ad' | 'nios';
 
 export interface CredentialField {
   key: string;
@@ -24,6 +24,7 @@ export interface ProviderOption {
   description: string;
   authMethods: AuthMethod[];
   subscriptionLabel: string;
+  isFileUpload?: boolean;   // true for providers that use file upload instead of credential fields
 }
 
 export const PROVIDERS: ProviderOption[] = [
@@ -170,6 +171,16 @@ export const PROVIDERS: ProviderOption[] = [
       },
     ],
   },
+  {
+    id: 'nios',
+    name: 'NIOS',
+    fullName: 'NIOS Grid Backup',
+    color: '#00A1FF',
+    description: 'Upload a NIOS Grid backup (.tar.gz, .tgz, or .bak) to discover DDI objects per Grid Member',
+    authMethods: [],
+    subscriptionLabel: 'Grid Members',
+    isFileUpload: true,
+  },
 ];
 
 // Mock subscription/account lists per provider
@@ -263,6 +274,7 @@ export const MOCK_SUBSCRIPTIONS: Record<ProviderType, { id: string; name: string
     { id: 'ms-005', name: 'BRANCH-SYD.corp.example.com', selected: false },
     { id: 'ms-006', name: 'DR-DC01.corp.example.com', selected: false },
   ],
+  nios: [],
 };
 
 // Management Token rates per Infoblox Universal DDI Licensing
@@ -299,6 +311,7 @@ function row(provider: ProviderType, source: string, category: TokenCategory, it
 export function generateMockFindings(selectedProviders: ProviderType[]): FindingRow[] {
   const rows: FindingRow[] = [];
   const data: Record<ProviderType, FindingRow[]> = {
+    nios: [],
     aws: [
       // DDI Objects (per crosswalk: AWS → DDI Objects)
       row('aws', 'Production', 'DDI Objects', 'VPCs', 6),
