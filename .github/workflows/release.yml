@@ -1,0 +1,145 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*.*.*"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # Job 1: Run tests on every push and PR (ubuntu-latest)
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: true
+
+      - name: Run tests
+        run: go test ./... -race -count=1
+
+      - name: Run vet
+        run: go vet ./...
+
+  # Job 2: Cross-compile Windows exe (ubuntu-latest, only on main or tag)
+  build:
+    name: Build
+    needs: test
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: true
+
+      - name: Compute version string
+        id: ver
+        run: echo "summary=$(git describe --tags --long --always)" >> "$GITHUB_OUTPUT"
+
+      - name: Cross-compile Windows exe
+        run: |
+          mkdir -p dist
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 \
+            go build \
+            -ldflags="-s -w \
+              -X github.com/infoblox/uddi-go-token-calculator/internal/version.Version=${{ steps.ver.outputs.summary }} \
+              -X github.com/infoblox/uddi-go-token-calculator/internal/version.Commit=${GITHUB_SHA:0:8}" \
+            -o dist/ddi-scanner.exe \
+            ./...
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-exe
+          path: dist/ddi-scanner.exe
+          retention-days: 1
+
+  # Job 3: Sign (Azure Artifact Signing, Windows-only) + GoReleaser release
+  sign-and-release:
+    name: Sign and Release
+    needs: build
+    runs-on: windows-latest
+    permissions:
+      id-token: write   # Required for OIDC token exchange with Azure
+      contents: write   # Required for GoReleaser to create GitHub Release
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # GoReleaser needs full git history for version calculation
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: unsigned-exe
+          path: dist/
+
+      # OIDC login — no long-lived secrets. Requires federated credential in Azure Entra:
+      # Entity type: Branch, Branch: main
+      # Subject: repo:{org}/{repo}:ref:refs/heads/main
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # Sign with Azure Artifact Signing (formerly "Trusted Signing").
+      # IMPORTANT: Use azure/artifact-signing-action@v1 (NOT azure/trusted-signing-action).
+      # Input is signing-account-name (NOT trusted-signing-account-name).
+      # RBAC role: "Artifact Signing Certificate Profile Signer"
+      # Timestamp is mandatory — certificates expire in 3 days without it.
+      - uses: azure/artifact-signing-action@v1
+        with:
+          endpoint: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.AZURE_CERT_PROFILE }}
+          files-folder: dist
+          files-folder-filter: exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      # Verify RFC 3161 timestamp is embedded — if absent, signature expires in 3 days.
+      - name: Verify timestamp in signature
+        shell: pwsh
+        run: |
+          $output = & signtool verify /pa /v dist\ddi-scanner.exe 2>&1
+          Write-Host $output
+          if ($output -notmatch "The signature is timestamped") {
+            Write-Error "FATAL: RFC 3161 timestamp not found in signature — binary is not safe to distribute"
+            exit 1
+          }
+          Write-Host "Timestamp verification passed."
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: true
+
+      # For main-push builds (not tagged releases): create a snapshot tag so GoReleaser
+      # can produce a GitHub Release. GoReleaser OSS requires a tag — nightly/snapshot
+      # publishing is Pro-only. Force-push to 'snapshot' tag keeps only one pre-release entry.
+      - name: Create snapshot tag (main-push builds only)
+        if: github.ref == 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          git config user.email "ci@github.com"
+          git config user.name "GitHub Actions"
+          SNAP_TAG="snapshot-$(git describe --tags --always --abbrev=8)"
+          git tag "$SNAP_TAG"
+
+      - uses: goreleaser/goreleaser-action@v7
+        with:
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,41 @@
+# GoReleaser OSS v2 — prebuilt builder pattern
+# The .exe is compiled and signed by the GitHub Actions workflow before GoReleaser runs.
+# GoReleaser ingests the signed binary, creates checksums, archives, and GitHub Release.
+version: 2
+
+builds:
+  - builder: prebuilt
+    goos:
+      - windows
+    goarch:
+      - amd64
+    prebuilt:
+      path: dist/ddi-scanner.exe
+    binary: ddi-scanner
+
+archives:
+  - id: default
+    name_template: "ddi-scanner_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format: zip
+    # Include only the binary — no extra files in the zip
+    files:
+      - none*
+
+checksum:
+  name_template: "checksums.txt"
+
+snapshot:
+  version_template: "{{ .Summary }}"
+
+release:
+  prerelease: auto     # tags with pre-release segments are marked pre-release
+  name_template: "{{.ProjectName}} {{.Tag}}"
+  make_latest: true
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
