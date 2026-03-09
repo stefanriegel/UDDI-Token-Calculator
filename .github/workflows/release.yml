@@ -65,13 +65,13 @@ jobs:
           mkdir -p dist/ddi-scanner_windows_amd64
           CGO_ENABLED=0 GOOS=windows GOARCH=amd64 \
             go build -ldflags="${LDFLAGS}" \
-            -o dist/ddi-scanner_windows_amd64/ddi-scanner.exe ./...
+            -o dist/ddi-scanner_windows_amd64/ddi-scanner.exe .
 
           # macOS arm64 (Apple Silicon — M1/M2/M3)
           mkdir -p dist/ddi-scanner_darwin_arm64
           CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 \
             go build -ldflags="${LDFLAGS}" \
-            -o dist/ddi-scanner_darwin_arm64/ddi-scanner ./...
+            -o dist/ddi-scanner_darwin_arm64/ddi-scanner .
 
       # For main-push builds (not tagged releases): create a snapshot tag so GoReleaser
       # can produce a GitHub Release. GoReleaser OSS requires a tag — nightly/snapshot
