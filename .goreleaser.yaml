@@ -1,23 +1,46 @@
 # GoReleaser OSS v2 — prebuilt builder pattern
-# The .exe is compiled and signed by the GitHub Actions workflow before GoReleaser runs.
-# GoReleaser ingests the signed binary, creates checksums, archives, and GitHub Release.
+# Binaries are cross-compiled by the GitHub Actions workflow before GoReleaser runs.
+# GoReleaser ingests the pre-built binaries, creates checksums, archives, and GitHub Release.
 version: 2
 
 builds:
-  - builder: prebuilt
+  - id: windows
+    builder: prebuilt
     goos:
       - windows
     goarch:
       - amd64
     prebuilt:
-      path: dist/ddi-scanner.exe
+      path: dist/ddi-scanner_{{ .Os }}_{{ .Arch }}/ddi-scanner.exe
+    binary: ddi-scanner
+
+  - id: macos-amd64
+    builder: prebuilt
+    goos:
+      - darwin
+    goarch:
+      - amd64
+    prebuilt:
+      path: dist/ddi-scanner_{{ .Os }}_{{ .Arch }}/ddi-scanner
+    binary: ddi-scanner
+
+  - id: macos-arm64
+    builder: prebuilt
+    goos:
+      - darwin
+    goarch:
+      - arm64
+    prebuilt:
+      path: dist/ddi-scanner_{{ .Os }}_{{ .Arch }}/ddi-scanner
     binary: ddi-scanner
 
 archives:
   - id: default
     name_template: "ddi-scanner_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
-    format: zip
-    # Include only the binary — no extra files in the zip
+    # Windows: zip, macOS: tar.gz (convention)
+    format_overrides:
+      - goos: windows
+        format: zip
     files:
       - none*
 
@@ -28,7 +51,7 @@ snapshot:
   version_template: "{{ .Summary }}"
 
 release:
-  prerelease: auto     # tags with pre-release segments are marked pre-release
+  prerelease: auto
   name_template: "{{.ProjectName}} {{.Tag}}"
   make_latest: true
 
