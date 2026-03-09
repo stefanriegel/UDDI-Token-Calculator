@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -22,10 +23,12 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	armsubscriptions "github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armsubscriptions"
 	"github.com/go-chi/chi/v5"
+	"github.com/masterzen/winrm"
 	pkgbrowser "github.com/pkg/browser"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 
+	ad "github.com/infoblox/uddi-go-token-calculator/internal/scanner/ad"
 	"github.com/infoblox/uddi-go-token-calculator/internal/session"
 )
 
@@ -707,10 +710,10 @@ func realGCPBrowserOAuth(ctx context.Context, creds map[string]string) ([]Subscr
 	return items, nil
 }
 
-// realADValidator performs Phase 2 structural validation only — real WinRM calls are
-// deferred to Phase 6. If host, username, and password are all non-empty the credentials
-// are accepted as structurally valid and a stub DC list is returned.
-func realADValidator(_ context.Context, creds map[string]string) ([]SubscriptionItem, error) {
+// realADValidator validates Active Directory / WinRM credentials by opening a
+// WinRM connection and running a lightweight PowerShell probe ($PSVersionTable).
+// NTLM is the only supported auth method — Kerberos requires a domain-joined machine.
+func realADValidator(ctx context.Context, creds map[string]string) ([]SubscriptionItem, error) {
 	if creds["authMethod"] == "kerberos" {
 		return nil, errors.New("Coming soon — not yet implemented in this version")
 	}
@@ -725,6 +728,35 @@ func realADValidator(_ context.Context, creds map[string]string) ([]Subscription
 	password := creds["password"]
 	if host == "" || username == "" || password == "" {
 		return nil, errors.New("server address, username, and password are required")
+	}
+
+	// Build a WinRM client with NTLM + message-level encryption via the shared
+	// BuildNTLMClient helper in the ad package — single source of truth for NTLM
+	// client construction. Windows DCs reject unencrypted sessions; BuildNTLMClient
+	// uses bodgit/ntlmssp to produce the SPNEGO multipart/encrypted framing DCs require.
+	client, err := ad.BuildNTLMClient(host, username, password)
+	if err != nil {
+		return nil, fmt.Errorf("WinRM client error: %w", err)
+	}
+
+	// Wrap the connectivity probe in a hard 10s deadline so an unreachable host
+	// fails fast instead of blocking the wizard for the full scan timeout.
+	probeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	var outBuf, errBuf strings.Builder
+	exitCode, err := client.RunWithContext(probeCtx,
+		winrm.Powershell(`$PSVersionTable.PSVersion.Major`),
+		&outBuf, &errBuf,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("WinRM connection failed: %w", err)
+	}
+	if exitCode != 0 {
+		msg := strings.TrimSpace(errBuf.String())
+		if msg == "" {
+			msg = strings.TrimSpace(outBuf.String())
+		}
+		return nil, fmt.Errorf("WinRM probe failed (exit %d): %s", exitCode, msg)
 	}
 
 	return []SubscriptionItem{{

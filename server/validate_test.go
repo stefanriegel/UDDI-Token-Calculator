@@ -122,10 +122,13 @@ func TestValidate_UnknownProvider(t *testing.T) {
 	}
 }
 
-// TestValidate_ComingSoonAuthMethod: authMethod="sso" for AWS → 200, {valid:false, error:"Coming soon..."}.
-func TestValidate_ComingSoonAuthMethod(t *testing.T) {
+// TestValidate_SSOWithEmptyCredentials: authMethod="sso" for AWS with missing fields
+// → 200, {valid:false, error:"ssoStartUrl and ssoRegion are required..."}.
+// SSO is a real path (not "coming soon") — supplying empty credentials returns
+// a descriptive field-validation error.
+func TestValidate_SSOWithEmptyCredentials(t *testing.T) {
 	store := session.NewStore()
-	// Do NOT stub — use the real AWS validator so the coming-soon path fires.
+	// Do NOT stub — use the real AWS validator so the SSO path fires.
 	h := server.NewValidateHandler(store)
 	rec := postValidate(t, store, h, "aws", map[string]interface{}{
 		"authMethod":  "sso",
@@ -140,10 +143,10 @@ func TestValidate_ComingSoonAuthMethod(t *testing.T) {
 		t.Fatalf("decode response: %v", err)
 	}
 	if resp.Valid {
-		t.Error("expected valid=false for coming-soon auth method")
+		t.Error("expected valid=false for SSO with missing credentials")
 	}
-	if !strings.Contains(resp.Error, "Coming soon") {
-		t.Errorf("expected 'Coming soon' in error, got %q", resp.Error)
+	if !strings.Contains(resp.Error, "ssoStartUrl") && !strings.Contains(resp.Error, "ssoRegion") {
+		t.Errorf("expected error about missing SSO fields, got %q", resp.Error)
 	}
 }
 
@@ -234,9 +237,10 @@ func TestValidate_GCPMissingField(t *testing.T) {
 }
 
 // TestValidate_ADStructuralOK: ntlm with host+username+password → 200, valid:true.
+// Uses a stub validator to avoid a real WinRM network call.
 func TestValidate_ADStructuralOK(t *testing.T) {
 	store := session.NewStore()
-	h := server.NewValidateHandler(store)
+	h := newTestValidateHandler(store)
 	rec := postValidate(t, store, h, "ad", map[string]interface{}{
 		"authMethod": "ntlm",
 		"credentials": map[string]string{
@@ -255,6 +259,36 @@ func TestValidate_ADStructuralOK(t *testing.T) {
 	}
 	if !resp.Valid {
 		t.Errorf("expected valid=true, got error: %q", resp.Error)
+	}
+}
+
+// TestValidate_ADMissingPassword: missing "password" in AD credentials → 200, valid:false,
+// error mentions "required". Uses the real realADValidator so the structural guard fires
+// before any network attempt is made.
+func TestValidate_ADMissingPassword(t *testing.T) {
+	store := session.NewStore()
+	h := server.NewValidateHandler(store)
+	rec := postValidate(t, store, h, "ad", map[string]interface{}{
+		"authMethod": "ntlm",
+		"credentials": map[string]string{
+			"server":   "dc01.corp.example.com",
+			"username": "admin",
+			// "password" is missing
+		},
+	})
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp server.ValidateResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Valid {
+		t.Error("expected valid=false for missing password")
+	}
+	if !strings.Contains(resp.Error, "required") {
+		t.Errorf("expected error to mention 'required', got %q", resp.Error)
 	}
 }
 
