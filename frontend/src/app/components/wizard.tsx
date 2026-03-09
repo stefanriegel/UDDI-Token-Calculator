@@ -812,7 +812,7 @@ export function Wizard() {
                   // Browser-flow auth methods open a system browser and poll for a token.
                   // AWS SSO: OIDC device authorization flow (up to 2 min).
                   // Azure browser-sso: InteractiveBrowserCredential (opens localhost redirect).
-                  const BROWSER_FLOW_METHODS = new Set(['sso', 'browser-sso']);
+                  const BROWSER_FLOW_METHODS = new Set(['sso', 'browser-sso', 'browser-oauth']);
                   const isBrowserFlow = BROWSER_FLOW_METHODS.has(currentAuthId);
 
                   return (
@@ -855,7 +855,7 @@ export function Wizard() {
                             const COMING_SOON: Record<ProviderType, string[]> = {
                               aws: ['profile', 'assume-role'],
                               azure: ['device-code', 'certificate', 'az-cli'],
-                              gcp: ['browser-oauth', 'adc', 'workload-identity'],
+                              gcp: ['adc', 'workload-identity'],
                               ad: ['kerberos', 'powershell-remote'],
                             };
                             const isComingSoon = COMING_SOON[provId]?.includes(method.id) ?? false;
@@ -988,12 +988,16 @@ export function Wizard() {
                               <p className="text-[12px] font-medium text-amber-800">
                                 {currentAuthId === 'sso'
                                   ? 'Browser opened — complete AWS SSO login to continue'
-                                  : 'Browser opened — complete Entra ID login to continue'}
+                                  : currentAuthId === 'browser-oauth'
+                                    ? 'Browser opened — complete Google login to continue'
+                                    : 'Browser opened — complete Entra ID login to continue'}
                               </p>
                               <p className="text-[11px] text-amber-700 mt-0.5">
                                 {currentAuthId === 'sso'
                                   ? 'Approve the request in the browser. Waiting up to 2 minutes for confirmation.'
-                                  : 'Sign in with your Microsoft account in the browser window that just opened.'}
+                                  : currentAuthId === 'browser-oauth'
+                                    ? 'Sign in with your Google Workspace account in the browser window that just opened.'
+                                    : 'Sign in with your Microsoft account in the browser window that just opened.'}
                               </p>
                             </div>
                           </div>
