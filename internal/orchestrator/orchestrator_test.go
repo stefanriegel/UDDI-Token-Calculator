@@ -264,6 +264,42 @@ func TestOrchestratorPublishesEvents(t *testing.T) {
 	}
 }
 
+// TestOrchestratorPublishesScanComplete verifies that a scan_complete event is
+// published after all providers finish and before the broker is closed (UI-04).
+// The scan_complete event must have no Provider set — it is a global lifecycle event.
+func TestOrchestratorPublishesScanComplete(t *testing.T) {
+	t.Parallel()
+
+	scanners := map[string]scanner.Scanner{
+		"aws": &awsstub.Stub{},
+	}
+	o := orchestrator.New(scanners)
+
+	sess := newTestSession()
+	collect := subscribeBroker(sess.Broker)
+
+	providers := []orchestrator.ScanProviderRequest{
+		{Provider: "aws"},
+	}
+
+	o.Run(context.Background(), sess, providers)
+	events := collect()
+
+	var scanCompleteEvents []broker.Event
+	for _, e := range events {
+		if e.Type == "scan_complete" {
+			scanCompleteEvents = append(scanCompleteEvents, e)
+		}
+	}
+
+	if len(scanCompleteEvents) != 1 {
+		t.Fatalf("expected exactly 1 scan_complete event, got %d", len(scanCompleteEvents))
+	}
+	if scanCompleteEvents[0].Provider != "" {
+		t.Errorf("expected scan_complete event to have no Provider, got %q", scanCompleteEvents[0].Provider)
+	}
+}
+
 // TestOrchestratorContextCancel verifies that cancelling the context mid-scan
 // causes the orchestrator to return promptly without hanging. Scanners that
 // honour ctx.Done() exit early.

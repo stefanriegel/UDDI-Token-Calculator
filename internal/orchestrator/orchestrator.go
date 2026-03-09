@@ -135,6 +135,7 @@ func (o *Orchestrator) Run(ctx context.Context, sess *session.Session, providers
 	wg.Wait()
 
 	tokenResult := calculator.Calculate(findings)
+	sess.Broker.Publish(broker.Event{Type: "scan_complete"})
 	sess.Broker.Close()
 
 	return OrchestratorResult{
