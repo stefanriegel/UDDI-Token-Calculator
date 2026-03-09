@@ -781,6 +781,11 @@ export function Wizard() {
                   const currentAuthId = selectedAuthMethod[provId];
                   const currentAuth = provider.authMethods.find((m) => m.id === currentAuthId) || provider.authMethods[0];
                   const hasFields = currentAuth.fields.length > 0;
+                  // Browser-flow auth methods open a system browser and poll for a token.
+                  // AWS SSO: OIDC device authorization flow (up to 2 min).
+                  // Azure browser-sso: InteractiveBrowserCredential (opens localhost redirect).
+                  const BROWSER_FLOW_METHODS = new Set(['sso', 'browser-sso']);
+                  const isBrowserFlow = BROWSER_FLOW_METHODS.has(currentAuthId);
 
                   return (
                     <div
@@ -948,6 +953,24 @@ export function Wizard() {
                           </div>
                         )}
 
+                        {isBrowserFlow && status === 'validating' && (
+                          <div className="mt-3 flex items-start gap-2 p-3 bg-amber-50 rounded-lg border border-amber-200">
+                            <Globe className="w-3.5 h-3.5 text-amber-600 mt-0.5 shrink-0" />
+                            <div>
+                              <p className="text-[12px] font-medium text-amber-800">
+                                {currentAuthId === 'sso'
+                                  ? 'Browser opened — complete AWS SSO login to continue'
+                                  : 'Browser opened — complete Entra ID login to continue'}
+                              </p>
+                              <p className="text-[11px] text-amber-700 mt-0.5">
+                                {currentAuthId === 'sso'
+                                  ? 'Approve the request in the browser. Waiting up to 2 minutes for confirmation.'
+                                  : 'Sign in with your Microsoft account in the browser window that just opened.'}
+                              </p>
+                            </div>
+                          </div>
+                        )}
+
                         <button
                           onClick={() => validateCredential(provId)}
                           disabled={status === 'validating' || status === 'valid'}
@@ -966,7 +989,7 @@ export function Wizard() {
                           {status === 'valid' && <CheckCircle2 className="w-3.5 h-3.5" />}
                           {status === 'error' && <AlertCircle className="w-3.5 h-3.5" />}
                           {status === 'validating'
-                            ? (hasFields ? 'Validating...' : 'Authenticating...')
+                            ? (isBrowserFlow ? 'Waiting for browser...' : hasFields ? 'Validating...' : 'Authenticating...')
                             : status === 'valid'
                               ? 'Verified'
                               : status === 'error'
