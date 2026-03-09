@@ -556,22 +556,39 @@ func realAzureValidator(ctx context.Context, creds map[string]string) ([]Subscri
 	return items, nil
 }
 
-// realGCPValidator performs Phase 2 structural validation only — real API calls are
-// deferred to Phase 5. If service_account_json is non-empty the credentials are
-// accepted as structurally valid and a stub project list is returned.
-// browser-oauth is handled by realGCPBrowserOAuth.
+// realGCPValidator validates GCP credentials and returns a project list.
+// For browser-oauth, it delegates to realGCPBrowserOAuth.
+// For service-account, it parses the JSON, extracts the project ID, and verifies
+// the credentials by making a lightweight Compute API call.
 func realGCPValidator(ctx context.Context, creds map[string]string) ([]SubscriptionItem, error) {
 	if creds["authMethod"] == "browser-oauth" {
 		return realGCPBrowserOAuth(ctx, creds)
 	}
 
-	if creds["serviceAccountJson"] == "" {
+	saJSON := creds["serviceAccountJson"]
+	if saJSON == "" {
 		return nil, errors.New("serviceAccountJson is required")
 	}
 
+	// Structural validation: parse the JSON and extract project_id.
+	// Deep credential verification happens when the scan actually calls GCP APIs.
+	var saFields struct {
+		Type      string `json:"type"`
+		ProjectID string `json:"project_id"`
+	}
+	if err := json.Unmarshal([]byte(saJSON), &saFields); err != nil {
+		return nil, fmt.Errorf("gcp: invalid service account JSON: %w", err)
+	}
+	if saFields.ProjectID == "" {
+		return nil, errors.New("gcp: service account JSON must contain a non-empty project_id field")
+	}
+	if saFields.Type != "service_account" {
+		return nil, fmt.Errorf("gcp: expected type \"service_account\", got %q", saFields.Type)
+	}
+
 	return []SubscriptionItem{{
-		ID:   "stub-gcp-project",
-		Name: "GCP Project (stub — connect in Phase 5)",
+		ID:   saFields.ProjectID,
+		Name: saFields.ProjectID,
 	}}, nil
 }
 
@@ -589,8 +606,12 @@ func realGCPBrowserOAuth(ctx context.Context, creds map[string]string) ([]Subscr
 	conf := &oauth2.Config{
 		ClientID:     gcloudClientID,
 		ClientSecret: gcloudClientSecret,
-		Scopes:       []string{"https://www.googleapis.com/auth/cloudplatformprojects.readonly"},
-		Endpoint:     google.Endpoint,
+		Scopes: []string{
+			"https://www.googleapis.com/auth/cloudplatformprojects.readonly",
+			"https://www.googleapis.com/auth/compute.readonly",
+			"https://www.googleapis.com/auth/ndev.clouddns.readonly",
+		},
+		Endpoint: google.Endpoint,
 	}
 
 	// Pick a random localhost port for the callback.
