@@ -92,6 +92,7 @@ func (o *Orchestrator) Run(ctx context.Context, sess *session.Session, providers
 					Type:     e.Type,
 					Provider: e.Provider,
 					Resource: e.Resource,
+					Region:   e.Region,
 					Count:    e.Count,
 					Status:   e.Status,
 					Message:  e.Message,

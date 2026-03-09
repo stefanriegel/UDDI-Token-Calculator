@@ -11,6 +11,7 @@ type Event struct {
 	Type     string `json:"type"`
 	Provider string `json:"provider,omitempty"`
 	Resource string `json:"resource,omitempty"`
+	Region   string `json:"region,omitempty"`
 	Count    int    `json:"count,omitempty"`
 	Status   string `json:"status,omitempty"`
 	Message  string `json:"message,omitempty"`
