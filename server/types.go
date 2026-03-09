@@ -5,3 +5,55 @@ type HealthResponse struct {
 	Status  string `json:"status"`
 	Version string `json:"version"`
 }
+
+// ScanStartRequest is the body for POST /api/v1/scan.
+// sessionId references credentials stored by the validate handler.
+// Credentials are never re-transmitted in this request.
+type ScanStartRequest struct {
+	SessionID string            `json:"sessionId"`
+	Providers []ScanProviderSpec `json:"providers"`
+}
+
+type ScanProviderSpec struct {
+	Provider      string   `json:"provider"`
+	Subscriptions []string `json:"subscriptions"`
+	SelectionMode string   `json:"selectionMode"` // "include" | "exclude"
+}
+
+// ScanStartResponse is returned immediately by POST /api/v1/scan.
+// The scanId equals the sessionId — callers use it for /events and /results.
+type ScanStartResponse struct {
+	ScanID string `json:"scanId"`
+}
+
+// FindingRowResponse is one row in the results findings array.
+// Matches the FindingRowAPI shape the frontend api-client.ts expects (updated for session model).
+type FindingRowResponse struct {
+	Provider         string `json:"provider"`
+	Source           string `json:"source"`
+	Category         string `json:"category"`  // "DDI Objects" | "Active IPs" | "Managed Assets"
+	Item             string `json:"item"`
+	Count            int    `json:"count"`
+	TokensPerUnit    int    `json:"tokensPerUnit"`
+	ManagementTokens int    `json:"managementTokens"`
+}
+
+// ProviderErrorResponse is one entry in the results errors array.
+type ProviderErrorResponse struct {
+	Provider string `json:"provider"`
+	Resource string `json:"resource"`
+	Message  string `json:"message"`
+}
+
+// ScanResultsResponse is the body for GET /api/v1/scan/{id}/results.
+type ScanResultsResponse struct {
+	ScanID                string                  `json:"scanId"`
+	CompletedAt           string                  `json:"completedAt"`    // RFC3339 or "" if still running
+	Status                string                  `json:"status"`         // "running" | "complete"
+	TotalManagementTokens int                     `json:"totalManagementTokens"`
+	DDITokens             int                     `json:"ddiTokens"`
+	IPTokens              int                     `json:"ipTokens"`
+	AssetTokens           int                     `json:"assetTokens"`
+	Findings              []FindingRowResponse    `json:"findings"`
+	Errors                []ProviderErrorResponse `json:"errors"`
+}
