@@ -2,6 +2,7 @@ package server
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -11,7 +12,7 @@ import (
 )
 
 // NewRouter builds the chi router with:
-//   - Middleware: Logger, Recoverer
+//   - Middleware: Logger (SSE polling endpoints suppressed), Recoverer
 //   - /api/v1/health → HandleHealth
 //   - /api/v1/providers/{provider}/validate → ValidateHandler (credential validation + session creation)
 //   - /api/v1/scan → scan lifecycle handlers (start, events, results)
@@ -23,7 +24,19 @@ import (
 // orch may be nil when only the validate handler needs to be exercised (tests).
 func NewRouter(staticHandler http.Handler, store *session.Store, orch *orchestrator.Orchestrator) *chi.Mux {
 	r := chi.NewRouter()
-	r.Use(middleware.Logger)
+	// Suppress logger for SSE polling endpoints (/api/v1/scan/.../events) — they fire
+	// every 3 seconds and produce nothing but noise in the console.
+	r.Use(func(next http.Handler) http.Handler {
+		logger := middleware.Logger
+		loggerHandler := logger(next)
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			if strings.HasSuffix(req.URL.Path, "/events") {
+				next.ServeHTTP(w, req)
+				return
+			}
+			loggerHandler.ServeHTTP(w, req)
+		})
+	})
 	r.Use(middleware.Recoverer)
 
 	validateHandler := NewValidateHandler(store)
