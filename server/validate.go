@@ -697,10 +697,48 @@ func realADValidator(ctx context.Context, creds map[string]string) ([]Subscripti
 		return nil, fmt.Errorf("WinRM probe failed (exit %d): %s", exitCode, msg)
 	}
 
-	// Return one SubscriptionItem per server (all entered DCs, not just the probed one).
+	// Resolve COMPUTERNAME for each DC concurrently (best-effort, 10s timeout per server).
+	// On success: name = "DC01 (192.168.1.10)". On failure: fall back to raw host.
+	const maxConcurrentResolutions = 5
+	sem := make(chan struct{}, maxConcurrentResolutions)
+	names := make([]string, len(servers))
+	var wg sync.WaitGroup
+	for i, s := range servers {
+		wg.Add(1)
+		go func(idx int, host string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			c, cerr := ad.BuildNTLMClient(host, username, password)
+			if cerr != nil {
+				names[idx] = host
+				return
+			}
+			resolveCtx, resolveCancel := context.WithTimeout(ctx, 10*time.Second)
+			defer resolveCancel()
+			var nameOut, nameErr strings.Builder
+			exitCode2, rerr := c.RunWithContext(resolveCtx,
+				winrm.Powershell(`$env:COMPUTERNAME`),
+				&nameOut, &nameErr,
+			)
+			if rerr != nil || exitCode2 != 0 {
+				names[idx] = host
+				return
+			}
+			cn := strings.TrimSpace(nameOut.String())
+			if cn == "" {
+				names[idx] = host
+				return
+			}
+			names[idx] = cn + " (" + host + ")"
+		}(i, s)
+	}
+	wg.Wait()
+
 	items := make([]SubscriptionItem, 0, len(servers))
-	for _, s := range servers {
-		items = append(items, SubscriptionItem{ID: s, Name: "AD Domain Controller " + s})
+	for i, s := range servers {
+		items = append(items, SubscriptionItem{ID: s, Name: names[i]})
 	}
 	return items, nil
 }
