@@ -79,6 +79,13 @@ func (s *Scanner) Scan(_ context.Context, req scanner.ScanRequest, publish func(
 	memberProps := make(map[string]map[string]string) // hostname → props
 	gmHostname := ""
 
+	publish(scanner.Event{
+		Type:     "resource_progress",
+		Provider: "nios",
+		Resource: "pass1_start",
+		Count:    0,
+	})
+
 	if err := streamOnedbXML(backupPath, func(props map[string]string) {
 		xmlType := props["__type"]
 		if _, isMember := MemberXMLTypes[xmlType]; !isMember {
@@ -113,6 +120,13 @@ func (s *Scanner) Scan(_ context.Context, req scanner.ScanRequest, publish func(
 	// ---- Pass 2: collect all parsedObjects and count ----
 	var objects []parsedObject
 
+	publish(scanner.Event{
+		Type:     "resource_progress",
+		Provider: "nios",
+		Resource: "pass2_start",
+		Count:    0,
+	})
+
 	if err := streamOnedbXML(backupPath, func(props map[string]string) {
 		xmlType := props["__type"]
 		family, ok := XMLTypeToFamily[xmlType]
@@ -138,18 +152,26 @@ func (s *Scanner) Scan(_ context.Context, req scanner.ScanRequest, publish func(
 		Count:    len(objects),
 	})
 
+	publish(scanner.Event{
+		Type:     "resource_progress",
+		Provider: "nios",
+		Resource: "counting",
+		Count:    result.gridDDI,
+	})
+
 	// ---- Build FindingRows ----
 	var rows []calculator.FindingRow
 
 	// Grid-level DDI → attributed to GM.
 	if result.gridDDI > 0 {
 		rows = append(rows, calculator.FindingRow{
-			Provider:      "nios",
-			Source:        gmHostname,
-			Category:      calculator.CategoryDDIObjects,
-			Item:          "NIOS Grid DDI Objects",
-			Count:         result.gridDDI,
-			TokensPerUnit: calculator.TokensPerDDIObject,
+			Provider:         "nios",
+			Source:           gmHostname,
+			Category:         calculator.CategoryDDIObjects,
+			Item:             "NIOS Grid DDI Objects",
+			Count:            result.gridDDI,
+			TokensPerUnit:    calculator.TokensPerDDIObject,
+			ManagementTokens: ceilDiv(result.gridDDI, calculator.TokensPerDDIObject),
 		})
 	}
 
@@ -160,12 +182,13 @@ func (s *Scanner) Scan(_ context.Context, req scanner.ScanRequest, publish func(
 		}
 		if acc.ddiCount > 0 {
 			rows = append(rows, calculator.FindingRow{
-				Provider:      "nios",
-				Source:        hostname,
-				Category:      calculator.CategoryDDIObjects,
-				Item:          "NIOS Grid DDI Objects",
-				Count:         acc.ddiCount,
-				TokensPerUnit: calculator.TokensPerDDIObject,
+				Provider:         "nios",
+				Source:           hostname,
+				Category:         calculator.CategoryDDIObjects,
+				Item:             "NIOS Grid DDI Objects",
+				Count:            acc.ddiCount,
+				TokensPerUnit:    calculator.TokensPerDDIObject,
+				ManagementTokens: ceilDiv(acc.ddiCount, calculator.TokensPerDDIObject),
 			})
 		}
 	}
@@ -183,12 +206,13 @@ func (s *Scanner) Scan(_ context.Context, req scanner.ScanRequest, publish func(
 		// The zone count is already included in gridDDI; emit an additional
 		// labeled row so the test can find Item="DNS Zone".
 		rows = append(rows, calculator.FindingRow{
-			Provider:      "nios",
-			Source:        gmHostname,
-			Category:      calculator.CategoryDDIObjects,
-			Item:          "DNS Zone",
-			Count:         dnsZoneCount,
-			TokensPerUnit: calculator.TokensPerDDIObject,
+			Provider:         "nios",
+			Source:           gmHostname,
+			Category:         calculator.CategoryDDIObjects,
+			Item:             "DNS Zone",
+			Count:            dnsZoneCount,
+			TokensPerUnit:    calculator.TokensPerDDIObject,
+			ManagementTokens: ceilDiv(dnsZoneCount, calculator.TokensPerDDIObject),
 		})
 	}
 
@@ -198,12 +222,13 @@ func (s *Scanner) Scan(_ context.Context, req scanner.ScanRequest, publish func(
 	globalLeaseIPSet := buildGlobalLeaseIPSet(result)
 	if len(globalLeaseIPSet) > 0 {
 		rows = append(rows, calculator.FindingRow{
-			Provider:      "nios",
-			Source:        gmHostname,
-			Category:      calculator.CategoryActiveIPs,
-			Item:          "NIOS Active Leases",
-			Count:         len(globalLeaseIPSet),
-			TokensPerUnit: calculator.TokensPerActiveIP,
+			Provider:         "nios",
+			Source:           gmHostname,
+			Category:         calculator.CategoryActiveIPs,
+			Item:             "NIOS Active Leases",
+			Count:            len(globalLeaseIPSet),
+			TokensPerUnit:    calculator.TokensPerActiveIP,
+			ManagementTokens: ceilDiv(len(globalLeaseIPSet), calculator.TokensPerActiveIP),
 		})
 	}
 
@@ -216,12 +241,13 @@ func (s *Scanner) Scan(_ context.Context, req scanner.ScanRequest, publish func(
 	// emit one row for the pair (lexicographically first hostname as primary).
 	for _, hostname := range vnodeMap {
 		rows = append(rows, calculator.FindingRow{
-			Provider:      "nios",
-			Source:        hostname,
-			Category:      calculator.CategoryManagedAssets,
-			Item:          "NIOS Grid Member",
-			Count:         1,
-			TokensPerUnit: calculator.TokensPerManagedAsset,
+			Provider:         "nios",
+			Source:           hostname,
+			Category:         calculator.CategoryManagedAssets,
+			Item:             "NIOS Grid Member",
+			Count:            1,
+			TokensPerUnit:    calculator.TokensPerManagedAsset,
+			ManagementTokens: ceilDiv(1, calculator.TokensPerManagedAsset),
 		})
 	}
 
@@ -294,6 +320,14 @@ func buildMetrics(
 		})
 	}
 	return metrics
+}
+
+// ceilDiv computes ceiling(n / d). Returns 0 if n is 0.
+func ceilDiv(n, d int) int {
+	if n == 0 {
+		return 0
+	}
+	return (n + d - 1) / d
 }
 
 // streamOnedbXML opens the gzip+tar backup at path, finds onedb.xml, and calls
