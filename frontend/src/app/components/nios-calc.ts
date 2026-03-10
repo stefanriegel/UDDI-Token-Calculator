@@ -31,12 +31,26 @@ export interface NiosServerMetrics {
 }
 
 export interface ConsolidatedXaasInstance {
-  tier: ServerTokenTier;          // the XaaS tier used for this instance
+  /** 0-based instance index */
+  index: number;
+  /** Member names consolidated into this instance */
   members: NiosServerMetrics[];
+  /** Aggregate QPS */
+  totalQps: number;
+  /** Aggregate LPS */
+  totalLps: number;
+  /** Aggregate object count */
+  totalObjects: number;
+  /** Number of connections used = member count */
   connectionsUsed: number;
-  extraConnections: number;       // connections beyond tier.maxConnections
-  extraTokens: number;            // extraConnections * XAAS_EXTRA_CONNECTION_COST
-  totalServerTokens: number;      // tier.serverTokens + extraTokens
+  /** Calculated XaaS tier based on aggregate metrics + connection count */
+  tier: ServerTokenTier;
+  /** Extra connections purchased (if connectionsUsed > tier.maxConnections) */
+  extraConnections: number;
+  /** Extra connection token cost */
+  extraConnectionTokens: number;
+  /** Total tokens (tier tokens + extra connection tokens) */
+  totalTokens: number;
 }
 
 // ─── Tier Tables ───────────────────────────────────────────────────────────────
@@ -85,84 +99,90 @@ export function calcServerTokenTier(
 }
 
 /**
- * Bin-packing algorithm to consolidate NiosServerMetrics members into XaaS instances.
+ * Consolidate XaaS-mapped members into the fewest possible XaaS instances.
+ * Each instance is sized by the aggregate QPS/LPS/Objects of its members,
+ * then bumped up if the member count exceeds the tier's maxConnections.
+ * Members that exceed the XL tier capacity spill into additional instances.
  *
- * Algorithm (source: Figma mock-data.ts lines 630–701):
- * 1. Sort members by QPS descending.
- * 2. Accumulate members into a running "current instance".
- * 3. After adding each member, compute aggregate metrics using MAX across members
- *    (server sizing is dominated by peak, not sum — one heavy member can force a larger tier).
- * 4. If adding the next member would push aggregate beyond XL maxQps/maxLps/maxObjects
- *    OR connectionsUsed would exceed XL.maxConnections + XAAS_MAX_EXTRA_CONNECTIONS,
- *    flush the current group as a completed instance and start fresh.
- * 5. For each completed instance: find smallest XaaS tier fitting the aggregate,
- *    compute extraConnections = max(0, connectionsUsed - tier.maxConnections),
- *    extraTokens = extraConnections * XAAS_EXTRA_CONNECTION_COST.
+ * Algorithm (source: Figma mock-data.ts lines 630-701):
+ * 1. Sort members by QPS descending (largest first for better bin-packing).
+ * 2. Accumulate members into a running "current instance" using SUM aggregation.
+ * 3. If adding the next member would push aggregate beyond XL capacity
+ *    OR connectionsUsed would exceed XL.maxConnections + 400 extra, flush.
+ * 4. For each completed instance: find smallest XaaS tier fitting the aggregate,
+ *    bump tier if connections exceed tier's maxConnections.
  */
 export function consolidateXaasInstances(members: NiosServerMetrics[]): ConsolidatedXaasInstance[] {
   if (members.length === 0) return [];
 
-  const xlTier = XAAS_TOKEN_TIERS[XAAS_TOKEN_TIERS.length - 1];
-  const maxConnCap = (xlTier.maxConnections ?? 85) + XAAS_MAX_EXTRA_CONNECTIONS;
-
-  // Sort by QPS descending so high-load members are grouped first
-  const sorted = [...members].sort((a, b) => b.qps - a.qps);
-
+  // Sort members by QPS descending (largest first for better bin-packing)
+  const sorted = [...members].sort((a, b) => (b.qps + b.lps * 100) - (a.qps + a.lps * 100));
   const instances: ConsolidatedXaasInstance[] = [];
-  let currentGroup: NiosServerMetrics[] = [];
-  let aggQps = 0;
-  let aggLps = 0;
-  let aggObjects = 0;
+  const xlTier = XAAS_TOKEN_TIERS[XAAS_TOKEN_TIERS.length - 1];
+  const maxExtraConnections = XAAS_MAX_EXTRA_CONNECTIONS;
 
-  const flushGroup = () => {
-    if (currentGroup.length === 0) return;
-    const tier = calcServerTokenTier(aggQps, aggLps, aggObjects, 'nios-xaas');
-    const connectionsUsed = currentGroup.length;
-    const extraConnections = Math.max(0, connectionsUsed - (tier.maxConnections ?? 0));
-    const extraTokens = extraConnections * XAAS_EXTRA_CONNECTION_COST;
+  let currentMembers: NiosServerMetrics[] = [];
+  let runningQps = 0;
+  let runningLps = 0;
+  let runningObjects = 0;
+
+  const flushInstance = () => {
+    if (currentMembers.length === 0) return;
+    const connectionsUsed = currentMembers.length;
+    // Find tier by aggregate metrics
+    let metricsTier = calcServerTokenTier(runningQps, runningLps, runningObjects, 'nios-xaas');
+    // Bump tier if connections exceed the tier's maxConnections
+    for (const tier of XAAS_TOKEN_TIERS) {
+      if (runningQps <= tier.maxQps && runningLps <= tier.maxLps && runningObjects <= tier.maxObjects
+          && connectionsUsed <= (tier.maxConnections || 0) + maxExtraConnections) {
+        metricsTier = tier;
+        break;
+      }
+    }
+    const baseConnections = metricsTier.maxConnections || 0;
+    const extraConnections = Math.max(0, connectionsUsed - baseConnections);
+    const extraConnectionTokens = extraConnections * XAAS_EXTRA_CONNECTION_COST;
     instances.push({
-      tier,
-      members: [...currentGroup],
+      index: instances.length,
+      members: [...currentMembers],
+      totalQps: runningQps,
+      totalLps: runningLps,
+      totalObjects: runningObjects,
       connectionsUsed,
+      tier: metricsTier,
       extraConnections,
-      extraTokens,
-      totalServerTokens: tier.serverTokens + extraTokens,
+      extraConnectionTokens,
+      totalTokens: metricsTier.serverTokens + extraConnectionTokens,
     });
-    currentGroup = [];
-    aggQps = 0;
-    aggLps = 0;
-    aggObjects = 0;
+    currentMembers = [];
+    runningQps = 0;
+    runningLps = 0;
+    runningObjects = 0;
   };
 
   for (const member of sorted) {
-    // Compute what the aggregate would become if we add this member
-    const nextQps = Math.max(aggQps, member.qps);
-    const nextLps = Math.max(aggLps, member.lps);
-    const nextObjects = Math.max(aggObjects, member.objectCount);
-    const nextConnections = currentGroup.length + 1;
+    const nextQps = runningQps + member.qps;
+    const nextLps = runningLps + member.lps;
+    const nextObjects = runningObjects + member.objectCount;
+    const nextCount = currentMembers.length + 1;
 
-    // Check whether this addition exceeds XL capacity or connection cap
-    const exceedsMetrics =
+    // Would adding this member exceed XL capacity (metrics or max connections + 400 extra)?
+    if (currentMembers.length > 0 && (
       nextQps > xlTier.maxQps ||
       nextLps > xlTier.maxLps ||
-      nextObjects > xlTier.maxObjects;
-    const exceedsConnections = nextConnections > maxConnCap;
-
-    if (currentGroup.length > 0 && (exceedsMetrics || exceedsConnections)) {
-      // Flush current group before adding this member
-      flushGroup();
+      nextObjects > xlTier.maxObjects ||
+      nextCount > (xlTier.maxConnections || 0) + maxExtraConnections
+    )) {
+      flushInstance();
     }
 
-    // Add member to current group
-    currentGroup.push(member);
-    aggQps = Math.max(aggQps, member.qps);
-    aggLps = Math.max(aggLps, member.lps);
-    aggObjects = Math.max(aggObjects, member.objectCount);
+    currentMembers.push(member);
+    runningQps += member.qps;
+    runningLps += member.lps;
+    runningObjects += member.objectCount;
   }
 
-  // Flush remaining group
-  flushGroup();
-
+  flushInstance();
   return instances;
 }
 
