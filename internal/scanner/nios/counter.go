@@ -38,8 +38,9 @@ type countResult struct {
 	memberAccs     map[string]*memberAcc // keyed by member hostname
 	gridDDI        int                   // DDI count attributed to the grid master
 	familyCounts   map[string]int        // per-family DDI counts (e.g. dns_zone -> 5)
-	globalIPSet    map[string]struct{}   // deduplicated IPs across all sources
-	gridLeaseCount int                   // lease IPs attributed to unknown/grid members
+	globalIPSet      map[string]struct{} // deduplicated IPs across all sources
+	discoveryIPSet   map[string]struct{} // discovery_data IPs only (for reporting)
+	gridLeaseCount   int                 // lease IPs attributed to unknown/grid members
 }
 
 // getOrCreateAcc returns the memberAcc for hostname, creating it if absent.
@@ -71,9 +72,10 @@ func (cr *countResult) getOrCreateAcc(hostname string) *memberAcc {
 //     per-member leaseIPSet and globalIPSet; attributed via vnodeMap[VnodeID]
 func countObjects(objects []parsedObject, vnodeMap map[string]string, gmHostname string) countResult {
 	result := countResult{
-		memberAccs:   make(map[string]*memberAcc),
-		familyCounts: make(map[string]int),
-		globalIPSet:  make(map[string]struct{}),
+		memberAccs:     make(map[string]*memberAcc),
+		familyCounts:   make(map[string]int),
+		globalIPSet:    make(map[string]struct{}),
+		discoveryIPSet: make(map[string]struct{}),
 	}
 
 	// Ensure the GM has an accumulator even if it has no direct DDI objects.
@@ -154,6 +156,15 @@ func countObjects(objects []parsedObject, vnodeMap map[string]string, gmHostname
 				acc.ddiCount += 3
 			} else {
 				acc.ddiCount += 2
+			}
+
+		case NiosFamilyDiscoveryData:
+			// Discovery data contributes ip_address to Active IP dedup set.
+			// Not a DDI family, not member-scoped.
+			ip := obj.Props["ip_address"]
+			if ip != "" {
+				result.globalIPSet[ip] = struct{}{}
+				result.discoveryIPSet[ip] = struct{}{}
 			}
 
 		default:

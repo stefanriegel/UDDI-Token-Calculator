@@ -31,6 +31,7 @@ const (
 	NiosFamilyDTCServer        = "dtc_server"
 	NiosFamilyDTCMonitor       = "dtc_monitor"
 	NiosFamilyDTCTopology      = "dtc_topology"
+	NiosFamilyDiscoveryData    = "discovery_data"
 )
 
 // XMLTypeToFamily maps the __type PROPERTY VALUE strings found in onedb.xml
@@ -59,12 +60,47 @@ var XMLTypeToFamily = map[string]string{
 	".com.infoblox.dns.network_view":      NiosFamilyNetworkView,
 	".com.infoblox.one.virtual_node":      NiosFamilyMember,
 
+	// Discovery data — Active IP source (not DDI, not member-scoped).
+	".com.infoblox.dns.discovery_data": NiosFamilyDiscoveryData,
+
 	// DTC types — spec-derived, unverified — no empirical backup observed.
 	".com.infoblox.dns.dtc.lbdn":     NiosFamilyDTCLBDN,
 	".com.infoblox.dns.dtc.pool":     NiosFamilyDTCPool,
 	".com.infoblox.dns.dtc.server":   NiosFamilyDTCServer,
 	".com.infoblox.dns.dtc.monitor":  NiosFamilyDTCMonitor,
 	".com.infoblox.dns.dtc.topology": NiosFamilyDTCTopology,
+
+	// DTC monitor subtypes — spec-derived.
+	".com.infoblox.dns.dtc_monitor_http": NiosFamilyDTCMonitor,
+	".com.infoblox.dns.dtc_monitor_icmp": NiosFamilyDTCMonitor,
+	".com.infoblox.dns.dtc_monitor_pdp":  NiosFamilyDTCMonitor,
+	".com.infoblox.dns.dtc_monitor_sip":  NiosFamilyDTCMonitor,
+	".com.infoblox.dns.dtc_monitor_snmp": NiosFamilyDTCMonitor,
+	".com.infoblox.dns.dtc_monitor_tcp":  NiosFamilyDTCMonitor,
+
+	// DTC topology subtypes — spec-derived.
+	".com.infoblox.dns.dtc_topology_label": NiosFamilyDTCTopology,
+	".com.infoblox.dns.dtc_topology_rule":  NiosFamilyDTCTopology,
+
+	// DTC types via older iDNS namespace — real backups (e.g. ZF) use idns_*
+	// while the spec uses dns.dtc_*. Support both prefixes.
+	".com.infoblox.one.idns_lbdn":           NiosFamilyDTCLBDN,
+	".com.infoblox.one.idns_pool":           NiosFamilyDTCPool,
+	".com.infoblox.one.idns_server":         NiosFamilyDTCServer,
+	".com.infoblox.one.idns_topology_label": NiosFamilyDTCTopology,
+	".com.infoblox.one.idns_topology_rule":  NiosFamilyDTCTopology,
+	".com.infoblox.one.idns_monitor_http":   NiosFamilyDTCMonitor,
+	".com.infoblox.one.idns_monitor_icmp":   NiosFamilyDTCMonitor,
+	".com.infoblox.one.idns_monitor_tcp":    NiosFamilyDTCMonitor,
+	// Also support dns.idns_* prefix variant.
+	".com.infoblox.dns.idns_lbdn":           NiosFamilyDTCLBDN,
+	".com.infoblox.dns.idns_pool":           NiosFamilyDTCPool,
+	".com.infoblox.dns.idns_server":         NiosFamilyDTCServer,
+	".com.infoblox.dns.idns_topology_label": NiosFamilyDTCTopology,
+	".com.infoblox.dns.idns_topology_rule":  NiosFamilyDTCTopology,
+	".com.infoblox.dns.idns_monitor_http":   NiosFamilyDTCMonitor,
+	".com.infoblox.dns.idns_monitor_icmp":   NiosFamilyDTCMonitor,
+	".com.infoblox.dns.idns_monitor_tcp":    NiosFamilyDTCMonitor,
 }
 
 // MemberXMLTypes is the set of __type values that identify Grid Member objects

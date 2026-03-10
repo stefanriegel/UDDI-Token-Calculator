@@ -212,19 +212,18 @@ func (s *Scanner) Scan(_ context.Context, req scanner.ScanRequest, publish func(
 		}
 	}
 
-	// Grid-level Active IPs — count unique active lease IPs only (not fixed/host/network).
-	// Fixed addresses and host addresses contribute to DDI Objects, not Active IPs.
-	// The globalLeaseIPSet is the deduplicated set of active lease IP addresses.
-	globalLeaseIPSet := buildGlobalLeaseIPSet(result)
-	if len(globalLeaseIPSet) > 0 {
+	// Grid-level Active IPs — count ALL unique IPs across all sources:
+	// leases, fixed addresses, host addresses, network reservations, and discovery data.
+	// Uses globalIPSet which deduplicates across all sources to avoid double-counting.
+	if len(result.globalIPSet) > 0 {
 		rows = append(rows, calculator.FindingRow{
 			Provider:         "nios",
 			Source:           gmHostname,
 			Category:         calculator.CategoryActiveIPs,
-			Item:             "NIOS Active Leases",
-			Count:            len(globalLeaseIPSet),
+			Item:             "NIOS Active IPs (All Sources)",
+			Count:            len(result.globalIPSet),
 			TokensPerUnit:    calculator.TokensPerActiveIP,
-			ManagementTokens: ceilDiv(len(globalLeaseIPSet), calculator.TokensPerActiveIP),
+			ManagementTokens: ceilDiv(len(result.globalIPSet), calculator.TokensPerActiveIP),
 		})
 	}
 
@@ -258,19 +257,6 @@ func (s *Scanner) Scan(_ context.Context, req scanner.ScanRequest, publish func(
 	s.mu.Unlock()
 
 	return rows, nil
-}
-
-// buildGlobalLeaseIPSet aggregates unique active lease IPs from all member accumulators.
-// This is distinct from result.globalIPSet which also includes fixed/host/network IPs.
-// Only active lease IPs count as "Active IPs" for the Active IPs FindingRow category.
-func buildGlobalLeaseIPSet(result countResult) map[string]struct{} {
-	global := make(map[string]struct{})
-	for _, acc := range result.memberAccs {
-		for ip := range acc.leaseIPSet {
-			global[ip] = struct{}{}
-		}
-	}
-	return global
 }
 
 // buildMetrics constructs NiosServerMetric entries for each member in vnodeMap.
@@ -332,6 +318,7 @@ var familyDisplayNames = map[string]string{
 	NiosFamilyDTCServer:       "DTC Servers",
 	NiosFamilyDTCMonitor:      "DTC Monitors",
 	NiosFamilyDTCTopology:     "DTC Topologies",
+	NiosFamilyDiscoveryData:   "Discovered IPs",
 }
 
 // familyDisplayName returns the human-readable name for a NiosFamily constant.

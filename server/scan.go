@@ -266,14 +266,18 @@ func parseNiosBackup(r io.Reader) ([]NiosGridMember, error) {
 }
 
 // parseOneDBXML extracts Grid Member records from a NIOS onedb.xml stream.
-// Uses token-based XML parsing to collect PROPERTY elements (NAME/VALUE attributes)
-// for each OBJECT. Member objects are identified by __type=".com.infoblox.one.virtual_node".
+// Uses token-based XML parsing optimized for large backups (2.5M+ objects):
+// reads the __type property first and skips property collection for non-member objects.
+// This reduces memory allocations from millions of maps to ~hundreds (one per member).
 func parseOneDBXML(r io.Reader) ([]NiosGridMember, error) {
 	var members []NiosGridMember
 
 	decoder := xml.NewDecoder(r)
 	var currentProps map[string]string
 	inObject := false
+	isMemberObject := false
+	totalObjects := 0
+	const memberType = ".com.infoblox.one.virtual_node"
 
 	for {
 		tok, err := decoder.Token()
@@ -289,7 +293,9 @@ func parseOneDBXML(r io.Reader) ([]NiosGridMember, error) {
 			switch t.Name.Local {
 			case "OBJECT":
 				inObject = true
-				currentProps = make(map[string]string)
+				isMemberObject = false
+				currentProps = nil // defer allocation until we know it's a member
+				totalObjects++
 			case "PROPERTY":
 				if !inObject {
 					continue
@@ -303,21 +309,35 @@ func parseOneDBXML(r io.Reader) ([]NiosGridMember, error) {
 						value = attr.Value
 					}
 				}
-				if name != "" {
+				// Check if this is the __type property to classify the object.
+				if name == "__type" {
+					if value == memberType {
+						isMemberObject = true
+						currentProps = make(map[string]string)
+						currentProps[name] = value
+					}
+					continue
+				}
+				// Only collect properties for member objects.
+				if isMemberObject && name != "" {
 					currentProps[name] = value
 				}
 			}
 		case xml.EndElement:
 			if t.Name.Local == "OBJECT" && inObject {
 				inObject = false
-				if m, ok := objectToMember(currentProps); ok {
-					members = append(members, m)
+				if isMemberObject && currentProps != nil {
+					if m, ok := objectToMember(currentProps); ok {
+						members = append(members, m)
+					}
 				}
+				isMemberObject = false
 				currentProps = nil
 			}
 		}
 	}
 
+	fmt.Fprintf(os.Stderr, "parseOneDBXML: parsed %d objects, found %d members\n", totalObjects, len(members))
 	return members, nil
 }
 
