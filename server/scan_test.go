@@ -258,6 +258,52 @@ func TestHandleScanResults_Complete(t *testing.T) {
 	}
 }
 
+// TestAggregateFindings_MergesSameKey verifies that rows sharing the same
+// (provider, source, item) key are merged: counts summed, managementTokens recalculated.
+func TestAggregateFindings_MergesSameKey(t *testing.T) {
+	input := []server.FindingRowResponse{
+		{Provider: "aws", Source: "acct1", Region: "us-east-1", Category: "Active IPs", Item: "ec2_ip", Count: 10, TokensPerUnit: 13, ManagementTokens: 1},
+		{Provider: "aws", Source: "acct1", Region: "us-west-2", Category: "Active IPs", Item: "ec2_ip", Count: 5, TokensPerUnit: 13, ManagementTokens: 1},
+		{Provider: "aws", Source: "acct1", Region: "eu-west-1", Category: "Active IPs", Item: "ec2_ip", Count: 8, TokensPerUnit: 13, ManagementTokens: 1},
+	}
+
+	result := server.AggregateFindings(input)
+	if len(result) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(result))
+	}
+	if result[0].Count != 23 {
+		t.Errorf("expected count=23, got %d", result[0].Count)
+	}
+	// ceil(23/13) = 2
+	if result[0].ManagementTokens != 2 {
+		t.Errorf("expected managementTokens=2, got %d", result[0].ManagementTokens)
+	}
+	if result[0].Region != "" {
+		t.Errorf("expected empty region after aggregation, got %q", result[0].Region)
+	}
+}
+
+// TestAggregateFindings_DifferentItemsNotMerged verifies rows with different items stay separate.
+func TestAggregateFindings_DifferentItemsNotMerged(t *testing.T) {
+	input := []server.FindingRowResponse{
+		{Provider: "aws", Source: "acct1", Item: "vpc", Count: 3, TokensPerUnit: 25, ManagementTokens: 1},
+		{Provider: "aws", Source: "acct1", Item: "subnet", Count: 10, TokensPerUnit: 25, ManagementTokens: 1},
+	}
+
+	result := server.AggregateFindings(input)
+	if len(result) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result))
+	}
+}
+
+// TestAggregateFindings_EmptyInput returns empty output.
+func TestAggregateFindings_EmptyInput(t *testing.T) {
+	result := server.AggregateFindings([]server.FindingRowResponse{})
+	if len(result) != 0 {
+		t.Fatalf("expected 0 rows, got %d", len(result))
+	}
+}
+
 // TestHandleScanResults_NotFound: GET /results with unknown scanId → 404.
 func TestHandleScanResults_NotFound(t *testing.T) {
 	store := session.NewStore()

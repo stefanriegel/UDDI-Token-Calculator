@@ -8,6 +8,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -205,18 +206,27 @@ func (h *ScanHandler) HandleUploadNiosBackup(w http.ResponseWriter, r *http.Requ
 	token := fmt.Sprintf("%d", time.Now().UnixNano())
 	niosBackupTokens.Store(token, tmp.Name())
 
-	// Create a session so POST /api/v1/scan can find it via the ddi_session cookie.
-	// This mirrors what validate.go does for other providers.
-	sess := h.store.New()
-	http.SetCookie(w, &http.Cookie{
-		Name:     "ddi_session",
-		Value:    sess.ID,
-		HttpOnly: true,
-		Secure:   false,
-		SameSite: http.SameSiteStrictMode,
-		Path:     "/",
-		MaxAge:   3600,
-	})
+	// Reuse existing session if one exists (multi-provider scenario), otherwise
+	// create a new one. This mirrors the same logic in validate.go HandleValidate
+	// so that NIOS + cloud provider credentials coexist in one session.
+	var sess *session.Session
+	if cookie, err := r.Cookie("ddi_session"); err == nil {
+		if existing, ok := h.store.Get(cookie.Value); ok && existing.State == session.ScanStateCreated {
+			sess = existing
+		}
+	}
+	if sess == nil {
+		sess = h.store.New()
+		http.SetCookie(w, &http.Cookie{
+			Name:     "ddi_session",
+			Value:    sess.ID,
+			HttpOnly: true,
+			Secure:   false,
+			SameSite: http.SameSiteStrictMode,
+			Path:     "/",
+			MaxAge:   3600,
+		})
+	}
 
 	writeJSON(w, http.StatusOK, NiosUploadResponse{
 		Valid:       true,
@@ -370,6 +380,11 @@ func (h *ScanHandler) HandleScanResults(w http.ResponseWriter, r *http.Request) 
 		})
 	}
 
+	// Aggregate rows sharing the same (provider, source, item) to avoid
+	// duplicate display rows (e.g., 15 ec2_ip rows across 15 AWS regions).
+	// This is display-only — calculator.Calculate already sums globally.
+	findings = aggregateFindings(findings)
+
 	// Build per-provider error list.
 	errors := make([]ProviderErrorResponse, 0, len(sess.Errors))
 	for _, pe := range sess.Errors {
@@ -467,6 +482,63 @@ func toOrchestratorProviders(specs []ScanProviderSpec) []orchestrator.ScanProvid
 		reqs = append(reqs, req)
 	}
 	return reqs
+}
+
+// aggregateFindings merges FindingRowResponse rows that share the same
+// (provider, source, item) key. For merged rows: counts are summed,
+// category and tokensPerUnit are kept from the first row (always identical
+// for the same item), managementTokens is recalculated as ceil(sum/tokensPerUnit),
+// and region is cleared (meaningless after aggregation).
+func aggregateFindings(rows []FindingRowResponse) []FindingRowResponse {
+	if len(rows) == 0 {
+		return rows
+	}
+
+	type key struct{ provider, source, item string }
+	type agg struct {
+		row   FindingRowResponse
+		order int // preserve insertion order
+	}
+
+	merged := make(map[key]*agg, len(rows))
+	var order int
+	for _, r := range rows {
+		k := key{r.Provider, r.Source, r.Item}
+		if existing, ok := merged[k]; ok {
+			existing.row.Count += r.Count
+		} else {
+			cp := r
+			cp.Region = "" // drop region — meaningless after aggregation
+			merged[k] = &agg{row: cp, order: order}
+			order++
+		}
+	}
+
+	// Recalculate managementTokens and collect results in insertion order.
+	result := make([]FindingRowResponse, 0, len(merged))
+	for _, a := range merged {
+		if a.row.TokensPerUnit > 0 {
+			a.row.ManagementTokens = int(math.Ceil(float64(a.row.Count) / float64(a.row.TokensPerUnit)))
+		}
+		result = append(result, a.row)
+	}
+
+	// Sort by insertion order (map iteration is unordered).
+	sortByOrder := make(map[key]int, len(merged))
+	for k, a := range merged {
+		sortByOrder[k] = a.order
+	}
+	for i := 0; i < len(result)-1; i++ {
+		for j := i + 1; j < len(result); j++ {
+			ki := key{result[i].Provider, result[i].Source, result[i].Item}
+			kj := key{result[j].Provider, result[j].Source, result[j].Item}
+			if sortByOrder[ki] > sortByOrder[kj] {
+				result[i], result[j] = result[j], result[i]
+			}
+		}
+	}
+
+	return result
 }
 
 // writeJSON encodes v as JSON and writes it with the given status code.
