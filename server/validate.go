@@ -16,7 +16,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ssooidc"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
-	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	armsubscriptions "github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armsubscriptions"
 	"github.com/go-chi/chi/v5"
@@ -452,17 +451,6 @@ func realAzureBrowserSSO(ctx context.Context, creds map[string]string) ([]Subscr
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create browser credential: %w", err)
-	}
-
-	// GetToken triggers the browser open and blocks until login completes or ctx is cancelled.
-	_, err = cred.GetToken(ctx, policy.TokenRequestOptions{
-		Scopes: []string{"https://management.azure.com/.default"},
-	})
-	if err != nil {
-		if errors.Is(ctx.Err(), context.Canceled) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return nil, errors.New("browser SSO login cancelled or timed out")
-		}
-		return nil, fmt.Errorf("browser SSO login failed: %w", err)
 	}
 
 	// Cache the live credential so the scanner can reuse it without triggering
