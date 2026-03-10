@@ -76,3 +76,12 @@ type Event struct {
 type Scanner interface {
 	Scan(ctx context.Context, req ScanRequest, publish func(Event)) ([]calculator.FindingRow, error)
 }
+
+// NiosResultScanner is an optional interface implemented by the NIOS scanner.
+// After Scan() completes, GetNiosServerMetricsJSON() returns JSON-encoded
+// []nios.NiosServerMetric data (or nil if no metrics available).
+// The interface is defined here (not in the nios package) so the orchestrator
+// can reference it without creating an import cycle.
+type NiosResultScanner interface {
+	GetNiosServerMetricsJSON() []byte
+}
