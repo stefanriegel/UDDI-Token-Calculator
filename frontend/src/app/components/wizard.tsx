@@ -6,6 +6,7 @@ import {
   ChevronRight,
   ChevronLeft,
   ChevronDown,
+  ChevronUp,
   Cloud,
   Server,
   Eye,
@@ -26,6 +27,9 @@ import {
   ArrowDown,
   Plus,
   Trash2,
+  Activity,
+  Gauge,
+  ArrowRightLeft,
 } from 'lucide-react';
 import { useBackendConnection, useScanPolling } from './use-backend';
 import {
@@ -168,6 +172,11 @@ export function Wizard() {
   const [niosUploadStatus, setNiosUploadStatus] = useState<'idle' | 'uploading' | 'done' | 'error'>('idle');
   const [niosUploadError, setNiosUploadError] = useState<string>('');
 
+  // Top Consumer Cards — expand/collapse
+  const [topDnsExpanded, setTopDnsExpanded] = useState(false);
+  const [topDhcpExpanded, setTopDhcpExpanded] = useState(false);
+  const [topIpExpanded, setTopIpExpanded] = useState(false);
+
   // Compute effective selection (what actually gets scanned) based on mode
   const getEffectiveSelected = useCallback((provId: ProviderType): Set<string> => {
     const subs = subscriptions[provId] || [];
@@ -254,6 +263,9 @@ export function Wizard() {
     setNiosSelectedMembers(new Set());
     setNiosUploadStatus('idle');
     setNiosUploadError('');
+    setTopDnsExpanded(false);
+    setTopDhcpExpanded(false);
+    setTopIpExpanded(false);
   };
 
   // Re-scan with same credentials — clones the session server-side so SSO/OAuth
@@ -1710,6 +1722,113 @@ export function Wizard() {
                   })()}
                 </div>
               </div>
+
+              {/* Top Consumer Cards (FE-03) */}
+              {(() => {
+                const consumerCards = [
+                  {
+                    key: 'dns',
+                    label: 'Top 5 DNS Consumers',
+                    filter: (f: FindingRow) => /dns|zone/i.test(f.item) && !/unsupported/i.test(f.item),
+                    expanded: topDnsExpanded,
+                    toggle: () => setTopDnsExpanded((v) => !v),
+                    Icon: Globe,
+                    iconBg: 'bg-blue-50',
+                    iconColor: 'text-blue-600',
+                    barColor: 'bg-blue-500',
+                  },
+                  {
+                    key: 'dhcp',
+                    label: 'Top 5 DHCP Consumers',
+                    filter: (f: FindingRow) => /dhcp|scope|lease|range|reservation/i.test(f.item) && !/unsupported/i.test(f.item),
+                    expanded: topDhcpExpanded,
+                    toggle: () => setTopDhcpExpanded((v) => !v),
+                    Icon: Activity,
+                    iconBg: 'bg-purple-50',
+                    iconColor: 'text-purple-600',
+                    barColor: 'bg-purple-500',
+                  },
+                  {
+                    key: 'ip',
+                    label: 'Top 5 IP / Network Consumers',
+                    filter: (f: FindingRow) => /ip|subnet|network|cidr|address|vnet|vpc/i.test(f.item) && !/dhcp|dns|unsupported/i.test(f.item),
+                    expanded: topIpExpanded,
+                    toggle: () => setTopIpExpanded((v) => !v),
+                    Icon: Gauge,
+                    iconBg: 'bg-green-50',
+                    iconColor: 'text-green-600',
+                    barColor: 'bg-green-500',
+                  },
+                ];
+
+                const visibleCards = consumerCards
+                  .map((card) => {
+                    const items = findings
+                      .filter(card.filter)
+                      .sort((a, b) => b.managementTokens - a.managementTokens)
+                      .slice(0, 5);
+                    return { ...card, items };
+                  })
+                  .filter((card) => card.items.length > 0);
+
+                if (visibleCards.length === 0) return null;
+
+                return (
+                  <div className="mt-6 mb-4">
+                    <div className="text-[13px] text-[var(--muted-foreground)] mb-3" style={{ fontWeight: 600 }}>
+                      Top Consumers
+                    </div>
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                      {visibleCards.map((card) => {
+                        const maxTokens = card.items[0]?.managementTokens ?? 1;
+                        return (
+                          <div key={card.key} className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+                            <button
+                              className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-50 transition-colors"
+                              onClick={card.toggle}
+                              type="button"
+                            >
+                              <div className="flex items-center gap-2">
+                                <span className={`${card.iconBg} ${card.iconColor} rounded-lg p-1.5`}>
+                                  <card.Icon size={14} />
+                                </span>
+                                <span className="text-[12px]" style={{ fontWeight: 600 }}>{card.label}</span>
+                              </div>
+                              {card.expanded
+                                ? <ChevronUp size={14} className="text-gray-400 shrink-0" />
+                                : <ChevronDown size={14} className="text-gray-400 shrink-0" />
+                              }
+                            </button>
+                            {card.expanded && (
+                              <div className="px-4 pb-3">
+                                <div className="space-y-2">
+                                  {card.items.map((item, idx) => {
+                                    const pct = maxTokens > 0 ? (item.managementTokens / maxTokens) * 100 : 0;
+                                    return (
+                                      <div key={`${item.provider}-${item.source}-${item.item}-${idx}`}>
+                                        <div className="flex items-center justify-between mb-0.5">
+                                          <span className="text-[11px] text-gray-700 truncate max-w-[60%]">{item.source}</span>
+                                          <span className="text-[11px] tabular-nums text-gray-500">{item.managementTokens.toLocaleString()} tk</span>
+                                        </div>
+                                        <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                                          <div
+                                            className={`h-full rounded-full ${card.barColor}`}
+                                            style={{ width: `${pct}%` }}
+                                          />
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* 3 category columns with per-source breakdown */}
               {(() => {
