@@ -292,6 +292,121 @@ func TestValidate_ADMissingPassword(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// storeCredentials field-key consistency tests
+//
+// These verify that storeCredentials correctly maps frontend credential field
+// keys to session struct fields, including fallback handling for keys that
+// differ between frontend and backend.
+//
+// Audit of frontend field keys vs backend storeCredentials reads:
+//
+//   Frontend Key          | storeCredentials Key   | Match
+//   ----------------------|------------------------|------
+//   accessKeyId           | accessKeyId            | exact
+//   secretAccessKey       | secretAccessKey         | exact
+//   region                | region                 | exact
+//   profile               | profileName + profile  | fallback (fixed)
+//   roleArn               | roleArn                | exact
+//   ssoStartUrl           | ssoStartUrl            | exact
+//   ssoRegion             | ssoRegion              | exact
+//   tenantId              | tenantId               | exact
+//   clientId              | clientId               | exact
+//   clientSecret          | clientSecret           | exact
+//   serviceAccountJson    | serviceAccountJson     | exact
+//   server                | servers + server       | fallback (fixed)
+//   username              | username               | exact
+//   password              | password               | exact
+// ---------------------------------------------------------------------------
+
+// TestStoreCredentials_ADServerSingular: frontend sends "server" (singular) —
+// storeCredentials must populate sess.AD.Hosts via fallback.
+func TestStoreCredentials_ADServerSingular(t *testing.T) {
+	store := session.NewStore()
+	h := newTestValidateHandler(store)
+
+	rec := postValidate(t, store, h, "ad", map[string]interface{}{
+		"authMethod": "ntlm",
+		"credentials": map[string]string{
+			"server":   "dc01.corp.example.com",
+			"username": "admin",
+			"password": "secret",
+		},
+	})
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Extract session ID from cookie and verify AD.Hosts was populated.
+	resp := &http.Response{Header: rec.Header()}
+	var sessionID string
+	for _, c := range resp.Cookies() {
+		if c.Name == "ddi_session" {
+			sessionID = c.Value
+			break
+		}
+	}
+	if sessionID == "" {
+		t.Fatal("expected ddi_session cookie")
+	}
+
+	sess, ok := store.Get(sessionID)
+	if !ok {
+		t.Fatal("session not found in store")
+	}
+	if sess.AD == nil {
+		t.Fatal("expected sess.AD to be set")
+	}
+	if len(sess.AD.Hosts) == 0 {
+		t.Fatal("expected sess.AD.Hosts to contain the server address, got empty slice")
+	}
+	if sess.AD.Hosts[0] != "dc01.corp.example.com" {
+		t.Errorf("expected Hosts[0]=%q, got %q", "dc01.corp.example.com", sess.AD.Hosts[0])
+	}
+}
+
+// TestStoreCredentials_AWSProfileKey: frontend sends "profile" (not "profileName") —
+// storeCredentials must populate sess.AWS.ProfileName via fallback.
+func TestStoreCredentials_AWSProfileKey(t *testing.T) {
+	store := session.NewStore()
+	h := newTestValidateHandler(store)
+
+	rec := postValidate(t, store, h, "aws", map[string]interface{}{
+		"authMethod": "profile",
+		"credentials": map[string]string{
+			"profile": "my-named-profile",
+		},
+	})
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	resp := &http.Response{Header: rec.Header()}
+	var sessionID string
+	for _, c := range resp.Cookies() {
+		if c.Name == "ddi_session" {
+			sessionID = c.Value
+			break
+		}
+	}
+	if sessionID == "" {
+		t.Fatal("expected ddi_session cookie")
+	}
+
+	sess, ok := store.Get(sessionID)
+	if !ok {
+		t.Fatal("session not found in store")
+	}
+	if sess.AWS == nil {
+		t.Fatal("expected sess.AWS to be set")
+	}
+	if sess.AWS.ProfileName != "my-named-profile" {
+		t.Errorf("expected ProfileName=%q, got %q", "my-named-profile", sess.AWS.ProfileName)
+	}
+}
+
 // TestValidate_ADMissingField: missing "host" in AD credentials → 200, valid:false.
 func TestValidate_ADMissingField(t *testing.T) {
 	store := session.NewStore()
