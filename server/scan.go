@@ -355,7 +355,17 @@ func (h *ScanHandler) HandleScanResults(w http.ResponseWriter, r *http.Request) 
 		completedAt = sess.CompletedAt.Format(time.RFC3339)
 	}
 
-	resp := ScanResultsResponse{
+	// Decode NiosServerMetricsJSON if a NIOS scan was performed.
+	var niosMetrics []NiosServerMetric
+	if len(sess.NiosServerMetricsJSON) > 0 {
+		if err := json.Unmarshal(sess.NiosServerMetricsJSON, &niosMetrics); err != nil {
+			// Non-fatal: log to stderr and continue without metrics.
+			fmt.Fprintf(os.Stderr, "server: failed to decode NiosServerMetricsJSON: %v\n", err)
+			niosMetrics = nil
+		}
+	}
+
+	writeJSON(w, http.StatusOK, ScanResultsResponse{
 		ScanID:                scanID,
 		CompletedAt:           completedAt,
 		Status:                "complete",
@@ -365,14 +375,8 @@ func (h *ScanHandler) HandleScanResults(w http.ResponseWriter, r *http.Request) 
 		AssetTokens:           sess.TokenResult.AssetTokens,
 		Findings:              findings,
 		Errors:                errors,
-	}
-
-	// Populate NiosServerMetrics if a NIOS scan was performed.
-	if len(sess.NiosServerMetricsJSON) > 0 {
-		resp.NiosServerMetrics = json.RawMessage(sess.NiosServerMetricsJSON)
-	}
-
-	writeJSON(w, http.StatusOK, resp)
+		NiosServerMetrics:     niosMetrics, // nil → omitted by omitempty
+	})
 }
 
 // HandleCloneSession handles POST /api/v1/session/clone.
