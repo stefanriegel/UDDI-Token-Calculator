@@ -129,14 +129,29 @@ export function consolidateXaasInstances(members: NiosServerMetrics[]): Consolid
   const flushInstance = () => {
     if (currentMembers.length === 0) return;
     const connectionsUsed = currentMembers.length;
-    // Find tier by aggregate metrics
+    // Find smallest tier fitting metrics
     let metricsTier = calcServerTokenTier(runningQps, runningLps, runningObjects, 'nios-xaas');
-    // Bump tier if connections exceed the tier's maxConnections
-    for (const tier of XAAS_TOKEN_TIERS) {
-      if (runningQps <= tier.maxQps && runningLps <= tier.maxLps && runningObjects <= tier.maxObjects
-          && connectionsUsed <= (tier.maxConnections || 0) + maxExtraConnections) {
-        metricsTier = tier;
-        break;
+    // Bump tier UP if connections exceed the tier's base maxConnections
+    // (prefer upgrading tier over buying extra connections)
+    if (connectionsUsed > (metricsTier.maxConnections || 0)) {
+      for (const tier of XAAS_TOKEN_TIERS) {
+        if (runningQps <= tier.maxQps && runningLps <= tier.maxLps && runningObjects <= tier.maxObjects
+            && connectionsUsed <= (tier.maxConnections || 0)) {
+          metricsTier = tier;
+          break;
+        }
+      }
+      // If no tier can fit connections within base limit, use the largest tier
+      // that fits metrics (to minimize extra connections purchased)
+      if (connectionsUsed > (metricsTier.maxConnections || 0)) {
+        for (let i = XAAS_TOKEN_TIERS.length - 1; i >= 0; i--) {
+          const tier = XAAS_TOKEN_TIERS[i];
+          if (runningQps <= tier.maxQps && runningLps <= tier.maxLps && runningObjects <= tier.maxObjects
+              && connectionsUsed <= (tier.maxConnections || 0) + maxExtraConnections) {
+            metricsTier = tier;
+            break;
+          }
+        }
       }
     }
     const baseConnections = metricsTier.maxConnections || 0;

@@ -77,7 +77,7 @@ describe('consolidateXaasInstances', () => {
     expect(result[0].totalObjects).toBe(10);
   });
 
-  it('packs 11 tiny members into 1 S-tier instance with 1 extra connection', () => {
+  it('upgrades 11 tiny members to M-tier (connections exceed S maxConnections=10)', () => {
     const members: NiosServerMetrics[] = Array.from({ length: 11 }, (_, i) => ({
       memberId: `m${i}`,
       memberName: `member-${i}`,
@@ -89,13 +89,51 @@ describe('consolidateXaasInstances', () => {
     const result = consolidateXaasInstances(members);
     expect(result).toHaveLength(1);
     const inst = result[0];
-    expect(inst.tier.name).toBe('S');
+    expect(inst.tier.name).toBe('M');
     expect(inst.connectionsUsed).toBe(11);
-    expect(inst.extraConnections).toBe(1);  // 11 - 10 (S maxConnections) = 1
-    expect(inst.extraConnectionTokens).toBe(100);      // 1 * XAAS_EXTRA_CONNECTION_COST
-    expect(inst.totalTokens).toBe(inst.tier.serverTokens + inst.extraConnectionTokens);
+    expect(inst.extraConnections).toBe(0);  // 11 <= 20 (M maxConnections)
+    expect(inst.extraConnectionTokens).toBe(0);
+    expect(inst.totalTokens).toBe(inst.tier.serverTokens); // M = 4100, no extras
     // SUM aggregation: 11 * 100 = 1100 QPS
     expect(inst.totalQps).toBe(1100);
+  });
+
+  it('upgrades 21 tiny members to L-tier (connections exceed M maxConnections=20)', () => {
+    const members: NiosServerMetrics[] = Array.from({ length: 21 }, (_, i) => ({
+      memberId: `m${i}`,
+      memberName: `member-${i}`,
+      role: 'DNS',
+      qps: 100,
+      lps: 1,
+      objectCount: 10,
+    }));
+    const result = consolidateXaasInstances(members);
+    expect(result).toHaveLength(1);
+    const inst = result[0];
+    expect(inst.tier.name).toBe('L');
+    expect(inst.connectionsUsed).toBe(21);
+    expect(inst.extraConnections).toBe(0);  // 21 <= 35 (L maxConnections)
+    expect(inst.extraConnectionTokens).toBe(0);
+    expect(inst.totalTokens).toBe(inst.tier.serverTokens); // L = 6100
+  });
+
+  it('uses XL-tier with extra connections for 86 tiny members (exceeds XL maxConnections=85)', () => {
+    const members: NiosServerMetrics[] = Array.from({ length: 86 }, (_, i) => ({
+      memberId: `m${i}`,
+      memberName: `member-${i}`,
+      role: 'DNS',
+      qps: 100,
+      lps: 1,
+      objectCount: 10,
+    }));
+    const result = consolidateXaasInstances(members);
+    expect(result).toHaveLength(1);
+    const inst = result[0];
+    expect(inst.tier.name).toBe('XL');
+    expect(inst.connectionsUsed).toBe(86);
+    expect(inst.extraConnections).toBe(1);  // 86 - 85 (XL maxConnections) = 1
+    expect(inst.extraConnectionTokens).toBe(100); // 1 * 100
+    expect(inst.totalTokens).toBe(inst.tier.serverTokens + 100); // XL = 8500 + 100
   });
 
   it('packs 2 moderate members into 1 XL instance (SUM aggregation)', () => {
