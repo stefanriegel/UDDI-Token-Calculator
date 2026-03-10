@@ -2,6 +2,13 @@
 // roles.go maps Grid Member PROPERTY values from onedb.xml to service role strings.
 package nios
 
+// ExportedExtractServiceRole is the exported form of extractServiceRole for use by
+// server/scan.go (which cannot access unexported package functions).
+// Returns the same service role string as extractServiceRole.
+func ExportedExtractServiceRole(props map[string]string) string {
+	return extractServiceRole(props)
+}
+
 // extractServiceRole returns a human-readable role string for a Grid Member based
 // on the PROPERTY map parsed from its virtual_node OBJECT in onedb.xml.
 //

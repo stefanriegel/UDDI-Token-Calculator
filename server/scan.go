@@ -9,15 +9,22 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/infoblox/uddi-go-token-calculator/internal/orchestrator"
+	"github.com/infoblox/uddi-go-token-calculator/internal/scanner/nios"
 	"github.com/infoblox/uddi-go-token-calculator/internal/session"
 )
+
+// niosBackupTokens maps opaque upload tokens to temp file paths.
+// Entries are removed when HandleStartScan consumes them via LoadAndDelete.
+var niosBackupTokens sync.Map
 
 // ScanHandler holds the dependencies required by the scan HTTP handlers.
 type ScanHandler struct {
@@ -119,22 +126,12 @@ func (h *ScanHandler) HandleGetScanStatus(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// niosXMLObject represents an OBJECT element in onedb.xml.
-type niosXMLObject struct {
-	Values []niosXMLValue `xml:"VALUE"`
-}
-
-// niosXMLValue represents a VALUE element inside an OBJECT.
-type niosXMLValue struct {
-	Name  string `xml:"name,attr"`
-	Value string `xml:"value,attr"`
-}
-
 // HandleUploadNiosBackup handles POST /api/v1/providers/nios/upload.
 //
 // Accepts a multipart form upload with a "file" field containing a .tar.gz, .tgz, or .bak
 // NIOS backup file (max 500 MB). Parses the embedded onedb.xml to extract Grid Member
-// hostnames and roles. Returns a NiosUploadResponse JSON body.
+// hostnames and service roles. Writes the file to os.TempDir and returns an opaque
+// BackupToken that the frontend must pass back in the scan-start request.
 func HandleUploadNiosBackup(w http.ResponseWriter, r *http.Request) {
 	// Limit the entire request body to 500 MB before parsing.
 	r.Body = http.MaxBytesReader(w, r.Body, 500<<20)
@@ -167,9 +164,34 @@ func HandleUploadNiosBackup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Seek the multipart file back to the start so we can write it to a temp file.
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		writeJSON(w, http.StatusInternalServerError, NiosUploadResponse{Valid: false, Error: "failed to seek uploaded file: " + err.Error(), Members: []NiosGridMember{}})
+		return
+	}
+
+	// Write to temp file so the NIOS scanner can do two-pass streaming later.
+	tmp, err := os.CreateTemp("", "nios-backup-*.tar.gz")
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, NiosUploadResponse{Valid: false, Error: "failed to create temp file: " + err.Error(), Members: []NiosGridMember{}})
+		return
+	}
+	if _, err := io.Copy(tmp, file); err != nil {
+		tmp.Close()
+		os.Remove(tmp.Name())
+		writeJSON(w, http.StatusInternalServerError, NiosUploadResponse{Valid: false, Error: "failed to write temp file: " + err.Error(), Members: []NiosGridMember{}})
+		return
+	}
+	tmp.Close()
+
+	// Generate an opaque token keyed by upload timestamp.
+	token := fmt.Sprintf("%d", time.Now().UnixNano())
+	niosBackupTokens.Store(token, tmp.Name())
+
 	writeJSON(w, http.StatusOK, NiosUploadResponse{
-		Valid:    true,
-		Members:  members,
+		Valid:       true,
+		Members:     members,
+		BackupToken: token,
 	})
 }
 
@@ -204,12 +226,13 @@ func parseNiosBackup(r io.Reader) ([]NiosGridMember, error) {
 }
 
 // parseOneDBXML extracts Grid Member records from a NIOS onedb.xml stream.
-// It looks for OBJECT elements that have a VALUE[name=type, value=Member] child.
+// Uses token-based XML parsing to collect PROPERTY elements (NAME/VALUE attributes)
+// for each OBJECT. Member objects are identified by __type=".com.infoblox.one.virtual_node".
 func parseOneDBXML(r io.Reader) ([]NiosGridMember, error) {
 	var members []NiosGridMember
 
 	decoder := xml.NewDecoder(r)
-	var current *niosXMLObject
+	var currentProps map[string]string
 	inObject := false
 
 	for {
@@ -223,28 +246,34 @@ func parseOneDBXML(r io.Reader) ([]NiosGridMember, error) {
 
 		switch t := tok.(type) {
 		case xml.StartElement:
-			if t.Name.Local == "OBJECT" {
+			switch t.Name.Local {
+			case "OBJECT":
 				inObject = true
-				current = &niosXMLObject{}
-			} else if inObject && t.Name.Local == "VALUE" {
-				v := niosXMLValue{}
+				currentProps = make(map[string]string)
+			case "PROPERTY":
+				if !inObject {
+					continue
+				}
+				var name, value string
 				for _, attr := range t.Attr {
 					switch attr.Name.Local {
-					case "name":
-						v.Name = attr.Value
-					case "value":
-						v.Value = attr.Value
+					case "NAME":
+						name = attr.Value
+					case "VALUE":
+						value = attr.Value
 					}
 				}
-				current.Values = append(current.Values, v)
+				if name != "" {
+					currentProps[name] = value
+				}
 			}
 		case xml.EndElement:
 			if t.Name.Local == "OBJECT" && inObject {
 				inObject = false
-				if m, ok := objectToMember(current); ok {
+				if m, ok := objectToMember(currentProps); ok {
 					members = append(members, m)
 				}
-				current = nil
+				currentProps = nil
 			}
 		}
 	}
@@ -252,34 +281,25 @@ func parseOneDBXML(r io.Reader) ([]NiosGridMember, error) {
 	return members, nil
 }
 
-// objectToMember converts a parsed OBJECT element into a NiosGridMember if it
-// represents a Grid Member. Returns (member, true) on success, (_, false) otherwise.
-func objectToMember(obj *niosXMLObject) (NiosGridMember, bool) {
-	if obj == nil {
+// objectToMember converts a PROPERTY map from an OBJECT element into a NiosGridMember if it
+// represents a Grid Member (virtual_node). Returns (member, true) on success, (_, false) otherwise.
+func objectToMember(props map[string]string) (NiosGridMember, bool) {
+	if props == nil {
 		return NiosGridMember{}, false
 	}
 
-	vals := make(map[string]string, len(obj.Values))
-	for _, v := range obj.Values {
-		vals[v.Name] = v.Value
-	}
-
-	// Only process objects with type=Member.
-	if vals["type"] != "Member" {
+	// Only process objects with __type = ".com.infoblox.one.virtual_node".
+	if props["__type"] != ".com.infoblox.one.virtual_node" {
 		return NiosGridMember{}, false
 	}
 
-	hostname := vals["host_name"]
+	hostname := props["host_name"]
 	if hostname == "" {
 		return NiosGridMember{}, false
 	}
 
-	role := "Regular"
-	if vals["is_grid_master"] == "true" {
-		role = "Master"
-	} else if vals["is_candidate_master"] == "true" {
-		role = "Candidate"
-	}
+	// Use service-based roles (not structural Master/Candidate/Regular).
+	role := nios.ExportedExtractServiceRole(props)
 
 	return NiosGridMember{Hostname: hostname, Role: role}, true
 }
@@ -335,7 +355,7 @@ func (h *ScanHandler) HandleScanResults(w http.ResponseWriter, r *http.Request) 
 		completedAt = sess.CompletedAt.Format(time.RFC3339)
 	}
 
-	writeJSON(w, http.StatusOK, ScanResultsResponse{
+	resp := ScanResultsResponse{
 		ScanID:                scanID,
 		CompletedAt:           completedAt,
 		Status:                "complete",
@@ -345,7 +365,14 @@ func (h *ScanHandler) HandleScanResults(w http.ResponseWriter, r *http.Request) 
 		AssetTokens:           sess.TokenResult.AssetTokens,
 		Findings:              findings,
 		Errors:                errors,
-	})
+	}
+
+	// Populate NiosServerMetrics if a NIOS scan was performed.
+	if len(sess.NiosServerMetricsJSON) > 0 {
+		resp.NiosServerMetrics = json.RawMessage(sess.NiosServerMetricsJSON)
+	}
+
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // HandleCloneSession handles POST /api/v1/session/clone.
@@ -385,14 +412,25 @@ func (h *ScanHandler) HandleCloneSession(w http.ResponseWriter, r *http.Request)
 
 // toOrchestratorProviders converts the HTTP request provider list to the
 // orchestrator's ScanProviderRequest slice.
+// For NIOS providers, resolves the BackupToken to a temp file path via niosBackupTokens.
 func toOrchestratorProviders(specs []ScanProviderSpec) []orchestrator.ScanProviderRequest {
 	reqs := make([]orchestrator.ScanProviderRequest, 0, len(specs))
 	for _, s := range specs {
-		reqs = append(reqs, orchestrator.ScanProviderRequest{
+		req := orchestrator.ScanProviderRequest{
 			Provider:      s.Provider,
 			Subscriptions: s.Subscriptions,
 			SelectionMode: s.SelectionMode,
-		})
+		}
+
+		// For NIOS provider: resolve the backup token to a temp file path.
+		if s.Provider == "nios" && s.BackupToken != "" {
+			if pathVal, ok := niosBackupTokens.LoadAndDelete(s.BackupToken); ok {
+				req.BackupPath = pathVal.(string)
+			}
+			req.SelectedMembers = s.SelectedMembers
+		}
+
+		reqs = append(reqs, req)
 	}
 	return reqs
 }

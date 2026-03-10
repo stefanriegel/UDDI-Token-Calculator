@@ -1,5 +1,7 @@
 package server
 
+import "encoding/json"
+
 // VersionResponse is the JSON body for GET /api/v1/version.
 type VersionResponse struct {
 	Version string `json:"version"` // e.g. "v1.0.0-5-gabcdef1" or "dev"
@@ -21,9 +23,13 @@ type ScanStartRequest struct {
 }
 
 type ScanProviderSpec struct {
-	Provider      string   `json:"provider"`
-	Subscriptions []string `json:"subscriptions"`
-	SelectionMode string   `json:"selectionMode"` // "include" | "exclude"
+	Provider        string   `json:"provider"`
+	Subscriptions   []string `json:"subscriptions"`
+	SelectionMode   string   `json:"selectionMode"`             // "include" | "exclude"
+	SelectedMembers []string `json:"selectedMembers,omitempty"` // NIOS: selected Grid Member hostnames
+	// BackupToken is the opaque token returned by HandleUploadNiosBackup.
+	// HandleStartScan resolves it to a temp file path via niosBackupTokens sync.Map.
+	BackupToken string `json:"backupToken,omitempty"`
 }
 
 // ScanStartResponse is returned immediately by POST /api/v1/scan.
@@ -106,11 +112,15 @@ type NiosGridMember struct {
 
 // NiosUploadResponse is the body for POST /api/v1/providers/nios/upload.
 type NiosUploadResponse struct {
-	Valid       bool             `json:"valid"`
-	Error       string           `json:"error,omitempty"`
-	GridName    string           `json:"gridName,omitempty"`
-	NiosVersion string           `json:"niosVersion,omitempty"`
-	Members     []NiosGridMember `json:"members"`
+	Valid        bool             `json:"valid"`
+	Error        string           `json:"error,omitempty"`
+	GridName     string           `json:"gridName,omitempty"`
+	NiosVersion  string           `json:"niosVersion,omitempty"`
+	Members      []NiosGridMember `json:"members"`
+	// BackupToken is the opaque token the frontend must pass back in the scan-start
+	// request body as ScanProviderSpec.BackupToken. HandleStartScan resolves it to
+	// the temp file path via the server-side niosBackupTokens sync.Map.
+	BackupToken  string           `json:"backupToken,omitempty"`
 }
 
 // ScanResultsResponse is the body for GET /api/v1/scan/{id}/results.
@@ -124,4 +134,7 @@ type ScanResultsResponse struct {
 	AssetTokens           int                     `json:"assetTokens"`
 	Findings              []FindingRowResponse    `json:"findings"`
 	Errors                []ProviderErrorResponse `json:"errors"`
+	// NiosServerMetrics is populated after a NIOS scan completes. It holds JSON-encoded
+	// []NiosServerMetric data from the NIOS scanner. Plan 04 will type this as []NiosServerMetric.
+	NiosServerMetrics json.RawMessage `json:"niosServerMetrics,omitempty"`
 }
