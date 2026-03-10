@@ -132,7 +132,9 @@ func (h *ScanHandler) HandleGetScanStatus(w http.ResponseWriter, r *http.Request
 // NIOS backup file (max 500 MB). Parses the embedded onedb.xml to extract Grid Member
 // hostnames and service roles. Writes the file to os.TempDir and returns an opaque
 // BackupToken that the frontend must pass back in the scan-start request.
-func HandleUploadNiosBackup(w http.ResponseWriter, r *http.Request) {
+// Also creates a new session and sets the ddi_session cookie so the subsequent
+// POST /api/v1/scan can find the session (same flow as validate for other providers).
+func (h *ScanHandler) HandleUploadNiosBackup(w http.ResponseWriter, r *http.Request) {
 	// Limit the entire request body to 500 MB before parsing.
 	r.Body = http.MaxBytesReader(w, r.Body, 500<<20)
 
@@ -187,6 +189,19 @@ func HandleUploadNiosBackup(w http.ResponseWriter, r *http.Request) {
 	// Generate an opaque token keyed by upload timestamp.
 	token := fmt.Sprintf("%d", time.Now().UnixNano())
 	niosBackupTokens.Store(token, tmp.Name())
+
+	// Create a session so POST /api/v1/scan can find it via the ddi_session cookie.
+	// This mirrors what validate.go does for other providers.
+	sess := h.store.New()
+	http.SetCookie(w, &http.Cookie{
+		Name:     "ddi_session",
+		Value:    sess.ID,
+		HttpOnly: true,
+		Secure:   false,
+		SameSite: http.SameSiteStrictMode,
+		Path:     "/",
+		MaxAge:   3600,
+	})
 
 	writeJSON(w, http.StatusOK, NiosUploadResponse{
 		Valid:       true,

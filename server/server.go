@@ -54,7 +54,7 @@ func NewRouter(staticHandler http.Handler, store *session.Store, orch *orchestra
 			r.Get("/scan/{scanId}/results", scanHandler.HandleScanResults)
 			r.Get("/scan/{scanId}/export", exportHandler.HandleExport)
 			r.Post("/session/clone", scanHandler.HandleCloneSession)
-			r.Post("/providers/nios/upload", HandleUploadNiosBackup)
+			r.Post("/providers/nios/upload", scanHandler.HandleUploadNiosBackup)
 		})
 	} else {
 		r.Route("/api/v1", func(r chi.Router) {
