@@ -110,6 +110,15 @@ func (s *Scanner) Scan(_ context.Context, req scanner.ScanRequest, publish func(
 		return nil, fmt.Errorf("nios: pass 1 failed: %w", err)
 	}
 
+	// gmHostname fallback: if is_grid_master was not found in any member,
+	// use the first member hostname from vnodeMap.
+	if gmHostname == "" && len(vnodeMap) > 0 {
+		for _, h := range vnodeMap {
+			gmHostname = h
+			break
+		}
+	}
+
 	publish(scanner.Event{
 		Type:     "resource_progress",
 		Provider: "nios",
@@ -166,7 +175,8 @@ func (s *Scanner) Scan(_ context.Context, req scanner.ScanRequest, publish func(
 	// Token calculation uses the total gridDDI; per-family rows are informational (tokens=0)
 	// except for a summary row that carries the total token count.
 	if result.gridDDI > 0 {
-		// Emit per-family breakdown rows (informational, tokens=0).
+		// Emit per-family breakdown rows, each with its own token calculation.
+		// No summary row — the frontend sums per-row tokens directly.
 		for family, count := range result.familyCounts {
 			if count == 0 {
 				continue
@@ -179,19 +189,9 @@ func (s *Scanner) Scan(_ context.Context, req scanner.ScanRequest, publish func(
 				Item:             displayName,
 				Count:            count,
 				TokensPerUnit:    calculator.TokensPerDDIObject,
-				ManagementTokens: 0, // informational — total row carries tokens
+				ManagementTokens: ceilDiv(count, calculator.TokensPerDDIObject),
 			})
 		}
-		// Summary row with total DDI token count.
-		rows = append(rows, calculator.FindingRow{
-			Provider:         "nios",
-			Source:           gmHostname,
-			Category:         calculator.CategoryDDIObjects,
-			Item:             "DDI Objects (Total)",
-			Count:            result.gridDDI,
-			TokensPerUnit:    calculator.TokensPerDDIObject,
-			ManagementTokens: ceilDiv(result.gridDDI, calculator.TokensPerDDIObject),
-		})
 	}
 
 	// Per-member DDI (currently all goes to GM via countObjects, but include any non-GM members).
