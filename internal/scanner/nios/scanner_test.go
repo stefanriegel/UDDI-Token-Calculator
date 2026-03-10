@@ -170,3 +170,41 @@ func TestNIOS_NiosServerMetrics(t *testing.T) {
 		t.Errorf("first metric entry missing non-empty 'role'; entry: %+v", first)
 	}
 }
+
+// TestFindingRowsHaveTokensAndSource verifies that every NIOS FindingRow has:
+// - Non-empty Source field (member hostname)
+// - Non-zero ManagementTokens for DDI Object rows
+// - No "DDI Objects (Total)" summary row (per-family rows carry their own tokens)
+// - Active Leases row has ManagementTokens > 0
+func TestFindingRowsHaveTokensAndSource(t *testing.T) {
+	rows := runScan(t)
+	if len(rows) == 0 {
+		t.Fatal("Scan returned no rows")
+	}
+
+	for i, r := range rows {
+		// Every row must have a non-empty Source.
+		if r.Source == "" {
+			t.Errorf("row %d (%s / %s) has empty Source", i, r.Category, r.Item)
+		}
+
+		// No summary row should exist.
+		if r.Item == "DDI Objects (Total)" {
+			t.Errorf("row %d: unexpected summary row 'DDI Objects (Total)' — per-family rows should carry tokens", i)
+		}
+
+		// Every DDI Object row with Count > 0 must have ManagementTokens > 0.
+		if r.Category == calculator.CategoryDDIObjects && r.Count > 0 && r.ManagementTokens == 0 {
+			t.Errorf("row %d (%s) has Count=%d but ManagementTokens=0", i, r.Item, r.Count)
+		}
+	}
+
+	// Active Leases row must have tokens.
+	for _, r := range rows {
+		if r.Category == calculator.CategoryActiveIPs && r.Item == "NIOS Active Leases" {
+			if r.ManagementTokens == 0 {
+				t.Errorf("Active Leases row has ManagementTokens=0 (Count=%d)", r.Count)
+			}
+		}
+	}
+}
