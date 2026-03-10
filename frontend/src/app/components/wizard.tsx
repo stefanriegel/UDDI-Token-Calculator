@@ -155,6 +155,7 @@ export function Wizard() {
         ...prev,
         nios: resp.members.map((m) => ({ id: m.hostname, name: m.hostname, selected: true })),
       }));
+      setNiosBackupToken(resp.backupToken ?? '');
       setNiosUploadStatus('done');
       setCredentialStatus((prev) => ({ ...prev, nios: 'valid' }));
     } catch (err: unknown) {
@@ -185,6 +186,7 @@ export function Wizard() {
   const [niosSelectedMembers, setNiosSelectedMembers] = useState<Set<string>>(new Set());
   const [niosUploadStatus, setNiosUploadStatus] = useState<'idle' | 'uploading' | 'done' | 'error'>('idle');
   const [niosUploadError, setNiosUploadError] = useState<string>('');
+  const [niosBackupToken, setNiosBackupToken] = useState<string>('');
 
   // Top Consumer Cards — expand/collapse
   const [topDnsExpanded, setTopDnsExpanded] = useState(false);
@@ -273,6 +275,7 @@ export function Wizard() {
     setFindingsSort(null);
     setNiosMembers([]);
     setNiosSelectedMembers(new Set());
+    setNiosBackupToken('');
     setNiosUploadStatus('idle');
     setNiosUploadError('');
     setTopDnsExpanded(false);
@@ -522,6 +525,10 @@ export function Wizard() {
             provider: provId,
             subscriptions: Array.from(getEffectiveSelected(provId)),
             selectionMode: selectionMode[provId],
+            ...(provId === 'nios' && {
+              backupToken: niosBackupToken,
+              selectedMembers: Array.from(getEffectiveSelected('nios')),
+            }),
           })),
         };
         const { scanId: newScanId } = await apiStartScan(scanReq);

@@ -127,6 +127,8 @@ export interface ScanRequest {
     provider: string;
     subscriptions: string[];
     selectionMode: 'include' | 'exclude';
+    backupToken?: string;       // NIOS only: opaque token from /providers/nios/upload
+    selectedMembers?: string[]; // NIOS only: hostnames selected in Sources step
   }[];
 }
 
@@ -182,6 +184,7 @@ export interface NiosUploadResponse {
   gridName?: string;
   niosVersion?: string;
   members: NiosGridMember[];
+  backupToken?: string;
 }
 
 export async function uploadNiosBackup(file: File): Promise<NiosUploadResponse> {
