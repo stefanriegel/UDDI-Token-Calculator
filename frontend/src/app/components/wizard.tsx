@@ -41,7 +41,17 @@ import {
   uploadNiosBackup,
   type ScanResultsResponse,
   type NiosGridMember,
+  type NiosServerMetricAPI,
 } from './api-client';
+import {
+  calcServerTokenTier,
+  consolidateXaasInstances,
+  XAAS_EXTRA_CONNECTION_COST,
+  MOCK_NIOS_SERVER_METRICS,
+  type NiosServerMetrics,
+  type ServerFormFactor,
+  type ConsolidatedXaasInstance,
+} from './nios-calc';
 import {
   PROVIDERS,
   MOCK_SUBSCRIPTIONS,
@@ -177,6 +187,9 @@ export function Wizard() {
   const [topDhcpExpanded, setTopDhcpExpanded] = useState(false);
   const [topIpExpanded, setTopIpExpanded] = useState(false);
 
+  // Migration Planner — per-member form factor selection
+  const [niosMigrationMap, setNiosMigrationMap] = useState<Map<string, ServerFormFactor>>(new Map());
+
   // Compute effective selection (what actually gets scanned) based on mode
   const getEffectiveSelected = useCallback((provId: ProviderType): Set<string> => {
     const subs = subscriptions[provId] || [];
@@ -266,6 +279,7 @@ export function Wizard() {
     setTopDnsExpanded(false);
     setTopDhcpExpanded(false);
     setTopIpExpanded(false);
+    setNiosMigrationMap(new Map());
   };
 
   // Re-scan with same credentials — clones the session server-side so SSO/OAuth
@@ -521,6 +535,14 @@ export function Wizard() {
       }
     })();
   }, [backend.isDemo, selectedProviders, selectionMode, clearScanIntervals, getEffectiveSelected, niosSelectedMembers]);
+
+  // Derive niosServerMetrics: demo mode uses mock data; live mode uses API results
+  const niosServerMetrics = useMemo<NiosServerMetrics[]>(() => {
+    const raw: NiosServerMetricAPI[] = backend.isDemo
+      ? (MOCK_NIOS_SERVER_METRICS as unknown as NiosServerMetricAPI[])
+      : (scanResults?.niosServerMetrics ?? []);
+    return raw as unknown as NiosServerMetrics[];
+  }, [backend.isDemo, scanResults]);
 
   // Export
   const totalTokens = useMemo(
