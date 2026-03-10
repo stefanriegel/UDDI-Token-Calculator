@@ -40,7 +40,7 @@ func runScan(t *testing.T) []calculator.FindingRow {
 		Provider: "nios",
 		Credentials: map[string]string{
 			"backup_path":      path,
-			"selected_members": "gm.test.local,dns1.test.local",
+			"selected_members": "gm.test.local,dns1.test.local,dhcp1.test.local",
 		},
 	}
 	rows, err := niosscanner.New().Scan(context.Background(), req, func(scanner.Event) {})
@@ -81,8 +81,9 @@ func TestNIOS_ActiveIPCounts(t *testing.T) {
 			totalActiveIPs += r.Count
 		}
 	}
-	if totalActiveIPs < 3 {
-		t.Errorf("expected total Active IPs >= 3; got %d (rows: %+v)", totalActiveIPs, rows)
+	// Expect 8 unique IPs: 3 leases + 1 fixed + 1 host + 2 network + 1 unique discovery.
+	if totalActiveIPs < 8 {
+		t.Errorf("expected total Active IPs >= 8; got %d (rows: %+v)", totalActiveIPs, rows)
 	}
 }
 
@@ -119,9 +120,11 @@ func TestNIOS_Deduplication(t *testing.T) {
 			totalActiveIPs += r.Count
 		}
 	}
-	// The fixture has exactly 3 active leases. If totalActiveIPs > 3, double-counting occurred.
-	if totalActiveIPs > 3 {
-		t.Errorf("Active IP double-counting detected: total=%d but fixture has 3 unique active leases", totalActiveIPs)
+	// The fixture has 8 unique IPs across all sources:
+	// 3 leases + 1 fixed + 1 host + 2 network + 1 unique discovery (10.0.0.1 deduped).
+	// If totalActiveIPs > 8, double-counting occurred.
+	if totalActiveIPs > 8 {
+		t.Errorf("Active IP double-counting detected: total=%d but fixture has 8 unique IPs", totalActiveIPs)
 	}
 }
 
@@ -134,7 +137,7 @@ func TestNIOS_NiosServerMetrics(t *testing.T) {
 		Provider: "nios",
 		Credentials: map[string]string{
 			"backup_path":      path,
-			"selected_members": "gm.test.local,dns1.test.local",
+			"selected_members": "gm.test.local,dns1.test.local,dhcp1.test.local",
 		},
 	}
 
@@ -199,12 +202,115 @@ func TestFindingRowsHaveTokensAndSource(t *testing.T) {
 		}
 	}
 
-	// Active Leases row must have tokens.
+	// Active IPs row must have tokens.
 	for _, r := range rows {
-		if r.Category == calculator.CategoryActiveIPs && r.Item == "NIOS Active Leases" {
+		if r.Category == calculator.CategoryActiveIPs && r.Item == "NIOS Active IPs (All Sources)" {
 			if r.ManagementTokens == 0 {
-				t.Errorf("Active Leases row has ManagementTokens=0 (Count=%d)", r.Count)
+				t.Errorf("Active IPs row has ManagementTokens=0 (Count=%d)", r.Count)
 			}
 		}
+	}
+}
+
+// TestNIOS_DiscoveryDataActiveIPs verifies that discovery_data objects contribute
+// their ip_address to the Active IP count, with deduplication against leases.
+func TestNIOS_DiscoveryDataActiveIPs(t *testing.T) {
+	rows := runScan(t)
+
+	// Count Active IP rows.
+	var activeIPRow *calculator.FindingRow
+	for i, r := range rows {
+		if r.Category == calculator.CategoryActiveIPs {
+			activeIPRow = &rows[i]
+		}
+	}
+
+	if activeIPRow == nil {
+		t.Fatal("expected an Active IPs FindingRow; got none")
+	}
+
+	// Should be a single all-sources row.
+	if activeIPRow.Item != "NIOS Active IPs (All Sources)" {
+		t.Errorf("expected item 'NIOS Active IPs (All Sources)'; got %q", activeIPRow.Item)
+	}
+
+	// Fixture unique IPs: 10.0.0.1, .2, .3 (leases) + 10.0.0.50 (fixed) +
+	// 10.0.0.51 (host) + 10.0.1.0, 10.0.1.255 (network) + 10.0.0.100 (discovery, unique).
+	// 10.0.0.1 from discovery overlaps with lease, so 8 total unique.
+	if activeIPRow.Count != 8 {
+		t.Errorf("expected Active IP count=8 (all sources, deduped); got %d", activeIPRow.Count)
+	}
+}
+
+// TestNIOS_IdnsDTCMapping verifies that idns_lbdn objects are counted as DTC DDI objects.
+func TestNIOS_IdnsDTCMapping(t *testing.T) {
+	rows := runScan(t)
+
+	found := false
+	for _, r := range rows {
+		if r.Category == calculator.CategoryDDIObjects && r.Item == "DTC Load-Balanced Names" {
+			if r.Count >= 1 {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Errorf("expected FindingRow for DTC Load-Balanced Names with Count>=1; got rows: %+v", rows)
+	}
+}
+
+// TestNIOS_AllMembersInMetrics verifies that all 3 members appear in NiosServerMetrics,
+// including dhcp1.test.local which has no leases attributed to it.
+func TestNIOS_AllMembersInMetrics(t *testing.T) {
+	path := openFixture(t)
+	req := scanner.ScanRequest{
+		Provider: "nios",
+		Credentials: map[string]string{
+			"backup_path":      path,
+			"selected_members": "gm.test.local,dns1.test.local,dhcp1.test.local",
+		},
+	}
+
+	s := niosscanner.New()
+	_, err := s.Scan(context.Background(), req, func(scanner.Event) {})
+	if err != nil {
+		t.Fatalf("Scan returned error: %v", err)
+	}
+
+	nrs, ok := any(s).(NiosResultScanner)
+	if !ok {
+		t.Fatal("nios.Scanner does not implement NiosResultScanner")
+	}
+
+	data := nrs.GetNiosServerMetricsJSON()
+	if data == nil {
+		t.Fatal("GetNiosServerMetricsJSON() returned nil")
+	}
+
+	var metrics []niosscanner.NiosServerMetric
+	if err := json.Unmarshal(data, &metrics); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+
+	if len(metrics) != 3 {
+		t.Fatalf("expected 3 members in metrics; got %d: %+v", len(metrics), metrics)
+	}
+
+	// Verify all three members are present.
+	memberSet := make(map[string]string) // hostname -> role
+	for _, m := range metrics {
+		memberSet[m.MemberID] = m.Role
+	}
+
+	expected := []string{"gm.test.local", "dns1.test.local", "dhcp1.test.local"}
+	for _, h := range expected {
+		if _, ok := memberSet[h]; !ok {
+			t.Errorf("member %q not found in metrics; got: %+v", h, memberSet)
+		}
+	}
+
+	// dhcp1 should have DHCP role (from enable_dhcp=true).
+	if role := memberSet["dhcp1.test.local"]; role != "DHCP" {
+		t.Errorf("expected dhcp1.test.local role=DHCP; got %q", role)
 	}
 }
