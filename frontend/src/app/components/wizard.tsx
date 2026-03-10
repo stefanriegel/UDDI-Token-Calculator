@@ -151,6 +151,10 @@ export function Wizard() {
       }
       setNiosMembers(resp.members);
       setNiosSelectedMembers(new Set(resp.members.map((m) => m.hostname)));
+      setSubscriptions((prev) => ({
+        ...prev,
+        nios: resp.members.map((m) => ({ id: m.hostname, name: m.hostname, selected: true })),
+      }));
       setNiosUploadStatus('done');
       setCredentialStatus((prev) => ({ ...prev, nios: 'valid' }));
     } catch (err: unknown) {
@@ -213,16 +217,11 @@ export function Wizard() {
         return selectedProviders.length > 0;
       case 'credentials':
         return selectedProviders.every((p) => {
-          if (p === 'nios') {
-            // NIOS is "validated" after a successful upload with at least one member selected
-            return credentialStatus['nios'] === 'valid' && niosSelectedMembers.size > 0;
-          }
+          // NIOS: upload success is sufficient — member selection happens in the Sources step
           return credentialStatus[p] === 'valid';
         });
       case 'sources':
-        return selectedProviders.some((p) =>
-          getEffectiveSelectedCount(p) > 0
-        );
+        return selectedProviders.some((p) => getEffectiveSelectedCount(p) > 0);
       case 'scanning':
         return scanProgress >= 100;
       default:
@@ -521,10 +520,8 @@ export function Wizard() {
           sessionId,
           providers: selectedProviders.map((provId) => ({
             provider: provId,
-            subscriptions: provId === 'nios'
-              ? Array.from(niosSelectedMembers)
-              : Array.from(getEffectiveSelected(provId)),
-            selectionMode: provId === 'nios' ? 'include' : selectionMode[provId],
+            subscriptions: Array.from(getEffectiveSelected(provId)),
+            selectionMode: selectionMode[provId],
           })),
         };
         const { scanId: newScanId } = await apiStartScan(scanReq);
@@ -534,7 +531,7 @@ export function Wizard() {
         setScanError(msg);
       }
     })();
-  }, [backend.isDemo, selectedProviders, selectionMode, clearScanIntervals, getEffectiveSelected, niosSelectedMembers]);
+  }, [backend.isDemo, selectedProviders, selectionMode, clearScanIntervals, getEffectiveSelected]);
 
   // Derive niosServerMetrics: demo mode uses mock data; live mode uses API results
   const niosServerMetrics = useMemo<NiosServerMetrics[]>(() => {
@@ -961,53 +958,10 @@ export function Wizard() {
                           )}
                         </label>
 
-                        {/* Member checkbox list */}
                         {niosMembers.length > 0 && (
-                          <div className="mt-4">
-                            <div className="flex items-center justify-between mb-2">
-                              <span className="text-[13px]" style={{ fontWeight: 500 }}>Grid Members</span>
-                              <button
-                                className="text-[12px] text-blue-600 hover:text-blue-800"
-                                onClick={() => {
-                                  if (niosSelectedMembers.size === niosMembers.length) {
-                                    setNiosSelectedMembers(new Set());
-                                  } else {
-                                    setNiosSelectedMembers(new Set(niosMembers.map((m) => m.hostname)));
-                                  }
-                                }}
-                              >
-                                {niosSelectedMembers.size === niosMembers.length ? 'Deselect All' : 'Select All'}
-                              </button>
-                            </div>
-                            <div className="space-y-1 max-h-40 overflow-y-auto">
-                              {niosMembers.map((member) => {
-                                const checked = niosSelectedMembers.has(member.hostname);
-                                return (
-                                  <label key={member.hostname} className="flex items-center gap-2 py-1 cursor-pointer">
-                                    <input
-                                      type="checkbox"
-                                      checked={checked}
-                                      onChange={() => {
-                                        setNiosSelectedMembers((prev) => {
-                                          const next = new Set(prev);
-                                          if (next.has(member.hostname)) next.delete(member.hostname);
-                                          else next.add(member.hostname);
-                                          return next;
-                                        });
-                                      }}
-                                      className="w-4 h-4 accent-[var(--infoblox-orange)]"
-                                    />
-                                    <span className="text-[13px] flex-1">{member.hostname}</span>
-                                    <span className={`text-[11px] px-2 py-0.5 rounded-full ${
-                                      member.role === 'Master' ? 'bg-blue-100 text-blue-700' :
-                                      member.role === 'Candidate' ? 'bg-purple-100 text-purple-700' :
-                                      'bg-gray-100 text-gray-600'
-                                    }`}>{member.role}</span>
-                                  </label>
-                                );
-                              })}
-                            </div>
-                          </div>
+                          <p className="mt-3 text-[12px] text-[var(--muted-foreground)]">
+                            {niosMembers.length} Grid Member{niosMembers.length !== 1 ? 's' : ''} found — select members to scan in the next step.
+                          </p>
                         )}
                       </div>
                     );
