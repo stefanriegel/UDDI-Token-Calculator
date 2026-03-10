@@ -86,19 +86,15 @@ func TestNIOS_ActiveIPCounts(t *testing.T) {
 	}
 }
 
-// TestNIOS_AssetCounts verifies that Managed Assets findings are present.
-// RED: Scan() returns empty — test fails.
-func TestNIOS_AssetCounts(t *testing.T) {
+// TestNIOS_NoAssetRows verifies that NIOS Grid Members are NOT counted as managed assets.
+// NIOS appliances are part of NIOS grid licensing, not Universal DDI managed assets.
+func TestNIOS_NoAssetRows(t *testing.T) {
 	rows := runScan(t)
 
-	totalAssets := 0
 	for _, r := range rows {
 		if r.Category == calculator.CategoryManagedAssets {
-			totalAssets += r.Count
+			t.Errorf("unexpected Managed Assets row for NIOS: %+v", r)
 		}
-	}
-	if totalAssets < 1 {
-		t.Errorf("expected Managed Assets Count >= 1; got %d (rows: %+v)", totalAssets, rows)
 	}
 }
 

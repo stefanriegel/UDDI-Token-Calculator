@@ -213,6 +213,8 @@ export function Wizard() {
   const [topDnsExpanded, setTopDnsExpanded] = useState(false);
   const [topDhcpExpanded, setTopDhcpExpanded] = useState(false);
   const [topIpExpanded, setTopIpExpanded] = useState(false);
+  const [showAllHeroSources, setShowAllHeroSources] = useState(false);
+  const [showAllCategorySources, setShowAllCategorySources] = useState<Record<string, boolean>>({});
 
   // Findings table filters & sorting
   const [findingsProviderFilter, setFindingsProviderFilter] = useState<Set<ProviderType>>(new Set());
@@ -1717,35 +1719,52 @@ export function Wizard() {
                       sourceMap.get(key)!.tokens += f.managementTokens;
                     });
                     const sources = Array.from(sourceMap.values()).sort((a, b) => b.tokens - a.tokens);
-                    return sources.map((entry) => {
-                      const provider = PROVIDERS.find((p) => p.id === entry.provider)!;
-                      const pct = totalTokens > 0 ? (entry.tokens / totalTokens) * 100 : 0;
-                      return (
-                        <div key={`${entry.provider}-${entry.source}`}>
-                          <div className="flex items-center justify-between mb-1">
-                            <span className="text-[12px] flex items-center gap-1.5" style={{ fontWeight: 500 }}>
-                              <span
-                                className="inline-block w-2 h-2 rounded-full shrink-0"
-                                style={{ backgroundColor: provider.color }}
-                              />
-                              {entry.source}
-                              <span className="text-[11px] text-[var(--muted-foreground)]" style={{ fontWeight: 400 }}>
-                                {provider.name}
-                              </span>
-                            </span>
-                            <span className="text-[12px] tabular-nums text-[var(--muted-foreground)]">
-                              {entry.tokens.toLocaleString()} <span className="text-[11px]">({Math.round(pct)}%)</span>
-                            </span>
-                          </div>
-                          <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                            <div
-                              className="h-full rounded-full transition-all"
-                              style={{ width: `${pct}%`, backgroundColor: provider.color }}
-                            />
-                          </div>
-                        </div>
-                      );
-                    });
+                    const HERO_LIMIT = 10;
+                    const visibleSources = showAllHeroSources ? sources : sources.slice(0, HERO_LIMIT);
+                    const hiddenCount = sources.length - HERO_LIMIT;
+                    return (
+                      <>
+                        {visibleSources.map((entry) => {
+                          const provider = PROVIDERS.find((p) => p.id === entry.provider)!;
+                          const pct = totalTokens > 0 ? (entry.tokens / totalTokens) * 100 : 0;
+                          return (
+                            <div key={`${entry.provider}-${entry.source}`}>
+                              <div className="flex items-center justify-between mb-1">
+                                <span className="text-[12px] flex items-center gap-1.5" style={{ fontWeight: 500 }}>
+                                  <span
+                                    className="inline-block w-2 h-2 rounded-full shrink-0"
+                                    style={{ backgroundColor: provider.color }}
+                                  />
+                                  {entry.source}
+                                  <span className="text-[11px] text-[var(--muted-foreground)]" style={{ fontWeight: 400 }}>
+                                    {provider.name}
+                                  </span>
+                                </span>
+                                <span className="text-[12px] tabular-nums text-[var(--muted-foreground)]">
+                                  {entry.tokens.toLocaleString()} <span className="text-[11px]">({Math.round(pct)}%)</span>
+                                </span>
+                              </div>
+                              <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                                <div
+                                  className="h-full rounded-full transition-all"
+                                  style={{ width: `${pct}%`, backgroundColor: provider.color }}
+                                />
+                              </div>
+                            </div>
+                          );
+                        })}
+                        {hiddenCount > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => setShowAllHeroSources((v) => !v)}
+                            className="text-[12px] text-[var(--infoblox-blue)] hover:underline mt-1"
+                            style={{ fontWeight: 500 }}
+                          >
+                            {showAllHeroSources ? 'Show less' : `Show ${hiddenCount} more sources...`}
+                          </button>
+                        )}
+                      </>
+                    );
                   })()}
                 </div>
               </div>
@@ -1942,35 +1961,55 @@ export function Wizard() {
                               By {sourceLabel}
                             </div>
                             <div className="space-y-3">
-                              {sources.map((entry) => {
-                                const provider = PROVIDERS.find((p) => p.id === entry.provider)!;
-                                const pct = maxSourceTokens > 0 ? (entry.tokens / maxSourceTokens) * 100 : 0;
+                              {(() => {
+                                const CAT_LIMIT = 5;
+                                const showAll = showAllCategorySources[cat.key] || false;
+                                const visible = showAll ? sources : sources.slice(0, CAT_LIMIT);
+                                const catHidden = sources.length - CAT_LIMIT;
                                 return (
-                                  <div key={`${entry.provider}-${entry.source}`}>
-                                    <div className="flex items-center justify-between mb-1">
-                                      <span className="text-[12px] flex items-center gap-1.5 min-w-0" style={{ fontWeight: 500 }}>
-                                        <span
-                                          className="inline-block w-1.5 h-1.5 rounded-full shrink-0"
-                                          style={{ backgroundColor: provider.color }}
-                                        />
-                                        <span className="truncate">{entry.source}</span>
-                                      </span>
-                                      <span className="text-[12px] tabular-nums shrink-0 ml-2" style={{ fontWeight: 600 }}>
-                                        {entry.tokens.toLocaleString()}
-                                      </span>
-                                    </div>
-                                    <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                                      <div
-                                        className={`h-full rounded-full transition-all ${cat.barColor}`}
-                                        style={{ width: `${pct}%` }}
-                                      />
-                                    </div>
-                                    <div className="text-[10px] text-[var(--muted-foreground)] mt-0.5 tabular-nums">
-                                      {entry.count.toLocaleString()} {cat.unitLabel}
-                                    </div>
-                                  </div>
+                                  <>
+                                    {visible.map((entry) => {
+                                      const provider = PROVIDERS.find((p) => p.id === entry.provider)!;
+                                      const pct = maxSourceTokens > 0 ? (entry.tokens / maxSourceTokens) * 100 : 0;
+                                      return (
+                                        <div key={`${entry.provider}-${entry.source}`}>
+                                          <div className="flex items-center justify-between mb-1">
+                                            <span className="text-[12px] flex items-center gap-1.5 min-w-0" style={{ fontWeight: 500 }}>
+                                              <span
+                                                className="inline-block w-1.5 h-1.5 rounded-full shrink-0"
+                                                style={{ backgroundColor: provider.color }}
+                                              />
+                                              <span className="truncate">{entry.source}</span>
+                                            </span>
+                                            <span className="text-[12px] tabular-nums shrink-0 ml-2" style={{ fontWeight: 600 }}>
+                                              {entry.tokens.toLocaleString()}
+                                            </span>
+                                          </div>
+                                          <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                                            <div
+                                              className={`h-full rounded-full transition-all ${cat.barColor}`}
+                                              style={{ width: `${pct}%` }}
+                                            />
+                                          </div>
+                                          <div className="text-[10px] text-[var(--muted-foreground)] mt-0.5 tabular-nums">
+                                            {entry.count.toLocaleString()} {cat.unitLabel}
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                    {catHidden > 0 && (
+                                      <button
+                                        type="button"
+                                        onClick={() => setShowAllCategorySources((prev) => ({ ...prev, [cat.key]: !showAll }))}
+                                        className="text-[11px] text-[var(--infoblox-blue)] hover:underline"
+                                        style={{ fontWeight: 500 }}
+                                      >
+                                        {showAll ? 'Show less' : `+${catHidden} more`}
+                                      </button>
+                                    )}
+                                  </>
                                 );
-                              })}
+                              })()}
                               {sources.length === 0 && (
                                 <div className="text-[12px] text-[var(--muted-foreground)] italic py-2">
                                   No {cat.unitLabel} found

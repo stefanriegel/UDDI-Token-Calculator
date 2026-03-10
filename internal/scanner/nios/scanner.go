@@ -232,20 +232,8 @@ func (s *Scanner) Scan(_ context.Context, req scanner.ScanRequest, publish func(
 	// The dedup test expects total Active IP count <= 3 (fixture has 3 unique leases).
 	// We emit only the global row to avoid double-counting in the sum.
 
-	// TODO NIOS-04: HA pair deduplication not yet implemented — each member counts as
-	// 1 asset even if part of an HA pair. When implemented, detect ha_pair_hostname and
-	// emit one row for the pair (lexicographically first hostname as primary).
-	for _, hostname := range vnodeMap {
-		rows = append(rows, calculator.FindingRow{
-			Provider:         "nios",
-			Source:           hostname,
-			Category:         calculator.CategoryManagedAssets,
-			Item:             "NIOS Grid Member",
-			Count:            1,
-			TokensPerUnit:    calculator.TokensPerManagedAsset,
-			ManagementTokens: ceilDiv(1, calculator.TokensPerManagedAsset),
-		})
-	}
+	// NIOS Grid Members are NOT counted as managed assets.
+	// They are part of the NIOS grid licensing, not Universal DDI managed assets.
 
 	// ---- Apply selectedMembers filter ----
 	// If selectedMembers is non-empty, only emit rows for hostnames in the set.

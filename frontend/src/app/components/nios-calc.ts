@@ -129,30 +129,21 @@ export function consolidateXaasInstances(members: NiosServerMetrics[]): Consolid
   const flushInstance = () => {
     if (currentMembers.length === 0) return;
     const connectionsUsed = currentMembers.length;
-    // Find smallest tier fitting metrics
-    let metricsTier = calcServerTokenTier(runningQps, runningLps, runningObjects, 'nios-xaas');
-    // Bump tier UP if connections exceed the tier's base maxConnections
-    // (prefer upgrading tier over buying extra connections)
-    if (connectionsUsed > (metricsTier.maxConnections || 0)) {
-      for (const tier of XAAS_TOKEN_TIERS) {
-        if (runningQps <= tier.maxQps && runningLps <= tier.maxLps && runningObjects <= tier.maxObjects
-            && connectionsUsed <= (tier.maxConnections || 0)) {
-          metricsTier = tier;
-          break;
-        }
+    // Find smallest tier that fits BOTH metrics AND connection count.
+    // Walk tiers from smallest to largest; pick the first where metrics fit
+    // and connections fit within the tier's maxConnections.
+    let metricsTier: ServerTokenTier | null = null;
+    for (const tier of XAAS_TOKEN_TIERS) {
+      if (runningQps <= tier.maxQps && runningLps <= tier.maxLps && runningObjects <= tier.maxObjects
+          && connectionsUsed <= (tier.maxConnections || 0)) {
+        metricsTier = tier;
+        break;
       }
-      // If no tier can fit connections within base limit, use the largest tier
-      // that fits metrics (to minimize extra connections purchased)
-      if (connectionsUsed > (metricsTier.maxConnections || 0)) {
-        for (let i = XAAS_TOKEN_TIERS.length - 1; i >= 0; i--) {
-          const tier = XAAS_TOKEN_TIERS[i];
-          if (runningQps <= tier.maxQps && runningLps <= tier.maxLps && runningObjects <= tier.maxObjects
-              && connectionsUsed <= (tier.maxConnections || 0) + maxExtraConnections) {
-            metricsTier = tier;
-            break;
-          }
-        }
-      }
+    }
+    // If no tier fits connections within base limit, use XL + extra connections.
+    // Extra connections are ONLY allowed at XL (the biggest tier).
+    if (!metricsTier) {
+      metricsTier = XAAS_TOKEN_TIERS[XAAS_TOKEN_TIERS.length - 1]; // XL
     }
     const baseConnections = metricsTier.maxConnections || 0;
     const extraConnections = Math.max(0, connectionsUsed - baseConnections);
