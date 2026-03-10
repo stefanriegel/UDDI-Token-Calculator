@@ -201,6 +201,15 @@ export async function uploadNiosBackup(file: File): Promise<NiosUploadResponse> 
 
 // ─── Scan Results ──────────────────────────────────────────────────────────────
 
+export interface NiosServerMetricAPI {
+  memberId: string;
+  memberName: string;
+  role: string;   // loose type — backend sends plain string
+  qps: number;
+  lps: number;
+  objectCount: number;
+}
+
 export interface FindingRowAPI {
   provider: string;
   source: string;
@@ -222,6 +231,7 @@ export interface ScanResultsResponse {
   assetTokens: number;
   findings: FindingRowAPI[];
   errors: { provider: string; resource: string; message: string }[];
+  niosServerMetrics?: NiosServerMetricAPI[];
 }
 
 export async function getScanResults(scanId: string): Promise<ScanResultsResponse> {
