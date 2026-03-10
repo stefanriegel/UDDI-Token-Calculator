@@ -1,7 +1,5 @@
 package server
 
-import "encoding/json"
-
 // VersionResponse is the JSON body for GET /api/v1/version.
 type VersionResponse struct {
 	Version string `json:"version"` // e.g. "v1.0.0-5-gabcdef1" or "dev"
@@ -123,6 +121,17 @@ type NiosUploadResponse struct {
 	BackupToken  string           `json:"backupToken,omitempty"`
 }
 
+// NiosServerMetric is per-Grid-Member performance data returned in the results
+// when the NIOS provider was included in a scan. See API_CONTRACT.md §6.
+type NiosServerMetric struct {
+	MemberID    string `json:"memberId"`
+	MemberName  string `json:"memberName"`
+	Role        string `json:"role"`
+	QPS         int    `json:"qps"`
+	LPS         int    `json:"lps"`
+	ObjectCount int    `json:"objectCount"`
+}
+
 // ScanResultsResponse is the body for GET /api/v1/scan/{id}/results.
 type ScanResultsResponse struct {
 	ScanID                string                  `json:"scanId"`
@@ -134,7 +143,7 @@ type ScanResultsResponse struct {
 	AssetTokens           int                     `json:"assetTokens"`
 	Findings              []FindingRowResponse    `json:"findings"`
 	Errors                []ProviderErrorResponse `json:"errors"`
-	// NiosServerMetrics is populated after a NIOS scan completes. It holds JSON-encoded
-	// []NiosServerMetric data from the NIOS scanner. Plan 04 will type this as []NiosServerMetric.
-	NiosServerMetrics json.RawMessage `json:"niosServerMetrics,omitempty"`
+	// NiosServerMetrics is populated when the nios provider was scanned.
+	// Omitted from the response when NIOS was not included in the scan.
+	NiosServerMetrics []NiosServerMetric `json:"niosServerMetrics,omitempty"`
 }
