@@ -1852,6 +1852,219 @@ export function Wizard() {
                 );
               })()}
 
+              {/* NIOS-X Migration Planner (FE-04) */}
+              {selectedProviders.includes('nios') && niosServerMetrics.length > 0 && (() => {
+                const fullUddiTokens = niosServerMetrics.reduce(
+                  (sum, m) => sum + calcServerTokenTier(m.qps, m.lps, m.objectCount, 'nios-x').serverTokens,
+                  0
+                );
+                const currentNiosTokens = scanResults?.totalManagementTokens ?? 0;
+                const hybridTokens = (() => {
+                  const migratedTokens = niosServerMetrics
+                    .filter((m) => niosMigrationMap.has(m.memberName))
+                    .reduce((sum, m) => sum + calcServerTokenTier(m.qps, m.lps, m.objectCount, 'nios-x').serverTokens, 0);
+                  const migratedCount = niosMigrationMap.size;
+                  const totalCount = niosServerMetrics.length;
+                  const remainingNiosTokens = totalCount > 0
+                    ? Math.round(currentNiosTokens * (1 - migratedCount / totalCount))
+                    : 0;
+                  return migratedTokens + remainingNiosTokens;
+                })();
+
+                const scenarios = [
+                  { label: 'Current NIOS', tokens: currentNiosTokens, color: 'border-gray-200', badge: 'bg-gray-100 text-gray-600' },
+                  { label: 'Hybrid', tokens: hybridTokens, color: 'border-blue-200', badge: 'bg-blue-50 text-blue-700' },
+                  { label: 'Full UDDI', tokens: fullUddiTokens, color: 'border-[var(--infoblox-orange)]/30', badge: 'bg-orange-50 text-orange-700' },
+                ];
+
+                return (
+                  <div className="mt-6 mb-4">
+                    <div className="text-[13px] mb-3" style={{ fontWeight: 600 }}>
+                      NIOS-X Migration Planner
+                    </div>
+                    {/* Scenario cards */}
+                    <div className="grid grid-cols-3 gap-3 mb-4">
+                      {scenarios.map((s) => (
+                        <div key={s.label} className={`bg-white rounded-xl border-2 ${s.color} p-4`}>
+                          <div className={`text-[10px] px-2 py-0.5 rounded-full inline-block mb-2 ${s.badge}`} style={{ fontWeight: 600 }}>{s.label}</div>
+                          <div className="text-[22px] text-[var(--infoblox-orange)]" style={{ fontWeight: 700 }}>{s.tokens.toLocaleString()}</div>
+                          <div className="text-[11px] text-[var(--muted-foreground)]">tokens</div>
+                        </div>
+                      ))}
+                    </div>
+                    {/* Member selection table */}
+                    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+                      <table className="w-full text-[12px]">
+                        <thead>
+                          <tr className="border-b border-gray-100 bg-gray-50">
+                            <th className="text-left px-4 py-2 text-[var(--muted-foreground)]" style={{ fontWeight: 500 }}>Migrate</th>
+                            <th className="text-left px-4 py-2 text-[var(--muted-foreground)]" style={{ fontWeight: 500 }}>Member</th>
+                            <th className="text-left px-4 py-2 text-[var(--muted-foreground)]" style={{ fontWeight: 500 }}>Role</th>
+                            <th className="text-right px-4 py-2 text-[var(--muted-foreground)]" style={{ fontWeight: 500 }}>Tier</th>
+                            <th className="text-right px-4 py-2 text-[var(--muted-foreground)]" style={{ fontWeight: 500 }}>Server Tokens</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {niosServerMetrics.map((m) => {
+                            const tier = calcServerTokenTier(m.qps, m.lps, m.objectCount, 'nios-x');
+                            const checked = niosMigrationMap.has(m.memberName);
+                            return (
+                              <tr key={m.memberId} className="border-b border-gray-50 hover:bg-gray-50">
+                                <td className="px-4 py-2.5">
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={() => {
+                                      setNiosMigrationMap((prev) => {
+                                        const next = new Map(prev);
+                                        if (next.has(m.memberName)) next.delete(m.memberName);
+                                        else next.set(m.memberName, 'nios-x');
+                                        return next;
+                                      });
+                                    }}
+                                    className="rounded"
+                                  />
+                                </td>
+                                <td className="px-4 py-2.5 text-gray-800">{m.memberName}</td>
+                                <td className="px-4 py-2.5 text-gray-500">{m.role}</td>
+                                <td className="px-4 py-2.5 text-right text-gray-700">{tier.name}</td>
+                                <td className="px-4 py-2.5 text-right tabular-nums text-gray-700">{tier.serverTokens.toLocaleString()}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Server Token Calculator + XaaS Consolidation (FE-05 + FE-06) */}
+              {selectedProviders.includes('nios') && niosServerMetrics.length > 0 && (() => {
+                // Split members by form factor (default to 'nios-x' if not in map)
+                const niosXMembers = niosServerMetrics.filter(
+                  (m) => (niosMigrationMap.get(m.memberName) ?? 'nios-x') === 'nios-x'
+                );
+                const xaasMembers = niosServerMetrics.filter(
+                  (m) => niosMigrationMap.get(m.memberName) === 'nios-xaas'
+                );
+
+                const xaasInstances = consolidateXaasInstances(xaasMembers);
+
+                const niosXTotal = niosXMembers.reduce(
+                  (sum, m) => sum + calcServerTokenTier(m.qps, m.lps, m.objectCount, 'nios-x').serverTokens, 0
+                );
+                const xaasTotal = xaasInstances.reduce((sum, inst) => sum + inst.totalServerTokens, 0);
+                const grandTotal = niosXTotal + xaasTotal;
+
+                const dash = <span className="text-gray-300">&mdash;</span>;
+
+                return (
+                  <div className="mt-6 mb-4">
+                    <div className="text-[13px] mb-3" style={{ fontWeight: 600 }}>
+                      Server Token Calculator
+                    </div>
+                    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+                      <table className="w-full text-[12px]">
+                        <thead>
+                          <tr className="border-b border-gray-100 bg-gray-50">
+                            <th className="text-left px-4 py-2 text-[var(--muted-foreground)]" style={{ fontWeight: 500 }}>Member</th>
+                            <th className="text-left px-4 py-2 text-[var(--muted-foreground)]" style={{ fontWeight: 500 }}>Role</th>
+                            <th className="text-right px-4 py-2 text-[var(--muted-foreground)]" style={{ fontWeight: 500 }}>QPS</th>
+                            <th className="text-right px-4 py-2 text-[var(--muted-foreground)]" style={{ fontWeight: 500 }}>LPS</th>
+                            <th className="text-left px-4 py-2 text-[var(--muted-foreground)]" style={{ fontWeight: 500 }}>Form Factor</th>
+                            <th className="text-left px-4 py-2 text-[var(--muted-foreground)]" style={{ fontWeight: 500 }}>Tier</th>
+                            <th className="text-right px-4 py-2 text-[var(--muted-foreground)]" style={{ fontWeight: 500 }}>Server Tokens</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {/* NIOS-X on-prem rows */}
+                          {niosXMembers.map((m) => {
+                            const tier = calcServerTokenTier(m.qps, m.lps, m.objectCount, 'nios-x');
+                            const ff = niosMigrationMap.get(m.memberName) ?? 'nios-x';
+                            return (
+                              <tr key={m.memberId} className="border-b border-gray-50 hover:bg-gray-50">
+                                <td className="px-4 py-2.5 text-gray-800">{m.memberName}</td>
+                                <td className="px-4 py-2.5 text-gray-500">{m.role}</td>
+                                <td className="px-4 py-2.5 text-right tabular-nums">{m.qps > 0 ? m.qps.toLocaleString() : dash}</td>
+                                <td className="px-4 py-2.5 text-right tabular-nums">{m.lps > 0 ? m.lps.toLocaleString() : dash}</td>
+                                <td className="px-4 py-2.5">
+                                  <div className="flex gap-1">
+                                    <button
+                                      type="button"
+                                      className={`text-[10px] px-2 py-0.5 rounded-md border transition-colors ${ff === 'nios-x' ? 'bg-blue-50 border-blue-300 text-blue-700' : 'border-gray-200 text-gray-400 hover:border-gray-300'}`}
+                                      onClick={() => setNiosMigrationMap((prev) => { const next = new Map(prev); next.set(m.memberName, 'nios-x'); return next; })}
+                                    >NIOS-X</button>
+                                    <button
+                                      type="button"
+                                      className={`text-[10px] px-2 py-0.5 rounded-md border transition-colors ${ff === 'nios-xaas' ? 'bg-purple-50 border-purple-300 text-purple-700' : 'border-gray-200 text-gray-400 hover:border-gray-300'}`}
+                                      onClick={() => setNiosMigrationMap((prev) => { const next = new Map(prev); next.set(m.memberName, 'nios-xaas'); return next; })}
+                                    >XaaS</button>
+                                  </div>
+                                </td>
+                                <td className="px-4 py-2.5 text-gray-700">{tier.name}</td>
+                                <td className="px-4 py-2.5 text-right tabular-nums text-gray-700">{tier.serverTokens.toLocaleString()}</td>
+                              </tr>
+                            );
+                          })}
+
+                          {/* XaaS Consolidation instance groups (FE-06) */}
+                          {xaasInstances.map((inst, instIdx) => (
+                            <Fragment key={`xaas-inst-${instIdx}`}>
+                              {/* Instance header row */}
+                              <tr className="bg-purple-50 border-b border-purple-100">
+                                <td colSpan={4} className="px-4 py-2 text-purple-700 text-[11px]" style={{ fontWeight: 600 }}>
+                                  XaaS Instance {instIdx + 1} — {inst.tier.name} tier
+                                  {inst.extraConnections > 0 && (
+                                    <span className="ml-2 text-purple-500">
+                                      (+{inst.extraConnections} extra connections &times; {XAAS_EXTRA_CONNECTION_COST} tk = {inst.extraTokens.toLocaleString()} tk)
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="px-4 py-2 text-purple-700 text-[11px]" style={{ fontWeight: 600 }}>XaaS</td>
+                                <td className="px-4 py-2 text-purple-700 text-[11px]">{inst.tier.name}</td>
+                                <td className="px-4 py-2 text-right tabular-nums text-purple-700 text-[11px]" style={{ fontWeight: 600 }}>{inst.totalServerTokens.toLocaleString()}</td>
+                              </tr>
+                              {/* Member sub-rows */}
+                              {inst.members.map((m) => (
+                                <tr key={m.memberId} className="border-b border-gray-50 bg-purple-50/30 hover:bg-purple-50/60">
+                                  <td className="pl-8 pr-4 py-2 text-gray-700 text-[11px]">{m.memberName}</td>
+                                  <td className="px-4 py-2 text-gray-500 text-[11px]">{m.role}</td>
+                                  <td className="px-4 py-2 text-right tabular-nums text-[11px]">{m.qps > 0 ? m.qps.toLocaleString() : dash}</td>
+                                  <td className="px-4 py-2 text-right tabular-nums text-[11px]">{m.lps > 0 ? m.lps.toLocaleString() : dash}</td>
+                                  <td className="px-4 py-2">
+                                    <div className="flex gap-1">
+                                      <button
+                                        type="button"
+                                        className="text-[10px] px-2 py-0.5 rounded-md border border-gray-200 text-gray-400 hover:border-gray-300 transition-colors"
+                                        onClick={() => setNiosMigrationMap((prev) => { const next = new Map(prev); next.set(m.memberName, 'nios-x'); return next; })}
+                                      >NIOS-X</button>
+                                      <button
+                                        type="button"
+                                        className="text-[10px] px-2 py-0.5 rounded-md border bg-purple-50 border-purple-300 text-purple-700 transition-colors"
+                                        onClick={() => setNiosMigrationMap((prev) => { const next = new Map(prev); next.set(m.memberName, 'nios-xaas'); return next; })}
+                                      >XaaS</button>
+                                    </div>
+                                  </td>
+                                  <td className="px-4 py-2 text-gray-400 text-[11px]">—</td>
+                                  <td className="px-4 py-2 text-right tabular-nums text-gray-400 text-[11px]">—</td>
+                                </tr>
+                              ))}
+                            </Fragment>
+                          ))}
+
+                          {/* Grand total row */}
+                          <tr className="bg-gray-50 border-t-2 border-gray-200">
+                            <td colSpan={6} className="px-4 py-3 text-[12px]" style={{ fontWeight: 600 }}>Total Server Tokens</td>
+                            <td className="px-4 py-3 text-right tabular-nums text-[var(--infoblox-orange)] text-[14px]" style={{ fontWeight: 700 }}>{grandTotal.toLocaleString()}</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* 3 category columns with per-source breakdown */}
               {(() => {
                 // Build per-source data for each category
