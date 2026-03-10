@@ -14,6 +14,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/dns/armdns"
 	armnetwork "github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/network/armnetwork/v6"
 	armprivatedns "github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/privatedns/armprivatedns"
+	armsubscriptions "github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armsubscriptions"
 	"github.com/infoblox/uddi-go-token-calculator/internal/calculator"
 	"github.com/infoblox/uddi-go-token-calculator/internal/scanner"
 )
@@ -43,8 +44,22 @@ func (s *Scanner) Scan(ctx context.Context, req scanner.ScanRequest, publish fun
 		return nil, errors.New("azure: no subscriptions selected")
 	}
 
+	// Resolve subscription display names for human-readable Source fields.
+	subNames := make(map[string]string, len(subscriptions))
+	if subClient, err := armsubscriptions.NewClient(cred, nil); err == nil {
+		for _, id := range subscriptions {
+			if resp, err := subClient.Get(ctx, id, nil); err == nil && resp.DisplayName != nil {
+				subNames[id] = *resp.DisplayName
+			}
+		}
+	}
+
 	for _, subID := range subscriptions {
-		findings, err := scanSubscription(ctx, cred, subID, publish)
+		displayName := subNames[subID]
+		if displayName == "" {
+			displayName = subID // fallback to UUID if lookup failed
+		}
+		findings, err := scanSubscription(ctx, cred, subID, displayName, publish)
 		if err != nil {
 			// Return partial findings + error so the orchestrator records the error
 			// but keeps any findings from already-scanned subscriptions.
@@ -92,7 +107,7 @@ func buildCredential(creds map[string]string, cached azcore.TokenCredential) (az
 // scanSubscription discovers all Azure resources in a single subscription.
 // Each resource type is isolated: on error, an error event is emitted and
 // scanning continues to the next resource type (partial results are preserved).
-func scanSubscription(ctx context.Context, cred azcore.TokenCredential, subID string, publish func(scanner.Event)) ([]calculator.FindingRow, error) {
+func scanSubscription(ctx context.Context, cred azcore.TokenCredential, subID string, displayName string, publish func(scanner.Event)) ([]calculator.FindingRow, error) {
 	var findings []calculator.FindingRow
 
 	// ── VNets and subnets ─────────────────────────────────────────────────────
@@ -115,7 +130,7 @@ func scanSubscription(ctx context.Context, cred azcore.TokenCredential, subID st
 		})
 		findings = append(findings, calculator.FindingRow{
 			Provider:         scanner.ProviderAzure,
-			Source:           subID,
+			Source:           displayName,
 			Category:         calculator.CategoryDDIObjects,
 			Item:             "vnet",
 			Count:            vnetCount,
@@ -132,7 +147,7 @@ func scanSubscription(ctx context.Context, cred azcore.TokenCredential, subID st
 		})
 		findings = append(findings, calculator.FindingRow{
 			Provider:         scanner.ProviderAzure,
-			Source:           subID,
+			Source:           displayName,
 			Category:         calculator.CategoryDDIObjects,
 			Item:             "subnet",
 			Count:            subnetCount,
@@ -161,7 +176,7 @@ func scanSubscription(ctx context.Context, cred azcore.TokenCredential, subID st
 		})
 		findings = append(findings, calculator.FindingRow{
 			Provider:         scanner.ProviderAzure,
-			Source:           subID,
+			Source:           displayName,
 			Category:         calculator.CategoryDDIObjects,
 			Item:             "dns_zone",
 			Count:            zoneCount,
@@ -178,7 +193,7 @@ func scanSubscription(ctx context.Context, cred azcore.TokenCredential, subID st
 		})
 		findings = append(findings, calculator.FindingRow{
 			Provider:         scanner.ProviderAzure,
-			Source:           subID,
+			Source:           displayName,
 			Category:         calculator.CategoryDDIObjects,
 			Item:             "dns_record",
 			Count:            recordCount,
@@ -207,7 +222,7 @@ func scanSubscription(ctx context.Context, cred azcore.TokenCredential, subID st
 		})
 		findings = append(findings, calculator.FindingRow{
 			Provider:         scanner.ProviderAzure,
-			Source:           subID,
+			Source:           displayName,
 			Category:         calculator.CategoryActiveIPs,
 			Item:             "virtual_machine",
 			Count:            vmIPCount,
@@ -236,7 +251,7 @@ func scanSubscription(ctx context.Context, cred azcore.TokenCredential, subID st
 		})
 		findings = append(findings, calculator.FindingRow{
 			Provider:         scanner.ProviderAzure,
-			Source:           subID,
+			Source:           displayName,
 			Category:         calculator.CategoryManagedAssets,
 			Item:             "load_balancer",
 			Count:            lbCount,
@@ -253,7 +268,7 @@ func scanSubscription(ctx context.Context, cred azcore.TokenCredential, subID st
 		})
 		findings = append(findings, calculator.FindingRow{
 			Provider:         scanner.ProviderAzure,
-			Source:           subID,
+			Source:           displayName,
 			Category:         calculator.CategoryManagedAssets,
 			Item:             "application_gateway",
 			Count:            gwCount,
