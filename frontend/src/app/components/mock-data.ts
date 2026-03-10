@@ -44,6 +44,7 @@ export interface CredentialField {
   placeholder: string;
   secret?: boolean;
   multiline?: boolean;
+  serverList?: boolean;
   helpText?: string;
 }
 
@@ -220,7 +221,7 @@ export const PROVIDERS: ProviderOption[] = [
         name: 'Windows / Kerberos (Current User)',
         description: 'Use your current Windows domain session (integrated auth)',
         fields: [
-          { key: 'servers', label: 'Server Address(es)', placeholder: 'dc01.corp.local, dc02.corp.local', helpText: 'Comma-separated list of domain controller hostnames or IPs' },
+          { key: 'servers', label: 'Server Address(es)', placeholder: 'dc01.corp.local', serverList: true, helpText: 'Add one or more domain controller hostnames or IPs' },
         ],
       },
       {
@@ -228,7 +229,7 @@ export const PROVIDERS: ProviderOption[] = [
         name: 'Username & Password (NTLM)',
         description: 'Authenticate with domain credentials',
         fields: [
-          { key: 'servers', label: 'Server Address(es)', placeholder: 'dc01.corp.local, dc02.corp.local', helpText: 'Comma-separated list of domain controller hostnames or IPs' },
+          { key: 'servers', label: 'Server Address(es)', placeholder: 'dc01.corp.local', serverList: true, helpText: 'Add one or more domain controller hostnames or IPs' },
           { key: 'username', label: 'Username', placeholder: 'DOMAIN\\admin' },
           { key: 'password', label: 'Password', placeholder: '********', secret: true },
         ],
@@ -238,7 +239,7 @@ export const PROVIDERS: ProviderOption[] = [
         name: 'PowerShell Remoting (WinRM)',
         description: 'Connect via WinRM to a remote Windows Server',
         fields: [
-          { key: 'servers', label: 'Server Address(es)', placeholder: 'dc01.corp.local, dc02.corp.local', helpText: 'Comma-separated list of domain controller hostnames or IPs' },
+          { key: 'servers', label: 'Server Address(es)', placeholder: 'dc01.corp.local', serverList: true, helpText: 'Add one or more domain controller hostnames or IPs' },
           { key: 'username', label: 'Username', placeholder: 'DOMAIN\\admin' },
           { key: 'password', label: 'Password', placeholder: '********', secret: true },
           { key: 'useSSL', label: 'Use HTTPS (port 5986)', placeholder: 'true', helpText: 'Enable for encrypted WinRM transport' },

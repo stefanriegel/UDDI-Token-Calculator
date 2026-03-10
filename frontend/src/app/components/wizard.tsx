@@ -28,6 +28,8 @@ import {
   Gauge,
   Heart,
   Github,
+  X,
+  Plus,
 } from 'lucide-react';
 import { useBackendConnection } from './use-backend';
 import {
@@ -74,6 +76,86 @@ const STEPS: { id: Step; label: string }[] = [
   { id: 'scanning', label: 'Scan' },
   { id: 'results', label: 'Results & Export' },
 ];
+
+/** Inline component: add/remove list for server addresses (replaces comma-separated text input). */
+function ServerListInput({
+  servers,
+  onChange,
+  placeholder,
+}: {
+  servers: string[];
+  onChange: (servers: string[]) => void;
+  placeholder: string;
+}) {
+  const [draft, setDraft] = useState('');
+
+  const addServer = () => {
+    const trimmed = draft.trim();
+    if (!trimmed) return;
+    // Split on commas in case user pastes a comma-separated list
+    const newEntries = trimmed.split(',').map((s) => s.trim()).filter(Boolean);
+    const unique = newEntries.filter((s) => !servers.includes(s));
+    if (unique.length > 0) {
+      onChange([...servers, ...unique]);
+    }
+    setDraft('');
+  };
+
+  const removeServer = (index: number) => {
+    onChange(servers.filter((_, i) => i !== index));
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      addServer();
+    }
+  };
+
+  return (
+    <div className="space-y-2">
+      <div className="flex gap-2">
+        <input
+          type="text"
+          placeholder={placeholder}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={handleKeyDown}
+          className="flex-1 px-3 py-2 bg-[var(--input-background)] border border-[var(--border)] rounded-lg text-[13px] focus:outline-none focus:ring-2 focus:ring-[var(--infoblox-blue)]/30 focus:border-[var(--infoblox-blue)]"
+        />
+        <button
+          type="button"
+          onClick={addServer}
+          disabled={!draft.trim()}
+          className="flex items-center gap-1 px-3 py-2 bg-[var(--infoblox-blue)] text-white text-[13px] font-medium rounded-lg hover:bg-[var(--infoblox-blue)]/90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+        >
+          <Plus className="w-3.5 h-3.5" />
+          Add
+        </button>
+      </div>
+      {servers.length > 0 && (
+        <ul className="space-y-1">
+          {servers.map((server, i) => (
+            <li
+              key={`${server}-${i}`}
+              className="flex items-center justify-between px-3 py-1.5 bg-[var(--input-background)] border border-[var(--border)] rounded-lg text-[13px]"
+            >
+              <span className="truncate">{server}</span>
+              <button
+                type="button"
+                onClick={() => removeServer(i)}
+                className="ml-2 flex-shrink-0 text-[var(--muted-foreground)] hover:text-red-500 transition-colors"
+                aria-label={`Remove ${server}`}
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
 
 export function Wizard() {
   const backend = useBackendConnection();
@@ -1081,7 +1163,21 @@ export function Wizard() {
                                     {field.label}
                                   </label>
                                   <div className="relative">
-                                    {field.multiline ? (
+                                    {field.serverList ? (
+                                      <ServerListInput
+                                        servers={(credentials[provId]?.[field.key] || '').split(',').map((s: string) => s.trim()).filter(Boolean)}
+                                        onChange={(list) =>
+                                          setCredentials((prev) => ({
+                                            ...prev,
+                                            [provId]: {
+                                              ...prev[provId],
+                                              [field.key]: list.join(', '),
+                                            },
+                                          }))
+                                        }
+                                        placeholder={field.placeholder}
+                                      />
+                                    ) : field.multiline ? (
                                       <textarea
                                         placeholder={field.placeholder}
                                         value={credentials[provId]?.[field.key] || ''}
@@ -1114,7 +1210,7 @@ export function Wizard() {
                                         className="w-full px-3 py-2 bg-[var(--input-background)] border border-[var(--border)] rounded-lg text-[13px] focus:outline-none focus:ring-2 focus:ring-[var(--infoblox-blue)]/30 focus:border-[var(--infoblox-blue)]"
                                       />
                                     )}
-                                    {isSecret && !field.multiline && (
+                                    {isSecret && !field.multiline && !field.serverList && (
                                       <button
                                         type="button"
                                         onClick={() =>
