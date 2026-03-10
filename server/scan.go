@@ -120,7 +120,22 @@ func (h *ScanHandler) HandleGetScanStatus(w http.ResponseWriter, r *http.Request
 		resp.Progress = 100
 	} else {
 		resp.Status = "running"
-		resp.Progress = 0
+
+		// Build per-provider progress from session and compute overall average.
+		provProgress := sess.GetProviderProgress()
+		if len(provProgress) > 0 {
+			totalProgress := 0
+			for name, info := range provProgress {
+				resp.Providers = append(resp.Providers, ProviderScanStatus{
+					Provider:   name,
+					Status:     info.Status,
+					Progress:   info.Progress,
+					ItemsFound: info.ItemsFound,
+				})
+				totalProgress += info.Progress
+			}
+			resp.Progress = totalProgress / len(provProgress)
+		}
 	}
 
 	writeJSON(w, http.StatusOK, resp)

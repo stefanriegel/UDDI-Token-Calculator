@@ -85,6 +85,9 @@ func (o *Orchestrator) Run(ctx context.Context, sess *session.Session, providers
 		go func() {
 			defer wg.Done()
 
+			// Initialize provider progress as running at 5%.
+			sess.UpdateProviderProgress(providerName, "running", 5, 0)
+
 			// Publish provider_start before calling Scan.
 			sess.Broker.Publish(broker.Event{
 				Type:     "provider_start",
@@ -93,7 +96,12 @@ func (o *Orchestrator) Run(ctx context.Context, sess *session.Session, providers
 
 			start := time.Now()
 
-			// publish is a closure that converts scanner.Event to broker.Event.
+			// Track the number of resource_progress events to estimate progress.
+			eventCount := 0
+			totalItems := 0
+
+			// publish is a closure that converts scanner.Event to broker.Event
+			// and updates per-provider progress tracking in the session.
 			publish := func(e scanner.Event) {
 				sess.Broker.Publish(broker.Event{
 					Type:     e.Type,
@@ -105,6 +113,21 @@ func (o *Orchestrator) Run(ctx context.Context, sess *session.Session, providers
 					Message:  e.Message,
 					DurMS:    e.DurMS,
 				})
+
+				// Update progress on each resource_progress event.
+				if e.Type == "resource_progress" {
+					eventCount++
+					totalItems += e.Count
+
+					// Estimate progress: start at 5%, scale up to 90% based on events seen.
+					// Cloud providers emit ~5-15 events, NIOS emits ~5 events.
+					// Use a factor that reaches ~90% after ~10 events.
+					progress := 5 + eventCount*9
+					if progress > 90 {
+						progress = 90
+					}
+					sess.UpdateProviderProgress(providerName, "running", progress, totalItems)
+				}
 			}
 
 			rows, err := s.Scan(ctx, req, publish)
@@ -119,6 +142,8 @@ func (o *Orchestrator) Run(ctx context.Context, sess *session.Session, providers
 				})
 				mu.Unlock()
 
+				sess.UpdateProviderProgress(providerName, "error", 100, totalItems)
+
 				sess.Broker.Publish(broker.Event{
 					Type:     "error",
 					Provider: providerName,
@@ -129,6 +154,8 @@ func (o *Orchestrator) Run(ctx context.Context, sess *session.Session, providers
 				mu.Lock()
 				findings = append(findings, rows...)
 				mu.Unlock()
+
+				sess.UpdateProviderProgress(providerName, "complete", 100, totalItems)
 
 				// After a successful NIOS scan, type-assert to NiosResultScanner
 				// to retrieve per-member metrics JSON and store it in the session.

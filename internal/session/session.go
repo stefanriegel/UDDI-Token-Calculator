@@ -86,6 +86,13 @@ type ProviderError struct {
 	Message  string
 }
 
+// ProviderProgressInfo tracks real-time progress for a single provider during a scan.
+type ProviderProgressInfo struct {
+	Status     string // "pending" | "running" | "complete" | "error"
+	Progress   int    // 0–100
+	ItemsFound int
+}
+
 // Session holds the lifecycle state of a single scan request.
 // No json tags on any field — sessions should never be marshaled to disk.
 // Credential fields are nilled via ZeroCreds() once the scan goroutine has
@@ -113,6 +120,11 @@ type Session struct {
 	// nil if NIOS was not scanned.
 	NiosServerMetricsJSON []byte
 
+	// ProviderProgress tracks per-provider scan progress for the polling endpoint.
+	// Keys are provider names ("aws", "azure", "gcp", "ad", "nios").
+	// Updated by the orchestrator goroutine, read by HandleGetScanStatus.
+	ProviderProgress map[string]*ProviderProgressInfo
+
 	mu sync.RWMutex // guards concurrent access to mutable fields
 }
 
@@ -123,6 +135,37 @@ func (s *Session) SetNiosServerMetricsJSON(data []byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.NiosServerMetricsJSON = data
+}
+
+// UpdateProviderProgress sets the progress info for a single provider.
+// Thread-safe — called from orchestrator goroutines.
+func (s *Session) UpdateProviderProgress(provider, status string, progress, itemsFound int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.ProviderProgress == nil {
+		s.ProviderProgress = make(map[string]*ProviderProgressInfo)
+	}
+	s.ProviderProgress[provider] = &ProviderProgressInfo{
+		Status:     status,
+		Progress:   progress,
+		ItemsFound: itemsFound,
+	}
+}
+
+// GetProviderProgress returns a snapshot copy of all provider progress info.
+// Thread-safe — called from HTTP handler goroutines.
+func (s *Session) GetProviderProgress() map[string]*ProviderProgressInfo {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.ProviderProgress == nil {
+		return nil
+	}
+	cp := make(map[string]*ProviderProgressInfo, len(s.ProviderProgress))
+	for k, v := range s.ProviderProgress {
+		info := *v // copy the struct
+		cp[k] = &info
+	}
+	return cp
 }
 
 // ZeroCreds nils all credential pointer fields. Call this once the scan
