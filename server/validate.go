@@ -171,13 +171,19 @@ func (h *ValidateHandler) HandleValidate(w http.ResponseWriter, r *http.Request)
 func storeCredentials(sess *session.Session, provider, authMethod string, creds map[string]string) {
 	switch provider {
 	case "aws":
+		// Frontend sends "profile", backend historically read "profileName".
+		// Accept both keys so the session is populated regardless of which is sent.
+		profileName := creds["profileName"]
+		if profileName == "" {
+			profileName = creds["profile"]
+		}
 		sess.AWS = &session.AWSCredentials{
 			AuthMethod:      authMethod,
 			AccessKeyID:     creds["accessKeyId"],
 			SecretAccessKey: creds["secretAccessKey"],
 			SessionToken:    creds["sessionToken"],
 			Region:          creds["region"],
-			ProfileName:     creds["profileName"],
+			ProfileName:     profileName,
 			RoleARN:         creds["roleArn"],
 			SSOStartURL:     creds["ssoStartUrl"],
 			SSORegion:       creds["ssoRegion"],
@@ -212,9 +218,18 @@ func storeCredentials(sess *session.Session, provider, authMethod string, creds 
 			CachedTokenSource:  cachedTS,
 		}
 	case "ad":
+		// Frontend sends "server" (singular), backend historically read "servers" (plural).
+		// Accept both keys so the session is populated regardless of which is sent,
+		// matching the same fallback logic already in realADValidator.
+		hosts := parseServers(creds["servers"])
+		if len(hosts) == 0 {
+			if h := creds["server"]; h != "" {
+				hosts = []string{h}
+			}
+		}
 		sess.AD = &session.ADCredentials{
 			AuthMethod: authMethod,
-			Hosts:      parseServers(creds["servers"]),
+			Hosts:      hosts,
 			Username:   creds["username"],
 			Password:   creds["password"],
 			Domain:     creds["domain"],
