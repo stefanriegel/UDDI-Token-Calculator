@@ -162,13 +162,32 @@ func (s *Scanner) Scan(_ context.Context, req scanner.ScanRequest, publish func(
 	// ---- Build FindingRows ----
 	var rows []calculator.FindingRow
 
-	// Grid-level DDI → attributed to GM.
+	// Emit per-family DDI rows with human-readable names.
+	// Token calculation uses the total gridDDI; per-family rows are informational (tokens=0)
+	// except for a summary row that carries the total token count.
 	if result.gridDDI > 0 {
+		// Emit per-family breakdown rows (informational, tokens=0).
+		for family, count := range result.familyCounts {
+			if count == 0 {
+				continue
+			}
+			displayName := familyDisplayName(family)
+			rows = append(rows, calculator.FindingRow{
+				Provider:         "nios",
+				Source:           gmHostname,
+				Category:         calculator.CategoryDDIObjects,
+				Item:             displayName,
+				Count:            count,
+				TokensPerUnit:    calculator.TokensPerDDIObject,
+				ManagementTokens: 0, // informational — total row carries tokens
+			})
+		}
+		// Summary row with total DDI token count.
 		rows = append(rows, calculator.FindingRow{
 			Provider:         "nios",
 			Source:           gmHostname,
 			Category:         calculator.CategoryDDIObjects,
-			Item:             "NIOS Grid DDI Objects",
+			Item:             "DDI Objects (Total)",
 			Count:            result.gridDDI,
 			TokensPerUnit:    calculator.TokensPerDDIObject,
 			ManagementTokens: ceilDiv(result.gridDDI, calculator.TokensPerDDIObject),
@@ -185,35 +204,12 @@ func (s *Scanner) Scan(_ context.Context, req scanner.ScanRequest, publish func(
 				Provider:         "nios",
 				Source:           hostname,
 				Category:         calculator.CategoryDDIObjects,
-				Item:             "NIOS Grid DDI Objects",
+				Item:             "DDI Objects (Total)",
 				Count:            acc.ddiCount,
 				TokensPerUnit:    calculator.TokensPerDDIObject,
 				ManagementTokens: ceilDiv(acc.ddiCount, calculator.TokensPerDDIObject),
 			})
 		}
-	}
-
-	// DNS Zones specifically (so tests can look for Item="DNS Zone").
-	// Count DNS zones separately for the Item field.
-	dnsZoneCount := 0
-	for _, obj := range objects {
-		if obj.Family == NiosFamilyDNSZone {
-			dnsZoneCount++
-		}
-	}
-	if dnsZoneCount > 0 {
-		// Replace or supplement the grid DDI row with a zone-specific row.
-		// The zone count is already included in gridDDI; emit an additional
-		// labeled row so the test can find Item="DNS Zone".
-		rows = append(rows, calculator.FindingRow{
-			Provider:         "nios",
-			Source:           gmHostname,
-			Category:         calculator.CategoryDDIObjects,
-			Item:             "DNS Zone",
-			Count:            dnsZoneCount,
-			TokensPerUnit:    calculator.TokensPerDDIObject,
-			ManagementTokens: ceilDiv(dnsZoneCount, calculator.TokensPerDDIObject),
-		})
 	}
 
 	// Grid-level Active IPs — count unique active lease IPs only (not fixed/host/network).
@@ -320,6 +316,43 @@ func buildMetrics(
 		})
 	}
 	return metrics
+}
+
+// familyDisplayNames maps NiosFamily constants to human-readable display names
+// for the FindingRow Item field.
+var familyDisplayNames = map[string]string{
+	NiosFamilyDNSZone:          "DNS Zones",
+	NiosFamilyDNSRecordA:      "DNS A Records",
+	NiosFamilyDNSRecordAAAA:   "DNS AAAA Records",
+	NiosFamilyDNSRecordCNAME:  "DNS CNAME Records",
+	NiosFamilyDNSRecordMX:     "DNS MX Records",
+	NiosFamilyDNSRecordNS:     "DNS NS Records",
+	NiosFamilyDNSRecordPTR:    "DNS PTR Records",
+	NiosFamilyDNSRecordSOA:    "DNS SOA Records",
+	NiosFamilyDNSRecordSRV:    "DNS SRV Records",
+	NiosFamilyDNSRecordTXT:    "DNS TXT Records",
+	NiosFamilyNetwork:         "DHCP Networks",
+	NiosFamilyHostObject:      "Host Records",
+	NiosFamilyHostAlias:       "Host Aliases",
+	NiosFamilyFixedAddress:    "Fixed Addresses",
+	NiosFamilyDHCPRange:       "DHCP Ranges",
+	NiosFamilyExclusionRange:  "Exclusion Ranges",
+	NiosFamilyNetworkContainer: "Network Containers",
+	NiosFamilyNetworkView:     "Network Views",
+	NiosFamilyDTCLBDN:         "DTC Load-Balanced Names",
+	NiosFamilyDTCPool:         "DTC Pools",
+	NiosFamilyDTCServer:       "DTC Servers",
+	NiosFamilyDTCMonitor:      "DTC Monitors",
+	NiosFamilyDTCTopology:     "DTC Topologies",
+}
+
+// familyDisplayName returns the human-readable name for a NiosFamily constant.
+// Falls back to "Other DDI Objects" for unmapped families.
+func familyDisplayName(family string) string {
+	if name, ok := familyDisplayNames[family]; ok {
+		return name
+	}
+	return "Other DDI Objects"
 }
 
 // ceilDiv computes ceiling(n / d). Returns 0 if n is 0.

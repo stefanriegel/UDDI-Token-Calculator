@@ -37,6 +37,7 @@ type memberAcc struct {
 type countResult struct {
 	memberAccs     map[string]*memberAcc // keyed by member hostname
 	gridDDI        int                   // DDI count attributed to the grid master
+	familyCounts   map[string]int        // per-family DDI counts (e.g. dns_zone -> 5)
 	globalIPSet    map[string]struct{}   // deduplicated IPs across all sources
 	gridLeaseCount int                   // lease IPs attributed to unknown/grid members
 }
@@ -70,8 +71,9 @@ func (cr *countResult) getOrCreateAcc(hostname string) *memberAcc {
 //     per-member leaseIPSet and globalIPSet; attributed via vnodeMap[VnodeID]
 func countObjects(objects []parsedObject, vnodeMap map[string]string, gmHostname string) countResult {
 	result := countResult{
-		memberAccs:  make(map[string]*memberAcc),
-		globalIPSet: make(map[string]struct{}),
+		memberAccs:   make(map[string]*memberAcc),
+		familyCounts: make(map[string]int),
+		globalIPSet:  make(map[string]struct{}),
 	}
 
 	// Ensure the GM has an accumulator even if it has no direct DDI objects.
@@ -123,6 +125,7 @@ func countObjects(objects []parsedObject, vnodeMap map[string]string, gmHostname
 
 		case NiosFamilyNetwork:
 			// +1 DDI, and add network+broadcast addresses to global IP set.
+			result.familyCounts[NiosFamilyNetwork]++
 			acc := result.getOrCreateAcc(gmHostname)
 			acc.ddiCount++
 
@@ -145,6 +148,7 @@ func countObjects(objects []parsedObject, vnodeMap map[string]string, gmHostname
 
 		case NiosFamilyHostObject:
 			// HOST_OBJECT expands to +2 (A+PTR) or +3 (A+PTR+CNAME) if aliases non-empty.
+			result.familyCounts[NiosFamilyHostObject]++
 			acc := result.getOrCreateAcc(gmHostname)
 			if obj.Props["aliases"] != "" {
 				acc.ddiCount += 3
@@ -155,6 +159,7 @@ func countObjects(objects []parsedObject, vnodeMap map[string]string, gmHostname
 		default:
 			// All remaining DDI families: +1 attributed to grid master.
 			if _, isDDI := DDIFamilies[obj.Family]; isDDI {
+				result.familyCounts[obj.Family]++
 				acc := result.getOrCreateAcc(gmHostname)
 				acc.ddiCount++
 			}

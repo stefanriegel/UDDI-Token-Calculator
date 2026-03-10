@@ -2150,7 +2150,7 @@ export function Wizard() {
                               />
                               {PROVIDERS.find((p) => p.id === f.provider)?.name}
                             </td>
-                            <td className="px-4 py-2.5 text-[var(--muted-foreground)]">{f.source}</td>
+                            <td className="px-4 py-2.5 text-[var(--muted-foreground)] max-w-[200px] truncate" title={f.source}>{f.source}</td>
                             <td className="px-4 py-2.5">
                               <span
                                 className={`px-2 py-0.5 rounded-full text-[11px] ${
@@ -2166,10 +2166,10 @@ export function Wizard() {
                               </span>
                             </td>
                             <td className="px-4 py-2.5">{f.item}</td>
-                            <td className="px-4 py-2.5 text-right tabular-nums">
+                            <td className="px-4 py-2.5 text-right tabular-nums whitespace-nowrap min-w-[80px]">
                               {f.count.toLocaleString()}
                             </td>
-                            <td className="px-4 py-2.5 text-right tabular-nums" style={{ fontWeight: 600 }}>
+                            <td className="px-4 py-2.5 text-right tabular-nums whitespace-nowrap min-w-[100px]" style={{ fontWeight: 600 }}>
                               {f.managementTokens.toLocaleString()}
                             </td>
                           </tr>

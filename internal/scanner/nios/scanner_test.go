@@ -55,10 +55,10 @@ func runScan(t *testing.T) []calculator.FindingRow {
 func TestNIOS_DDIFamilyCounts(t *testing.T) {
 	rows := runScan(t)
 
-	// Expect at least one FindingRow with Category=DDI Objects and Item matching "DNS Zone".
+	// Expect at least one FindingRow with Category=DDI Objects and Item="DNS Zones".
 	found := false
 	for _, r := range rows {
-		if r.Category == calculator.CategoryDDIObjects && r.Item == "DNS Zone" {
+		if r.Category == calculator.CategoryDDIObjects && r.Item == "DNS Zones" {
 			if r.Count >= 2 {
 				found = true
 			}
@@ -66,7 +66,7 @@ func TestNIOS_DDIFamilyCounts(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected FindingRow{Category=%q, Item=%q, Count>=2}; got rows: %+v",
-			calculator.CategoryDDIObjects, "DNS Zone", rows)
+			calculator.CategoryDDIObjects, "DNS Zones", rows)
 	}
 }
 
