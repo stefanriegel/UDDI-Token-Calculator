@@ -28,6 +28,8 @@ type ScanProviderSpec struct {
 	// BackupToken is the opaque token returned by HandleUploadNiosBackup.
 	// HandleStartScan resolves it to a temp file path via niosBackupTokens sync.Map.
 	BackupToken string `json:"backupToken,omitempty"`
+	// Mode selects the NIOS scan mode: "backup" (default) or "wapi" (live WAPI).
+	Mode string `json:"mode,omitempty"`
 }
 
 // ScanStartResponse is returned immediately by POST /api/v1/scan.
@@ -130,6 +132,28 @@ type NiosServerMetric struct {
 	QPS         int    `json:"qps"`
 	LPS         int    `json:"lps"`
 	ObjectCount int    `json:"objectCount"`
+}
+
+// BluecatValidateResponse is the response from Bluecat credential validation.
+type BluecatValidateResponse struct {
+	Valid      bool   `json:"valid"`
+	Error      string `json:"error,omitempty"`
+	APIVersion string `json:"apiVersion,omitempty"` // "v1" or "v2"
+}
+
+// EfficientIPValidateResponse is the response from EfficientIP credential validation.
+type EfficientIPValidateResponse struct {
+	Valid    bool   `json:"valid"`
+	Error    string `json:"error,omitempty"`
+	AuthMode string `json:"authMode,omitempty"` // "basic" or "native"
+}
+
+// NiosWAPIValidateResponse is the response from NIOS WAPI credential validation.
+type NiosWAPIValidateResponse struct {
+	Valid       bool             `json:"valid"`
+	Error       string           `json:"error,omitempty"`
+	Members     []NiosGridMember `json:"members,omitempty"`
+	WAPIVersion string           `json:"wapiVersion,omitempty"`
 }
 
 // ScanResultsResponse is the body for GET /api/v1/scan/{id}/results.
