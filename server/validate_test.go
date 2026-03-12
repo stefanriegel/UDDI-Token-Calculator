@@ -407,6 +407,91 @@ func TestStoreCredentials_AWSProfileKey(t *testing.T) {
 	}
 }
 
+// TestValidate_MultiProviderSessionReuse: validating two providers sequentially
+// reuses the same session, so both providers' credentials are available for scanning.
+func TestValidate_MultiProviderSessionReuse(t *testing.T) {
+	store := session.NewStore()
+	h := newTestValidateHandler(store)
+	router := server.NewRouter(noopStatic, store, nil)
+	server.RegisterValidateHandler(router, h)
+
+	// Step 1: Validate AWS — creates a new session and sets ddi_session cookie.
+	awsBody, _ := json.Marshal(map[string]interface{}{
+		"authMethod": "access-key",
+		"credentials": map[string]string{
+			"accessKeyId":     "AKIA-TEST",
+			"secretAccessKey": "secret",
+			"region":          "us-east-1",
+		},
+	})
+	req1 := httptest.NewRequest(http.MethodPost, "/api/v1/providers/aws/validate", bytes.NewReader(awsBody))
+	req1.Header.Set("Content-Type", "application/json")
+	rec1 := httptest.NewRecorder()
+	router.ServeHTTP(rec1, req1)
+
+	if rec1.Code != http.StatusOK {
+		t.Fatalf("AWS validate: expected 200, got %d: %s", rec1.Code, rec1.Body.String())
+	}
+
+	// Extract ddi_session cookie from first response.
+	var sessionCookie *http.Cookie
+	for _, c := range (&http.Response{Header: rec1.Header()}).Cookies() {
+		if c.Name == "ddi_session" {
+			sessionCookie = c
+			break
+		}
+	}
+	if sessionCookie == nil {
+		t.Fatal("expected ddi_session cookie after AWS validate")
+	}
+	sessionID := sessionCookie.Value
+
+	// Step 2: Validate Azure — passes the existing ddi_session cookie.
+	// The handler should reuse the session instead of creating a new one.
+	azureBody, _ := json.Marshal(map[string]interface{}{
+		"authMethod": "service-principal",
+		"credentials": map[string]string{
+			"tenantId":     "tenant-123",
+			"clientId":     "client-456",
+			"clientSecret": "azure-secret",
+		},
+	})
+	req2 := httptest.NewRequest(http.MethodPost, "/api/v1/providers/azure/validate", bytes.NewReader(azureBody))
+	req2.Header.Set("Content-Type", "application/json")
+	req2.AddCookie(sessionCookie) // pass the cookie from step 1
+	rec2 := httptest.NewRecorder()
+	router.ServeHTTP(rec2, req2)
+
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("Azure validate: expected 200, got %d: %s", rec2.Code, rec2.Body.String())
+	}
+
+	// The second response should NOT set a new cookie (session was reused).
+	for _, c := range (&http.Response{Header: rec2.Header()}).Cookies() {
+		if c.Name == "ddi_session" && c.Value != sessionID {
+			t.Errorf("expected session reuse (same cookie), but got new session ID %q vs original %q", c.Value, sessionID)
+		}
+	}
+
+	// Verify the single session has BOTH providers' credentials.
+	sess, ok := store.Get(sessionID)
+	if !ok {
+		t.Fatal("session not found in store")
+	}
+	if sess.AWS == nil {
+		t.Error("expected sess.AWS to be set (from first validation)")
+	}
+	if sess.Azure == nil {
+		t.Error("expected sess.Azure to be set (from second validation)")
+	}
+	if sess.AWS != nil && sess.AWS.AccessKeyID != "AKIA-TEST" {
+		t.Errorf("expected AWS AccessKeyID=%q, got %q", "AKIA-TEST", sess.AWS.AccessKeyID)
+	}
+	if sess.Azure != nil && sess.Azure.TenantID != "tenant-123" {
+		t.Errorf("expected Azure TenantID=%q, got %q", "tenant-123", sess.Azure.TenantID)
+	}
+}
+
 // TestValidate_ADMissingField: missing "host" in AD credentials → 200, valid:false.
 func TestValidate_ADMissingField(t *testing.T) {
 	store := session.NewStore()

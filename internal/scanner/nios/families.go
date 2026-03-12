@@ -64,11 +64,12 @@ var XMLTypeToFamily = map[string]string{
 	".com.infoblox.dns.discovery_data": NiosFamilyDiscoveryData,
 
 	// DTC types — spec-derived, unverified — no empirical backup observed.
-	".com.infoblox.dns.dtc.lbdn":     NiosFamilyDTCLBDN,
-	".com.infoblox.dns.dtc.pool":     NiosFamilyDTCPool,
-	".com.infoblox.dns.dtc.server":   NiosFamilyDTCServer,
-	".com.infoblox.dns.dtc.monitor":  NiosFamilyDTCMonitor,
-	".com.infoblox.dns.dtc.topology": NiosFamilyDTCTopology,
+	// Uses underscore format matching Python reference implementation.
+	".com.infoblox.dns.dtc_lbdn":     NiosFamilyDTCLBDN,
+	".com.infoblox.dns.dtc_pool":     NiosFamilyDTCPool,
+	".com.infoblox.dns.dtc_server":   NiosFamilyDTCServer,
+	".com.infoblox.dns.dtc_monitor":  NiosFamilyDTCMonitor,
+	".com.infoblox.dns.dtc_topology": NiosFamilyDTCTopology,
 
 	// DTC monitor subtypes — spec-derived.
 	".com.infoblox.dns.dtc_monitor_http": NiosFamilyDTCMonitor,

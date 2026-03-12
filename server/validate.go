@@ -139,21 +139,30 @@ func (h *ValidateHandler) HandleValidate(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Validation succeeded — create session and store credentials.
+	// Validation succeeded — reuse existing session if one exists (multi-provider),
+	// otherwise create a new one. This ensures credentials from previously-validated
+	// providers are preserved when the user validates multiple providers sequentially.
 	// Pass merged (not req.Credentials) so that any tokens written back by the
 	// validator (e.g. sso_access_token written by realAWSSSO) are captured.
-	sess := h.store.New()
+	var sess *session.Session
+	if cookie, err := r.Cookie("ddi_session"); err == nil {
+		if existing, ok := h.store.Get(cookie.Value); ok && existing.State == session.ScanStateCreated {
+			sess = existing
+		}
+	}
+	if sess == nil {
+		sess = h.store.New()
+		http.SetCookie(w, &http.Cookie{
+			Name:     "ddi_session",
+			Value:    sess.ID,
+			HttpOnly: true,
+			Secure:   false, // localhost — HTTPS not applicable
+			SameSite: http.SameSiteStrictMode,
+			Path:     "/",
+			MaxAge:   3600,
+		})
+	}
 	storeCredentials(sess, provider, req.AuthMethod, merged)
-
-	http.SetCookie(w, &http.Cookie{
-		Name:     "ddi_session",
-		Value:    sess.ID,
-		HttpOnly: true,
-		Secure:   false, // localhost — HTTPS not applicable
-		SameSite: http.SameSiteStrictMode,
-		Path:     "/",
-		MaxAge:   3600,
-	})
 
 	if subs == nil {
 		subs = []SubscriptionItem{}

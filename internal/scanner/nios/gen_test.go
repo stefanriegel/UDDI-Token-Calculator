@@ -54,6 +54,24 @@ const minimalOnedbXML = `<?xml version="1.0" encoding="UTF-8"?>
 <PROPERTY NAME="ip_address" VALUE="10.0.0.3"/>
 </OBJECT>
 <OBJECT>
+<PROPERTY NAME="__type" VALUE=".com.infoblox.dns.lease"/>
+<PROPERTY NAME="vnode_id" VALUE="103"/>
+<PROPERTY NAME="binding_state" VALUE="active"/>
+<PROPERTY NAME="ip_address" VALUE="10.0.0.20"/>
+</OBJECT>
+<OBJECT>
+<PROPERTY NAME="__type" VALUE=".com.infoblox.dns.lease"/>
+<PROPERTY NAME="vnode_id" VALUE="103"/>
+<PROPERTY NAME="binding_state" VALUE="expired"/>
+<PROPERTY NAME="ip_address" VALUE="10.0.0.21"/>
+</OBJECT>
+<OBJECT>
+<PROPERTY NAME="__type" VALUE=".com.infoblox.dns.lease"/>
+<PROPERTY NAME="vnode_id" VALUE="101"/>
+<PROPERTY NAME="binding_state" VALUE="free"/>
+<PROPERTY NAME="ip_address" VALUE="10.0.0.99"/>
+</OBJECT>
+<OBJECT>
 <PROPERTY NAME="__type" VALUE=".com.infoblox.dns.zone"/>
 <PROPERTY NAME="fqdn" VALUE="test.local"/>
 </OBJECT>
@@ -86,6 +104,16 @@ const minimalOnedbXML = `<?xml version="1.0" encoding="UTF-8"?>
 <OBJECT>
 <PROPERTY NAME="__type" VALUE=".com.infoblox.one.idns_lbdn"/>
 <PROPERTY NAME="name" VALUE="app.test.local"/>
+</OBJECT>
+<OBJECT>
+<PROPERTY NAME="__type" VALUE=".com.infoblox.dns.host"/>
+<PROPERTY NAME="fqdn" VALUE="server1.test.local"/>
+<PROPERTY NAME="aliases" VALUE=""/>
+</OBJECT>
+<OBJECT>
+<PROPERTY NAME="__type" VALUE=".com.infoblox.dns.host"/>
+<PROPERTY NAME="fqdn" VALUE="server2.test.local"/>
+<PROPERTY NAME="aliases" VALUE="alias1.test.local"/>
 </OBJECT>
 </DATABASE>
 `

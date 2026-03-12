@@ -171,12 +171,11 @@ func (s *Scanner) Scan(_ context.Context, req scanner.ScanRequest, publish func(
 	// ---- Build FindingRows ----
 	var rows []calculator.FindingRow
 
-	// Emit per-family DDI rows with human-readable names.
-	// Token calculation uses the total gridDDI; per-family rows are informational (tokens=0)
-	// except for a summary row that carries the total token count.
+	// Emit per-family DDI rows with human-readable names (grid-level, attributed to GM).
+	// All DDI objects are grid-level in the current NIOS model (only LEASE is member-scoped,
+	// and LEASE is not a DDI family). familyCounts contains DDI-adjusted values (HOST_OBJECT
+	// uses +2/+3 expansion, matching Python per_family_ddi).
 	if result.gridDDI > 0 {
-		// Emit per-family breakdown rows, each with its own token calculation.
-		// No summary row — the frontend sums per-row tokens directly.
 		for family, count := range result.familyCounts {
 			if count == 0 {
 				continue
@@ -194,11 +193,10 @@ func (s *Scanner) Scan(_ context.Context, req scanner.ScanRequest, publish func(
 		}
 	}
 
-	// Per-member DDI (currently all goes to GM via countObjects, but include any non-GM members).
+	// Per-member DDI: emit rows for any member that has DDI objects attributed to it.
+	// In the current NIOS model, per-member DDI is always 0 (only LEASE is member-scoped
+	// and LEASE is not a DDI family), but this handles future member-scoped DDI families.
 	for hostname, acc := range result.memberAccs {
-		if hostname == gmHostname {
-			continue // already emitted as grid-level DDI above
-		}
 		if acc.ddiCount > 0 {
 			rows = append(rows, calculator.FindingRow{
 				Provider:         "nios",
@@ -260,6 +258,8 @@ func (s *Scanner) Scan(_ context.Context, req scanner.ScanRequest, publish func(
 }
 
 // buildMetrics constructs NiosServerMetric entries for each member in vnodeMap.
+// ObjectCount for GM includes grid-level DDI (since all DDI is grid-level in current NIOS model).
+// ObjectCount for non-GM members includes their per-member DDI (currently 0) plus lease count.
 func buildMetrics(
 	vnodeMap map[string]string,
 	memberProps map[string]map[string]string,
@@ -275,7 +275,7 @@ func buildMetrics(
 		if acc, ok := result.memberAccs[hostname]; ok {
 			objectCount = acc.ddiCount
 		}
-		// GM gets grid-level DDI too.
+		// GM gets grid-level DDI (all DDI is grid-level in current NIOS model).
 		if hostname == gmHostname {
 			objectCount += result.gridDDI
 		}
