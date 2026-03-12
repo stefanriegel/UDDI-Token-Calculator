@@ -171,6 +171,8 @@ export function Wizard() {
     gcp: {},
     microsoft: {},
     nios: {},
+    bluecat: {},
+    efficientip: {},
   });
   const [credentialStatus, setCredentialStatus] = useState<Record<ProviderType, 'idle' | 'validating' | 'valid' | 'error'>>({
     aws: 'idle',
@@ -178,6 +180,8 @@ export function Wizard() {
     gcp: 'idle',
     microsoft: 'idle',
     nios: 'idle',
+    bluecat: 'idle',
+    efficientip: 'idle',
   });
   const [subscriptions, setSubscriptions] = useState<
     Record<ProviderType, { id: string; name: string; selected: boolean }[]>
@@ -187,14 +191,16 @@ export function Wizard() {
     gcp: [],
     microsoft: [],
     nios: [],
+    bluecat: [],
+    efficientip: [],
   });
   const [scanProgress, setScanProgress] = useState(0);
   const [providerScanProgress, setProviderScanProgress] = useState<Record<ProviderType, number>>({
-    aws: 0, azure: 0, gcp: 0, microsoft: 0, nios: 0,
+    aws: 0, azure: 0, gcp: 0, microsoft: 0, nios: 0, bluecat: 0, efficientip: 0,
   });
   const [findings, setFindings] = useState<FindingRow[]>([]);
   const [credentialError, setCredentialError] = useState<Record<ProviderType, string>>({
-    aws: '', azure: '', gcp: '', microsoft: '', nios: '',
+    aws: '', azure: '', gcp: '', microsoft: '', nios: '', bluecat: '', efficientip: '',
   });
   const [scanError, setScanError] = useState<string>('');
   const scanIntervalsRef = useRef<ReturnType<typeof setInterval>[]>([]);
@@ -205,9 +211,11 @@ export function Wizard() {
     gcp: 'browser-oauth',
     microsoft: 'kerberos',
     nios: 'backup-upload',
+    bluecat: 'credentials',
+    efficientip: 'credentials',
   });
   const [sourceSearch, setSourceSearch] = useState<Record<ProviderType, string>>({
-    aws: '', azure: '', gcp: '', microsoft: '', nios: '',
+    aws: '', azure: '', gcp: '', microsoft: '', nios: '', bluecat: '', efficientip: '',
   });
   // Top consumer expandable cards
   const [topDnsExpanded, setTopDnsExpanded] = useState(false);
@@ -223,7 +231,7 @@ export function Wizard() {
 
   // Selection mode: 'include' = checked items will be scanned; 'exclude' = checked items will be SKIPPED
   const [selectionMode, setSelectionMode] = useState<Record<ProviderType, 'include' | 'exclude'>>({
-    aws: 'include', azure: 'include', gcp: 'include', microsoft: 'include', nios: 'include',
+    aws: 'include', azure: 'include', gcp: 'include', microsoft: 'include', nios: 'include', bluecat: 'include', efficientip: 'include',
   });
 
   // NIOS-specific state
@@ -303,16 +311,16 @@ export function Wizard() {
     clearScanIntervals();
     setCurrentStep('providers');
     setSelectedProviders([]);
-    setCredentials({ aws: {}, azure: {}, gcp: {}, microsoft: {}, nios: {} });
-    setCredentialStatus({ aws: 'idle', azure: 'idle', gcp: 'idle', microsoft: 'idle', nios: 'idle' });
-    setSubscriptions({ aws: [], azure: [], gcp: [], microsoft: [], nios: [] });
+    setCredentials({ aws: {}, azure: {}, gcp: {}, microsoft: {}, nios: {}, bluecat: {}, efficientip: {} });
+    setCredentialStatus({ aws: 'idle', azure: 'idle', gcp: 'idle', microsoft: 'idle', nios: 'idle', bluecat: 'idle', efficientip: 'idle' });
+    setSubscriptions({ aws: [], azure: [], gcp: [], microsoft: [], nios: [], bluecat: [], efficientip: [] });
     setScanProgress(0);
-    setProviderScanProgress({ aws: 0, azure: 0, gcp: 0, microsoft: 0, nios: 0 });
+    setProviderScanProgress({ aws: 0, azure: 0, gcp: 0, microsoft: 0, nios: 0, bluecat: 0, efficientip: 0 });
     setFindings([]);
-    setCredentialError({ aws: '', azure: '', gcp: '', microsoft: '', nios: '' });
+    setCredentialError({ aws: '', azure: '', gcp: '', microsoft: '', nios: '', bluecat: '', efficientip: '' });
     setScanError('');
-    setSourceSearch({ aws: '', azure: '', gcp: '', microsoft: '', nios: '' });
-    setSelectionMode({ aws: 'include', azure: 'include', gcp: 'include', microsoft: 'include', nios: 'include' });
+    setSourceSearch({ aws: '', azure: '', gcp: '', microsoft: '', nios: '', bluecat: '', efficientip: '' });
+    setSelectionMode({ aws: 'include', azure: 'include', gcp: 'include', microsoft: 'include', nios: 'include', bluecat: 'include', efficientip: 'include' });
     setNiosUploadedFile(null);
     setNiosDragOver(false);
     setNiosMigrationMap(new Map());
@@ -429,7 +437,7 @@ export function Wizard() {
     clearScanIntervals();
     setScanProgress(0);
     setScanError('');
-    const initProgress: Record<ProviderType, number> = { aws: 0, azure: 0, gcp: 0, microsoft: 0, nios: 0 };
+    const initProgress: Record<ProviderType, number> = { aws: 0, azure: 0, gcp: 0, microsoft: 0, nios: 0, bluecat: 0, efficientip: 0 };
     setProviderScanProgress(initProgress);
     setFindings([]);
 

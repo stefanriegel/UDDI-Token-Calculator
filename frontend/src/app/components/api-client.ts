@@ -78,6 +78,68 @@ export async function validateCredentials(
   return res.json();
 }
 
+// ─── Provider-specific Validation ────────────────────────────────────────────
+
+export interface BluecatValidateResponse {
+  valid: boolean;
+  error?: string;
+  apiVersion?: string;      // "v1" or "v2"
+  subscriptions: SubscriptionItem[];
+}
+
+export async function validateBluecat(credentials: Record<string, string>): Promise<BluecatValidateResponse> {
+  const res = await fetch(apiUrl('/providers/bluecat/validate'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ authMethod: 'credentials', credentials }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as { error?: string }).error || `BlueCat validation failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export interface EfficientipValidateResponse {
+  valid: boolean;
+  error?: string;
+  authMode?: string;        // "basic" or "native"
+  subscriptions: SubscriptionItem[];
+}
+
+export async function validateEfficientip(credentials: Record<string, string>): Promise<EfficientipValidateResponse> {
+  const res = await fetch(apiUrl('/providers/efficientip/validate'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ authMethod: 'credentials', credentials }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as { error?: string }).error || `EfficientIP validation failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export interface NiosWapiValidateResponse {
+  valid: boolean;
+  error?: string;
+  wapiVersion?: string;
+  members: NiosGridMember[];
+}
+
+export async function validateNiosWapi(credentials: Record<string, string>): Promise<NiosWapiValidateResponse> {
+  const res = await fetch(apiUrl('/providers/nios/validate'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ authMethod: 'wapi', credentials }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as { error?: string }).error || `NIOS WAPI validation failed: ${res.status}`);
+  }
+  return res.json();
+}
+
 // ─── Session ───────────────────────────────────────────────────────────────────
 
 /**
@@ -129,6 +191,7 @@ export interface ScanRequest {
     selectionMode: 'include' | 'exclude';
     backupToken?: string;       // NIOS only: opaque token from /providers/nios/upload
     selectedMembers?: string[]; // NIOS only: hostnames selected in Sources step
+    mode?: 'backup' | 'wapi';  // NIOS only: scan mode
   }[];
 }
 
