@@ -491,12 +491,20 @@ func toOrchestratorProviders(specs []ScanProviderSpec) []orchestrator.ScanProvid
 			SelectionMode: s.SelectionMode,
 		}
 
-		// For NIOS provider: resolve the backup token to a temp file path.
-		if s.Provider == "nios" && s.BackupToken != "" {
-			if pathVal, ok := niosBackupTokens.LoadAndDelete(s.BackupToken); ok {
-				req.BackupPath = pathVal.(string)
+		// For NIOS provider: dispatch based on Mode field.
+		if s.Provider == "nios" {
+			if s.Mode == "wapi" {
+				req.Mode = "wapi"
+				req.SelectedMembers = s.SelectedMembers
+			} else {
+				// Backup mode (default): resolve the backup token to a temp file path.
+				if s.BackupToken != "" {
+					if pathVal, ok := niosBackupTokens.LoadAndDelete(s.BackupToken); ok {
+						req.BackupPath = pathVal.(string)
+					}
+				}
+				req.SelectedMembers = s.SelectedMembers
 			}
-			req.SelectedMembers = s.SelectedMembers
 		}
 
 		reqs = append(reqs, req)
