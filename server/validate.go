@@ -1,11 +1,17 @@
 package server
 
 import (
+	"bytes"
 	"context"
+	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -52,21 +58,27 @@ var (
 // Validators are injectable for testability — real implementations call cloud APIs,
 // test doubles return hardcoded results without network calls.
 type ValidateHandler struct {
-	store          *session.Store
-	AWSValidator   func(ctx context.Context, creds map[string]string) ([]SubscriptionItem, error)
-	AzureValidator func(ctx context.Context, creds map[string]string) ([]SubscriptionItem, error)
-	GCPValidator   func(ctx context.Context, creds map[string]string) ([]SubscriptionItem, error)
-	ADValidator    func(ctx context.Context, creds map[string]string) ([]SubscriptionItem, error)
+	store               *session.Store
+	AWSValidator        func(ctx context.Context, creds map[string]string) ([]SubscriptionItem, error)
+	AzureValidator      func(ctx context.Context, creds map[string]string) ([]SubscriptionItem, error)
+	GCPValidator        func(ctx context.Context, creds map[string]string) ([]SubscriptionItem, error)
+	ADValidator         func(ctx context.Context, creds map[string]string) ([]SubscriptionItem, error)
+	BluecatValidator    func(ctx context.Context, creds map[string]string) ([]SubscriptionItem, error)
+	EfficientIPValidator func(ctx context.Context, creds map[string]string) ([]SubscriptionItem, error)
+	NiosWAPIValidator   func(ctx context.Context, creds map[string]string) ([]SubscriptionItem, error)
 }
 
 // NewValidateHandler constructs a ValidateHandler wired with real cloud validators.
 func NewValidateHandler(store *session.Store) *ValidateHandler {
 	return &ValidateHandler{
-		store:          store,
-		AWSValidator:   realAWSValidator,
-		AzureValidator: realAzureValidator,
-		GCPValidator:   realGCPValidator,
-		ADValidator:    realADValidator,
+		store:               store,
+		AWSValidator:        realAWSValidator,
+		AzureValidator:      realAzureValidator,
+		GCPValidator:        realGCPValidator,
+		ADValidator:         realADValidator,
+		BluecatValidator:    realBluecatValidator,
+		EfficientIPValidator: realEfficientIPValidator,
+		NiosWAPIValidator:   realNiosWAPIValidator,
 	}
 }
 
@@ -111,6 +123,24 @@ func (h *ValidateHandler) HandleValidate(w http.ResponseWriter, r *http.Request)
 		validator = h.GCPValidator
 	case "ad":
 		validator = h.ADValidator
+	case "bluecat":
+		validator = h.BluecatValidator
+	case "efficientip":
+		validator = h.EfficientIPValidator
+	case "nios":
+		// NIOS supports two modes: "backup" (file upload) and "wapi" (live WAPI).
+		// The backup mode is handled by HandleUploadNiosBackup, not the validate handler.
+		// Only route to the WAPI validator when authMethod is "wapi".
+		if req.AuthMethod == "wapi" {
+			validator = h.NiosWAPIValidator
+		} else {
+			writeJSON(w, http.StatusOK, ValidateResponse{
+				Valid:         false,
+				Error:         "NIOS backup mode uses the upload endpoint, not validate",
+				Subscriptions: []SubscriptionItem{},
+			})
+			return
+		}
 	default:
 		writeJSON(w, http.StatusBadRequest, ValidateResponse{
 			Valid:         false,
@@ -241,6 +271,50 @@ func storeCredentials(sess *session.Session, provider, authMethod string, creds 
 			Username:   creds["username"],
 			Password:   creds["password"],
 			Domain:     creds["domain"],
+		}
+	case "bluecat":
+		var configIDs []string
+		if raw := creds["configurationIds"]; raw != "" {
+			for _, id := range strings.Split(raw, ",") {
+				if id = strings.TrimSpace(id); id != "" {
+					configIDs = append(configIDs, id)
+				}
+			}
+		}
+		sess.Bluecat = &session.BluecatCredentials{
+			URL:              creds["url"],
+			Username:         creds["username"],
+			Password:         creds["password"],
+			SkipTLS:          creds["skipTls"] == "true",
+			ConfigurationIDs: configIDs,
+		}
+	case "efficientip":
+		var siteIDs []string
+		if raw := creds["siteIds"]; raw != "" {
+			for _, id := range strings.Split(raw, ",") {
+				if id = strings.TrimSpace(id); id != "" {
+					siteIDs = append(siteIDs, id)
+				}
+			}
+		}
+		sess.EfficientIP = &session.EfficientIPCredentials{
+			URL:      creds["url"],
+			Username: creds["username"],
+			Password: creds["password"],
+			SkipTLS:  creds["skipTls"] == "true",
+			SiteIDs:  siteIDs,
+		}
+	case "nios":
+		// Only store WAPI credentials when authMethod is "wapi".
+		// Backup mode credentials are handled by HandleUploadNiosBackup.
+		if authMethod == "wapi" {
+			sess.NiosWAPI = &session.NiosWAPICredentials{
+				URL:             creds["url"],
+				Username:        creds["username"],
+				Password:        creds["password"],
+				SkipTLS:         creds["skipTls"] == "true",
+				ExplicitVersion: creds["wapiVersion"],
+			}
 		}
 	}
 }
@@ -752,6 +826,229 @@ func realADValidator(ctx context.Context, creds map[string]string) ([]Subscripti
 	for i, s := range servers {
 		items = append(items, SubscriptionItem{ID: s, Name: names[i]})
 	}
+	return items, nil
+}
+
+// realBluecatValidator validates Bluecat Address Manager credentials by attempting
+// v2 session auth first, then falling back to v1 legacy auth.
+// Returns a single SubscriptionItem identifying the detected API version.
+func realBluecatValidator(ctx context.Context, creds map[string]string) ([]SubscriptionItem, error) {
+	baseURL := strings.TrimRight(creds["url"], "/")
+	username := creds["username"]
+	password := creds["password"]
+	if baseURL == "" || username == "" || password == "" {
+		return nil, errors.New("url, username, and password are required")
+	}
+
+	skipTLS := creds["skipTls"] == "true"
+	client := &http.Client{Timeout: 15 * time.Second}
+	if skipTLS {
+		client.Transport = &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
+		}
+	}
+
+	// Try v2 session auth first.
+	v2Body, _ := json.Marshal(map[string]string{"username": username, "password": password})
+	v2Req, _ := http.NewRequestWithContext(ctx, "POST", baseURL+"/api/v2/sessions", bytes.NewReader(v2Body))
+	v2Req.Header.Set("Content-Type", "application/json")
+	v2Req.Header.Set("Accept", "application/json")
+
+	resp, err := client.Do(v2Req)
+	if err == nil {
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode < 400 {
+			return []SubscriptionItem{{ID: "bluecat", Name: "BlueCat (API v2)"}}, nil
+		}
+	}
+
+	// Fallback to v1 legacy auth.
+	v1URL := fmt.Sprintf("%s/Services/REST/v1/login?username=%s&password=%s",
+		baseURL, url.QueryEscape(username), url.QueryEscape(password))
+	v1Req, _ := http.NewRequestWithContext(ctx, "GET", v1URL, nil)
+	v1Req.Header.Set("Accept", "application/json")
+
+	resp, err = client.Do(v1Req)
+	if err != nil {
+		return nil, fmt.Errorf("bluecat: connection failed: %w", err)
+	}
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("bluecat: authentication failed (v2 and v1 both returned errors)")
+	}
+
+	return []SubscriptionItem{{ID: "bluecat", Name: "BlueCat (API v1)"}}, nil
+}
+
+// realEfficientIPValidator validates EfficientIP SOLIDserver credentials.
+// Tries HTTP Basic auth first, then native X-IPM headers with base64-encoded credentials.
+// Returns a single SubscriptionItem identifying the detected auth mode.
+func realEfficientIPValidator(ctx context.Context, creds map[string]string) ([]SubscriptionItem, error) {
+	baseURL := strings.TrimRight(creds["url"], "/")
+	username := creds["username"]
+	password := creds["password"]
+	if baseURL == "" || username == "" || password == "" {
+		return nil, errors.New("url, username, and password are required")
+	}
+
+	skipTLS := creds["skipTls"] == "true"
+	client := &http.Client{Timeout: 15 * time.Second}
+	if skipTLS {
+		client.Transport = &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
+		}
+	}
+
+	probeURL := baseURL + "/rest/member_list?limit=1&offset=0"
+
+	// Try Basic auth.
+	basicReq, _ := http.NewRequestWithContext(ctx, "GET", probeURL, nil)
+	basicReq.SetBasicAuth(username, password)
+	basicReq.Header.Set("Accept", "application/json")
+
+	resp, err := client.Do(basicReq)
+	if err == nil {
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode < 400 {
+			return []SubscriptionItem{{ID: "efficientip", Name: "EfficientIP (Basic auth)"}}, nil
+		}
+	}
+
+	// Try native auth.
+	nativeReq, _ := http.NewRequestWithContext(ctx, "GET", probeURL, nil)
+	nativeReq.Header.Set("X-IPM-Username", base64.StdEncoding.EncodeToString([]byte(username)))
+	nativeReq.Header.Set("X-IPM-Password", base64.StdEncoding.EncodeToString([]byte(password)))
+	nativeReq.Header.Set("Content-Type", "application/json")
+	nativeReq.Header.Set("Accept", "application/json")
+
+	resp, err = client.Do(nativeReq)
+	if err != nil {
+		return nil, fmt.Errorf("efficientip: connection failed: %w", err)
+	}
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("efficientip: authentication failed (both basic and native)")
+	}
+
+	return []SubscriptionItem{{ID: "efficientip", Name: "EfficientIP (Native auth)"}}, nil
+}
+
+// realNiosWAPIValidator validates NIOS WAPI credentials by resolving the WAPI version
+// and fetching the capacity report. Returns Grid Members as SubscriptionItems
+// so the Sources step can display them for member selection (same UX as backup upload).
+func realNiosWAPIValidator(ctx context.Context, creds map[string]string) ([]SubscriptionItem, error) {
+	baseURL := strings.TrimRight(creds["url"], "/")
+	username := creds["username"]
+	password := creds["password"]
+	if baseURL == "" || username == "" || password == "" {
+		return nil, errors.New("url, username, and password are required")
+	}
+
+	skipTLS := creds["skipTls"] == "true"
+	client := &http.Client{Timeout: 15 * time.Second}
+	if skipTLS {
+		client.Transport = &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
+		}
+	}
+
+	// Strip embedded /wapi/vX.Y.Z if present and extract version.
+	wapiVersionRE := regexp.MustCompile(`(?i)/wapi/v(?P<version>\d+(?:\.\d+)+)`)
+	explicitVersion := strings.TrimSpace(creds["wapiVersion"])
+	if strings.HasPrefix(strings.ToLower(explicitVersion), "v") {
+		explicitVersion = explicitVersion[1:]
+	}
+
+	// Normalize base URL.
+	if loc := wapiVersionRE.FindStringIndex(baseURL); loc != nil {
+		if explicitVersion == "" {
+			match := wapiVersionRE.FindStringSubmatch(baseURL)
+			if len(match) >= 2 {
+				explicitVersion = match[1]
+			}
+		}
+		baseURL = strings.TrimRight(baseURL[:loc[0]], "/")
+	}
+
+	// Resolve WAPI version.
+	version := explicitVersion
+	if version == "" {
+		// Probe candidate versions from newest to oldest.
+		candidates := []string{"2.13.7", "2.13.6", "2.13.5", "2.13.4", "2.12.3", "2.12.2", "2.11.3", "2.10.5", "2.9.13"}
+		for _, v := range candidates {
+			probeURL := fmt.Sprintf("%s/wapi/v%s/grid?_max_results=1&_return_fields=_ref", baseURL, v)
+			req, _ := http.NewRequestWithContext(ctx, "GET", probeURL, nil)
+			req.SetBasicAuth(username, password)
+			resp, err := client.Do(req)
+			if err != nil {
+				continue
+			}
+			io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+			if resp.StatusCode < 400 {
+				version = v
+				break
+			}
+			if resp.StatusCode == 401 || resp.StatusCode == 403 {
+				return nil, fmt.Errorf("nios wapi: authentication failed (HTTP %d)", resp.StatusCode)
+			}
+		}
+		if version == "" {
+			return nil, errors.New("nios wapi: unable to resolve WAPI version; verify URL and credentials")
+		}
+	}
+
+	// Fetch capacity report to extract Grid Member list.
+	capURL := fmt.Sprintf("%s/wapi/v%s/capacityreport?_return_fields=name,role,total_objects", baseURL, version)
+	capReq, _ := http.NewRequestWithContext(ctx, "GET", capURL, nil)
+	capReq.SetBasicAuth(username, password)
+
+	resp, err := client.Do(capReq)
+	if err != nil {
+		return nil, fmt.Errorf("nios wapi: capacity report request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("nios wapi: capacity report returned HTTP %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("nios wapi: reading capacity report: %w", err)
+	}
+
+	var members []map[string]interface{}
+	if err := json.Unmarshal(body, &members); err != nil {
+		return nil, fmt.Errorf("nios wapi: decoding capacity report: %w", err)
+	}
+
+	if len(members) == 0 {
+		return nil, errors.New("nios wapi: no Grid Members found in capacity report")
+	}
+
+	items := make([]SubscriptionItem, 0, len(members))
+	for _, m := range members {
+		name := strings.TrimSpace(fmt.Sprintf("%v", m["name"]))
+		if name == "" {
+			continue
+		}
+		role := strings.TrimSpace(fmt.Sprintf("%v", m["role"]))
+		displayName := name
+		if role != "" {
+			displayName = name + " (" + role + ")"
+		}
+		items = append(items, SubscriptionItem{ID: name, Name: displayName})
+	}
+
+	if len(items) == 0 {
+		return nil, errors.New("nios wapi: capacity report contained no valid members")
+	}
+
 	return items, nil
 }
 
