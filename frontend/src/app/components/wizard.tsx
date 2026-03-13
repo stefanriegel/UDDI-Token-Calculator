@@ -2437,6 +2437,7 @@ export function Wizard() {
 
                     {/* Scenario comparison cards */}
                     <div className="px-4 py-4">
+                      <h3 className="text-[14px] font-semibold text-[var(--foreground)] mb-3">Management Tokens</h3>
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                         {[scenarioCurrent, scenarioHybrid, scenarioFull].map((scenario, idx) => {
                           const isHybrid = idx === 1;
