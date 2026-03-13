@@ -36,6 +36,16 @@ const minimalOnedbXML = `<?xml version="1.0" encoding="UTF-8"?>
 <PROPERTY NAME="enable_dhcp" VALUE="true"/>
 </OBJECT>
 <OBJECT>
+<PROPERTY NAME="__type" VALUE=".com.infoblox.dns.dhcp_member"/>
+<PROPERTY NAME="network" VALUE="10.0.0.0/24/0"/>
+<PROPERTY NAME="member" VALUE="101"/>
+</OBJECT>
+<OBJECT>
+<PROPERTY NAME="__type" VALUE=".com.infoblox.dns.dhcp_member"/>
+<PROPERTY NAME="network" VALUE="10.0.1.0/24/0"/>
+<PROPERTY NAME="member" VALUE="103"/>
+</OBJECT>
+<OBJECT>
 <PROPERTY NAME="__type" VALUE=".com.infoblox.dns.lease"/>
 <PROPERTY NAME="vnode_id" VALUE="101"/>
 <PROPERTY NAME="binding_state" VALUE="active"/>
@@ -89,7 +99,15 @@ const minimalOnedbXML = `<?xml version="1.0" encoding="UTF-8"?>
 </OBJECT>
 <OBJECT>
 <PROPERTY NAME="__type" VALUE=".com.infoblox.dns.network"/>
-<PROPERTY NAME="cidr" VALUE="10.0.1.0/24"/>
+<PROPERTY NAME="address" VALUE="10.0.0.0"/>
+<PROPERTY NAME="cidr" VALUE="24"/>
+<PROPERTY NAME="network_view" VALUE="0"/>
+</OBJECT>
+<OBJECT>
+<PROPERTY NAME="__type" VALUE=".com.infoblox.dns.network"/>
+<PROPERTY NAME="address" VALUE="10.0.1.0"/>
+<PROPERTY NAME="cidr" VALUE="24"/>
+<PROPERTY NAME="network_view" VALUE="0"/>
 </OBJECT>
 <OBJECT>
 <PROPERTY NAME="__type" VALUE=".com.infoblox.dns.discovery_data"/>
@@ -120,8 +138,10 @@ const minimalOnedbXML = `<?xml version="1.0" encoding="UTF-8"?>
 
 // TestGenerateMinimalFixture writes internal/scanner/nios/testdata/minimal.tar.gz.
 // The file is a valid gzip+tar archive containing a single entry "onedb.xml" with
-// 3 Grid Members (GM + DNS-only + DHCP-only), 3 active LEASE objects, 2 DNS zones,
-// 1 fixed address, 1 host address, 1 network, 2 discovery_data objects, and 1 idns_lbdn.
+// 3 Grid Members (GM + DNS-only + DHCP-only), 2 dhcp_member objects (network→member
+// mapping), 6 leases, 2 DNS zones, 1 fixed address, 1 host address, 2 networks
+// (10.0.0.0/24 owned by GM, 10.0.1.0/24 owned by dhcp1), 2 discovery_data objects,
+// 1 idns_lbdn, and 2 host objects.
 //
 // The test is idempotent: if the file already exists it is overwritten to ensure
 // the fixture stays in sync with this definition. Pass -regen flag (not required
