@@ -3,7 +3,7 @@
 version: 2
 
 builds:
-  - id: ddi-scanner
+  - id: uddi-token-calculator
     env:
       - CGO_ENABLED=0
     goos:
@@ -17,11 +17,11 @@ builds:
       - -s -w
       - -X github.com/infoblox/uddi-go-token-calculator/internal/version.Version={{.Version}}
       - -X github.com/infoblox/uddi-go-token-calculator/internal/version.Commit={{.ShortCommit}}
-    binary: ddi-scanner
+    binary: uddi-token-calculator
 
 archives:
   - id: default
-    name_template: "ddi-scanner_{{ .Os }}_{{ .Arch }}"
+    name_template: "uddi-token-calculator_{{ .Os }}_{{ .Arch }}"
     format: binary
 
 checksum:
