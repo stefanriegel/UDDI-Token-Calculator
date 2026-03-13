@@ -54,6 +54,7 @@ import {
   MOCK_NIOS_SERVER_METRICS,
   calcServerTokenTier,
   consolidateXaasInstances,
+  calcNiosTokens,
   NIOS_GRID_LOGO,
   INFOBLOX_LOGO,
   PROVIDER_LOGOS,
@@ -716,13 +717,14 @@ export function Wizard() {
     if (selectedProviders.includes('nios') && niosMigrationMap.size > 0) {
       const nf = findings.filter((f) => f.provider === 'nios');
       const nonNios = findings.filter((f) => f.provider !== 'nios').reduce((s, f) => s + f.managementTokens, 0);
-      const allNios = nf.reduce((s, f) => s + f.managementTokens, 0);
+      const allNios = calcNiosTokens(nf);
       const migrating = nf.filter((f) => niosMigrationMap.has(f.source)).reduce((s, f) => s + f.managementTokens, 0);
+      const stayingNios = calcNiosTokens(nf.filter((f) => !niosMigrationMap.has(f.source)));
       summary += `\n\nNIOS-X Migration Planner`;
       summary += `\nScenario,UDDI Tokens,NIOS Licensing Tokens`;
       summary += `\nCurrent (NIOS Only),${nonNios},${allNios}`;
-      summary += `\nHybrid (${niosMigrationMap.size} members migrated),${nonNios + migrating},${allNios - migrating}`;
-      summary += `\nFull Universal DDI,${nonNios + allNios},0`;
+      summary += `\nHybrid (${niosMigrationMap.size} members migrated),${nonNios + migrating},${stayingNios}`;
+      summary += `\nFull Universal DDI,${nonNios + nf.reduce((s, f) => s + f.managementTokens, 0)},0`;
       summary += `\n\nMembers migrated:`;
       niosMigrationMap.forEach((ff, src) => { summary += `\n,${src},${ff === 'nios-xaas' ? 'XaaS' : 'NIOS-X'}`; });
     }
@@ -785,14 +787,15 @@ export function Wizard() {
     if (selectedProviders.includes('nios') && niosMigrationMap.size > 0) {
       const nf = findings.filter((f) => f.provider === 'nios');
       const nonNios = findings.filter((f) => f.provider !== 'nios').reduce((s, f) => s + f.managementTokens, 0);
-      const allNios = nf.reduce((s, f) => s + f.managementTokens, 0);
+      const allNios = calcNiosTokens(nf);
       const migrating = nf.filter((f) => niosMigrationMap.has(f.source)).reduce((s, f) => s + f.managementTokens, 0);
+      const stayingNios = calcNiosTokens(nf.filter((f) => !niosMigrationMap.has(f.source)));
       html += '<br/><h3>NIOS-X Migration Planner</h3>';
       html += '<table border="1" cellpadding="4" cellspacing="0">';
       html += '<tr style="background:#002B49;color:white"><th>Scenario</th><th>UDDI Tokens</th><th>NIOS Licensing</th></tr>';
       html += `<tr><td>Current (NIOS Only)</td><td>${nonNios.toLocaleString()}</td><td>${allNios.toLocaleString()}</td></tr>`;
-      html += `<tr style="background:#FFF3E0"><td>Hybrid (${niosMigrationMap.size} members migrated)</td><td><b>${(nonNios + migrating).toLocaleString()}</b></td><td>${(allNios - migrating).toLocaleString()}</td></tr>`;
-      html += `<tr><td>Full Universal DDI</td><td><b>${(nonNios + allNios).toLocaleString()}</b></td><td>0</td></tr>`;
+      html += `<tr style="background:#FFF3E0"><td>Hybrid (${niosMigrationMap.size} members migrated)</td><td><b>${(nonNios + migrating).toLocaleString()}</b></td><td>${stayingNios.toLocaleString()}</td></tr>`;
+      html += `<tr><td>Full Universal DDI</td><td><b>${(nonNios + nf.reduce((s, f) => s + f.managementTokens, 0)).toLocaleString()}</b></td><td>0</td></tr>`;
       html += '</table>';
       html += '<br/><p><b>Members migrated:</b></p><ul>';
       niosMigrationMap.forEach((ff, src) => { html += `<li>${src} → ${ff === 'nios-xaas' ? 'NIOS-X as a Service' : 'NIOS-X'}</li>`; });
@@ -2275,12 +2278,17 @@ export function Wizard() {
                 // Compute tokens by scenario
                 const niosFindings = findings.filter((f) => f.provider === 'nios');
                 const nonNiosTokens = findings.filter((f) => f.provider !== 'nios').reduce((s, f) => s + f.managementTokens, 0);
-                const allNiosTokens = niosFindings.reduce((s, f) => s + f.managementTokens, 0);
+                // NIOS Licensing column uses NIOS ratios (50/25/13), not UDDI ratios
+                const allNiosTokens = calcNiosTokens(niosFindings);
+                // UDDI tokens for all NIOS findings (used in Full Migration scenario)
+                const allNiosUddiTokens = niosFindings.reduce((s, f) => s + f.managementTokens, 0);
 
+                const stayingFindings = niosFindings.filter((f) => !niosMigrationMap.has(f.source));
+                const stayingTokens = calcNiosTokens(stayingFindings);
+                // Migrating tokens use UDDI ratios (they move to UDDI licensing)
                 const migratingTokens = niosFindings
                   .filter((f) => niosMigrationMap.has(f.source))
                   .reduce((s, f) => s + f.managementTokens, 0);
-                const stayingTokens = allNiosTokens - migratingTokens;
 
                 const niosXCount = Array.from(niosMigrationMap.values()).filter(v => v === 'nios-x').length;
                 const xaasCount = Array.from(niosMigrationMap.values()).filter(v => v === 'nios-xaas').length;
@@ -2291,7 +2299,7 @@ export function Wizard() {
                 // Scenarios
                 const scenarioCurrent = { label: 'Current (NIOS Only)', niosTokens: 0, uddiTokens: nonNiosTokens, desc: 'Only cloud/MS sources need UDDI tokens. NIOS stays on traditional licensing.' };
                 const scenarioHybrid = { label: 'Hybrid', niosTokens: stayingTokens, uddiTokens: nonNiosTokens + migratingTokens, desc: hybridDesc };
-                const scenarioFull = { label: 'Full Universal DDI', niosTokens: 0, uddiTokens: nonNiosTokens + allNiosTokens, desc: 'All NIOS members migrated to Universal DDI. Everything on Universal DDI licensing.' };
+                const scenarioFull = { label: 'Full Universal DDI', niosTokens: 0, uddiTokens: nonNiosTokens + allNiosUddiTokens, desc: 'All NIOS members migrated to Universal DDI. Everything on Universal DDI licensing.' };
 
                 return (
                   <div id="section-migration-planner" className="bg-white rounded-xl border-2 border-[var(--infoblox-blue)]/30 mb-6 overflow-hidden">
