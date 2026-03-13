@@ -1868,7 +1868,7 @@ export function Wizard() {
           {currentStep === 'results' && (
             <div>
               {/* Total Management Tokens — hero card */}
-              <div className="bg-white rounded-xl border-2 border-[var(--infoblox-orange)]/30 p-5 mb-6">
+              <div id="section-overview" className="bg-white rounded-xl border-2 border-[var(--infoblox-orange)]/30 p-5 mb-6">
                 <div className="flex items-start justify-between mb-4">
                   <div>
                     <div className="text-[13px] text-[var(--muted-foreground)] mb-1">Total Management Tokens</div>
@@ -1942,6 +1942,29 @@ export function Wizard() {
                   })()}
                 </div>
               </div>
+
+              {/* Section jump navigation — only for NIOS scans */}
+              {selectedProviders.includes('nios') && (
+                <div className="sticky top-0 z-10 bg-white border-b border-[var(--border)] rounded-xl mb-6 px-4 py-2.5 flex items-center gap-2 flex-wrap">
+                  {[
+                    { id: 'section-overview', label: 'Overview' },
+                    { id: 'section-migration-planner', label: 'Migration Planner' },
+                    { id: 'section-server-tokens', label: 'Server Token Calculator' },
+                    { id: 'section-findings', label: 'Detailed Findings' },
+                    { id: 'section-export', label: 'Export' },
+                  ].map((nav) => (
+                    <button
+                      key={nav.id}
+                      type="button"
+                      onClick={() => document.getElementById(nav.id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                      className="text-[12px] px-3 py-1.5 rounded-full border border-[var(--border)] hover:bg-gray-50 hover:border-[var(--infoblox-blue)] transition-colors"
+                      style={{ fontWeight: 500 }}
+                    >
+                      {nav.label}
+                    </button>
+                  ))}
+                </div>
+              )}
 
               {/* Top Consumer Cards — DNS, DHCP, IP */}
               {(() => {
@@ -2199,222 +2222,6 @@ export function Wizard() {
                 );
               })()}
 
-              {/* Findings table */}
-              <div className="bg-white rounded-xl border border-[var(--border)] mb-6 overflow-hidden">
-                <div className="px-4 py-3 border-b border-[var(--border)] bg-gray-50/50 flex items-center justify-between">
-                  <h3 className="text-[14px]" style={{ fontWeight: 600 }}>
-                    Detailed Findings
-                  </h3>
-                  {(findingsProviderFilter.size > 0 || findingsCategoryFilter.size > 0) && (
-                    <button
-                      onClick={() => { setFindingsProviderFilter(new Set()); setFindingsCategoryFilter(new Set()); }}
-                      className="text-[12px] text-[var(--infoblox-orange)] hover:underline"
-                      style={{ fontWeight: 500 }}
-                    >
-                      Clear all filters
-                    </button>
-                  )}
-                </div>
-
-                {/* Quick filters */}
-                <div className="px-4 py-3 border-b border-[var(--border)] flex flex-col gap-2.5">
-                  {/* Provider filter */}
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-[11px] text-[var(--muted-foreground)] uppercase tracking-wider shrink-0 w-16" style={{ fontWeight: 600 }}>
-                      Provider
-                    </span>
-                    {selectedProviders.map((provId) => {
-                      const provider = PROVIDERS.find((p) => p.id === provId)!;
-                      const isActive = findingsProviderFilter.size === 0 || findingsProviderFilter.has(provId);
-                      const isExplicit = findingsProviderFilter.has(provId);
-                      return (
-                        <button
-                          key={provId}
-                          onClick={() => toggleProviderFilter(provId)}
-                          className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[12px] border transition-colors ${
-                            isExplicit
-                              ? 'border-[var(--infoblox-navy)] bg-[var(--infoblox-navy)] text-white'
-                              : findingsProviderFilter.size === 0
-                                ? 'border-[var(--border)] bg-white text-[var(--foreground)] hover:border-gray-400'
-                                : 'border-[var(--border)] bg-white text-[var(--muted-foreground)] hover:border-gray-400 opacity-50'
-                          }`}
-                          style={{ fontWeight: isExplicit ? 600 : 400 }}
-                        >
-                          <span
-                            className="w-2 h-2 rounded-full shrink-0"
-                            style={{ backgroundColor: provider.color }}
-                          />
-                          {provider.name}
-                          {isExplicit && (
-                            <span className="text-[10px] ml-0.5 opacity-80">
-                              ({findings.filter(f => f.provider === provId).length})
-                            </span>
-                          )}
-                        </button>
-                      );
-                    })}
-                  </div>
-                  {/* Category filter */}
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-[11px] text-[var(--muted-foreground)] uppercase tracking-wider shrink-0 w-16" style={{ fontWeight: 600 }}>
-                      Category
-                    </span>
-                    {([
-                      { key: 'DDI Object' as TokenCategory, label: 'DDI Objects', color: 'blue' },
-                      { key: 'Active IP' as TokenCategory, label: 'Active IPs', color: 'purple' },
-                      { key: 'Asset' as TokenCategory, label: 'Assets', color: 'green' },
-                    ]).map((cat) => {
-                      const isExplicit = findingsCategoryFilter.has(cat.key);
-                      const colorClasses = {
-                        active: {
-                          blue: 'border-blue-600 bg-blue-600 text-white',
-                          purple: 'border-purple-600 bg-purple-600 text-white',
-                          green: 'border-green-600 bg-green-600 text-white',
-                        },
-                        inactive: 'border-[var(--border)] bg-white hover:border-gray-400',
-                      };
-                      return (
-                        <button
-                          key={cat.key}
-                          onClick={() => toggleCategoryFilter(cat.key)}
-                          className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[12px] border transition-colors ${
-                            isExplicit
-                              ? colorClasses.active[cat.color as keyof typeof colorClasses.active]
-                              : `${colorClasses.inactive} ${findingsCategoryFilter.size > 0 ? 'text-[var(--muted-foreground)] opacity-50' : 'text-[var(--foreground)]'}`
-                          }`}
-                          style={{ fontWeight: isExplicit ? 600 : 400 }}
-                        >
-                          {cat.label}
-                          {isExplicit && (
-                            <span className="text-[10px] ml-0.5 opacity-80">
-                              ({findings.filter(f => f.category === cat.key).length})
-                            </span>
-                          )}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {/* Filter summary */}
-                {(findingsProviderFilter.size > 0 || findingsCategoryFilter.size > 0) && (
-                  <div className="px-4 py-2 bg-blue-50/50 border-b border-[var(--border)] text-[12px] text-[var(--muted-foreground)]">
-                    Showing {filteredSortedFindings.length} of {findings.length} rows · {filteredTokenTotal.toLocaleString()} of {totalTokens.toLocaleString()} tokens
-                  </div>
-                )}
-
-                <div className="overflow-x-auto">
-                  <table className="w-full text-[13px]">
-                    <thead>
-                      <tr className="border-b border-[var(--border)] text-left text-[var(--muted-foreground)]">
-                        {([
-                          { col: 'provider' as SortColumn, label: 'Provider', align: 'left' },
-                          { col: 'source' as SortColumn, label: 'Source', align: 'left' },
-                          { col: 'category' as SortColumn, label: 'Token Category', align: 'left' },
-                          { col: 'item' as SortColumn, label: 'Item', align: 'left' },
-                          { col: 'count' as SortColumn, label: 'Count', align: 'right' },
-                          { col: 'managementTokens' as SortColumn, label: 'Mgmt Tokens', align: 'right' },
-                        ]).map((header) => {
-                          const isSorted = findingsSort?.col === header.col;
-                          const SortIcon = isSorted
-                            ? (findingsSort!.dir === 'asc' ? ArrowUp : ArrowDown)
-                            : ArrowUpDown;
-                          return (
-                            <th
-                              key={header.col}
-                              className={`px-4 py-2.5 ${header.align === 'right' ? 'text-right' : ''}`}
-                              style={{ fontWeight: 500 }}
-                            >
-                              <button
-                                onClick={() => toggleFindingsSort(header.col)}
-                                className={`inline-flex items-center gap-1 hover:text-[var(--foreground)] transition-colors group ${
-                                  isSorted ? 'text-[var(--foreground)]' : ''
-                                }`}
-                              >
-                                {header.label}
-                                <SortIcon className={`w-3 h-3 shrink-0 transition-opacity ${
-                                  isSorted ? 'opacity-100' : 'opacity-0 group-hover:opacity-50'
-                                }`} />
-                              </button>
-                            </th>
-                          );
-                        })}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filteredSortedFindings.length === 0 ? (
-                        <tr>
-                          <td colSpan={6} className="px-4 py-8 text-center text-[var(--muted-foreground)]">
-                            No findings match the current filters.
-                          </td>
-                        </tr>
-                      ) : (
-                        filteredSortedFindings.map((f, i) => (
-                          <tr
-                            key={`${f.provider}-${f.item}-${i}`}
-                            className="border-b border-[var(--border)] last:border-0 hover:bg-gray-50/50"
-                          >
-                            <td className="px-4 py-2.5">
-                              <span
-                                className="inline-block w-2 h-2 rounded-full mr-2"
-                                style={{
-                                  backgroundColor: PROVIDERS.find((p) => p.id === f.provider)
-                                    ?.color,
-                                }}
-                              />
-                              {PROVIDERS.find((p) => p.id === f.provider)?.name}
-                            </td>
-                            <td className="px-4 py-2.5 text-[var(--muted-foreground)] max-w-[200px] truncate" title={f.source}>{f.source}</td>
-                            <td className="px-4 py-2.5">
-                              <span
-                                className={`px-2 py-0.5 rounded-full text-[11px] ${
-                                  f.category === 'DDI Object'
-                                    ? 'bg-blue-100 text-blue-700'
-                                    : f.category === 'Active IP'
-                                      ? 'bg-purple-100 text-purple-700'
-                                      : 'bg-green-100 text-green-700'
-                                }`}
-                                style={{ fontWeight: 500 }}
-                              >
-                                {f.category}
-                              </span>
-                            </td>
-                            <td className="px-4 py-2.5">{f.item}</td>
-                            <td className="px-4 py-2.5 text-right tabular-nums whitespace-nowrap min-w-[80px]">
-                              {f.count.toLocaleString()}
-                            </td>
-                            <td className="px-4 py-2.5 text-right tabular-nums whitespace-nowrap min-w-[100px]" style={{ fontWeight: 600 }}>
-                              {f.managementTokens.toLocaleString()}
-                            </td>
-                          </tr>
-                        ))
-                      )}
-                      <tr className="bg-gray-50">
-                        <td
-                          colSpan={5}
-                          className="px-4 py-3 text-right"
-                          style={{ fontWeight: 600 }}
-                        >
-                          {(findingsProviderFilter.size > 0 || findingsCategoryFilter.size > 0)
-                            ? 'Filtered Total'
-                            : 'Total Management Tokens'
-                          }
-                        </td>
-                        <td
-                          className="px-4 py-3 text-right text-[var(--infoblox-orange)]"
-                          style={{ fontWeight: 700 }}
-                        >
-                          {(findingsProviderFilter.size > 0 || findingsCategoryFilter.size > 0)
-                            ? filteredTokenTotal.toLocaleString()
-                            : totalTokens.toLocaleString()
-                          }
-                        </td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
               {/* NIOS-X Migration Planner — only shown when NIOS is among selected providers */}
               {selectedProviders.includes('nios') && (() => {
                 // Collect unique NIOS sources (grid members)
@@ -2487,7 +2294,7 @@ export function Wizard() {
                 const scenarioFull = { label: 'Full Universal DDI', niosTokens: 0, uddiTokens: nonNiosTokens + allNiosTokens, desc: 'All NIOS members migrated to Universal DDI. Everything on Universal DDI licensing.' };
 
                 return (
-                  <div className="bg-white rounded-xl border-2 border-[var(--infoblox-blue)]/30 mb-6 overflow-hidden">
+                  <div id="section-migration-planner" className="bg-white rounded-xl border-2 border-[var(--infoblox-blue)]/30 mb-6 overflow-hidden">
                     <div className="px-4 py-3 border-b border-[var(--border)] bg-blue-50/50 flex items-center gap-2">
                       <img src={NIOS_GRID_LOGO} alt="NIOS Grid" className="w-5 h-5 rounded" />
                       <ArrowRightLeft className="w-4 h-4 text-[var(--infoblox-blue)]" />
@@ -2721,7 +2528,7 @@ export function Wizard() {
                   'bg-gray-100 text-gray-700';
 
                 return (
-                  <div className="bg-white rounded-xl border-2 border-emerald-200 mb-6 overflow-hidden">
+                  <div id="section-server-tokens" className="bg-white rounded-xl border-2 border-emerald-200 mb-6 overflow-hidden">
                     <div className="px-4 py-3 border-b border-[var(--border)] bg-emerald-50/50 flex items-center gap-2 flex-wrap">
                       <img src={NIOS_GRID_LOGO} alt="NIOS Grid" className="w-5 h-5 rounded" />
                       <h3 className="text-[14px]" style={{ fontWeight: 600 }}>
@@ -3009,8 +2816,224 @@ export function Wizard() {
                 );
               })()}
 
+              {/* Findings table */}
+              <div id="section-findings" className="bg-white rounded-xl border border-[var(--border)] mb-6 overflow-hidden">
+                <div className="px-4 py-3 border-b border-[var(--border)] bg-gray-50/50 flex items-center justify-between">
+                  <h3 className="text-[14px]" style={{ fontWeight: 600 }}>
+                    Detailed Findings
+                  </h3>
+                  {(findingsProviderFilter.size > 0 || findingsCategoryFilter.size > 0) && (
+                    <button
+                      onClick={() => { setFindingsProviderFilter(new Set()); setFindingsCategoryFilter(new Set()); }}
+                      className="text-[12px] text-[var(--infoblox-orange)] hover:underline"
+                      style={{ fontWeight: 500 }}
+                    >
+                      Clear all filters
+                    </button>
+                  )}
+                </div>
+
+                {/* Quick filters */}
+                <div className="px-4 py-3 border-b border-[var(--border)] flex flex-col gap-2.5">
+                  {/* Provider filter */}
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-[11px] text-[var(--muted-foreground)] uppercase tracking-wider shrink-0 w-16" style={{ fontWeight: 600 }}>
+                      Provider
+                    </span>
+                    {selectedProviders.map((provId) => {
+                      const provider = PROVIDERS.find((p) => p.id === provId)!;
+                      const isActive = findingsProviderFilter.size === 0 || findingsProviderFilter.has(provId);
+                      const isExplicit = findingsProviderFilter.has(provId);
+                      return (
+                        <button
+                          key={provId}
+                          onClick={() => toggleProviderFilter(provId)}
+                          className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[12px] border transition-colors ${
+                            isExplicit
+                              ? 'border-[var(--infoblox-navy)] bg-[var(--infoblox-navy)] text-white'
+                              : findingsProviderFilter.size === 0
+                                ? 'border-[var(--border)] bg-white text-[var(--foreground)] hover:border-gray-400'
+                                : 'border-[var(--border)] bg-white text-[var(--muted-foreground)] hover:border-gray-400 opacity-50'
+                          }`}
+                          style={{ fontWeight: isExplicit ? 600 : 400 }}
+                        >
+                          <span
+                            className="w-2 h-2 rounded-full shrink-0"
+                            style={{ backgroundColor: provider.color }}
+                          />
+                          {provider.name}
+                          {isExplicit && (
+                            <span className="text-[10px] ml-0.5 opacity-80">
+                              ({findings.filter(f => f.provider === provId).length})
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {/* Category filter */}
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-[11px] text-[var(--muted-foreground)] uppercase tracking-wider shrink-0 w-16" style={{ fontWeight: 600 }}>
+                      Category
+                    </span>
+                    {([
+                      { key: 'DDI Object' as TokenCategory, label: 'DDI Objects', color: 'blue' },
+                      { key: 'Active IP' as TokenCategory, label: 'Active IPs', color: 'purple' },
+                      { key: 'Asset' as TokenCategory, label: 'Assets', color: 'green' },
+                    ]).map((cat) => {
+                      const isExplicit = findingsCategoryFilter.has(cat.key);
+                      const colorClasses = {
+                        active: {
+                          blue: 'border-blue-600 bg-blue-600 text-white',
+                          purple: 'border-purple-600 bg-purple-600 text-white',
+                          green: 'border-green-600 bg-green-600 text-white',
+                        },
+                        inactive: 'border-[var(--border)] bg-white hover:border-gray-400',
+                      };
+                      return (
+                        <button
+                          key={cat.key}
+                          onClick={() => toggleCategoryFilter(cat.key)}
+                          className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[12px] border transition-colors ${
+                            isExplicit
+                              ? colorClasses.active[cat.color as keyof typeof colorClasses.active]
+                              : `${colorClasses.inactive} ${findingsCategoryFilter.size > 0 ? 'text-[var(--muted-foreground)] opacity-50' : 'text-[var(--foreground)]'}`
+                          }`}
+                          style={{ fontWeight: isExplicit ? 600 : 400 }}
+                        >
+                          {cat.label}
+                          {isExplicit && (
+                            <span className="text-[10px] ml-0.5 opacity-80">
+                              ({findings.filter(f => f.category === cat.key).length})
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Filter summary */}
+                {(findingsProviderFilter.size > 0 || findingsCategoryFilter.size > 0) && (
+                  <div className="px-4 py-2 bg-blue-50/50 border-b border-[var(--border)] text-[12px] text-[var(--muted-foreground)]">
+                    Showing {filteredSortedFindings.length} of {findings.length} rows · {filteredTokenTotal.toLocaleString()} of {totalTokens.toLocaleString()} tokens
+                  </div>
+                )}
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-[13px]">
+                    <thead>
+                      <tr className="border-b border-[var(--border)] text-left text-[var(--muted-foreground)]">
+                        {([
+                          { col: 'provider' as SortColumn, label: 'Provider', align: 'left' },
+                          { col: 'source' as SortColumn, label: 'Source', align: 'left' },
+                          { col: 'category' as SortColumn, label: 'Token Category', align: 'left' },
+                          { col: 'item' as SortColumn, label: 'Item', align: 'left' },
+                          { col: 'count' as SortColumn, label: 'Count', align: 'right' },
+                          { col: 'managementTokens' as SortColumn, label: 'Mgmt Tokens', align: 'right' },
+                        ]).map((header) => {
+                          const isSorted = findingsSort?.col === header.col;
+                          const SortIcon = isSorted
+                            ? (findingsSort!.dir === 'asc' ? ArrowUp : ArrowDown)
+                            : ArrowUpDown;
+                          return (
+                            <th
+                              key={header.col}
+                              className={`px-4 py-2.5 ${header.align === 'right' ? 'text-right' : ''}`}
+                              style={{ fontWeight: 500 }}
+                            >
+                              <button
+                                onClick={() => toggleFindingsSort(header.col)}
+                                className={`inline-flex items-center gap-1 hover:text-[var(--foreground)] transition-colors group ${
+                                  isSorted ? 'text-[var(--foreground)]' : ''
+                                }`}
+                              >
+                                {header.label}
+                                <SortIcon className={`w-3 h-3 shrink-0 transition-opacity ${
+                                  isSorted ? 'opacity-100' : 'opacity-0 group-hover:opacity-50'
+                                }`} />
+                              </button>
+                            </th>
+                          );
+                        })}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredSortedFindings.length === 0 ? (
+                        <tr>
+                          <td colSpan={6} className="px-4 py-8 text-center text-[var(--muted-foreground)]">
+                            No findings match the current filters.
+                          </td>
+                        </tr>
+                      ) : (
+                        filteredSortedFindings.map((f, i) => (
+                          <tr
+                            key={`${f.provider}-${f.item}-${i}`}
+                            className="border-b border-[var(--border)] last:border-0 hover:bg-gray-50/50"
+                          >
+                            <td className="px-4 py-2.5">
+                              <span
+                                className="inline-block w-2 h-2 rounded-full mr-2"
+                                style={{
+                                  backgroundColor: PROVIDERS.find((p) => p.id === f.provider)
+                                    ?.color,
+                                }}
+                              />
+                              {PROVIDERS.find((p) => p.id === f.provider)?.name}
+                            </td>
+                            <td className="px-4 py-2.5 text-[var(--muted-foreground)] max-w-[200px] truncate" title={f.source}>{f.source}</td>
+                            <td className="px-4 py-2.5">
+                              <span
+                                className={`px-2 py-0.5 rounded-full text-[11px] ${
+                                  f.category === 'DDI Object'
+                                    ? 'bg-blue-100 text-blue-700'
+                                    : f.category === 'Active IP'
+                                      ? 'bg-purple-100 text-purple-700'
+                                      : 'bg-green-100 text-green-700'
+                                }`}
+                                style={{ fontWeight: 500 }}
+                              >
+                                {f.category}
+                              </span>
+                            </td>
+                            <td className="px-4 py-2.5">{f.item}</td>
+                            <td className="px-4 py-2.5 text-right tabular-nums whitespace-nowrap min-w-[80px]">
+                              {f.count.toLocaleString()}
+                            </td>
+                            <td className="px-4 py-2.5 text-right tabular-nums whitespace-nowrap min-w-[100px]" style={{ fontWeight: 600 }}>
+                              {f.managementTokens.toLocaleString()}
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                      <tr className="bg-gray-50">
+                        <td
+                          colSpan={5}
+                          className="px-4 py-3 text-right"
+                          style={{ fontWeight: 600 }}
+                        >
+                          {(findingsProviderFilter.size > 0 || findingsCategoryFilter.size > 0)
+                            ? 'Filtered Total'
+                            : 'Total Management Tokens'
+                          }
+                        </td>
+                        <td
+                          className="px-4 py-3 text-right text-[var(--infoblox-orange)]"
+                          style={{ fontWeight: 700 }}
+                        >
+                          {(findingsProviderFilter.size > 0 || findingsCategoryFilter.size > 0)
+                            ? filteredTokenTotal.toLocaleString()
+                            : totalTokens.toLocaleString()
+                          }
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
               {/* Export buttons */}
-              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+              <div id="section-export" className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
                 <button
                   onClick={exportCSV}
                   className="flex items-center justify-center gap-2 px-5 py-3 bg-[var(--infoblox-navy)] text-white rounded-xl hover:bg-[var(--infoblox-navy)]/90 transition-colors"
