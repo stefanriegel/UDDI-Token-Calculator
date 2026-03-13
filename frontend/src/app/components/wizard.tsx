@@ -2458,14 +2458,19 @@ export function Wizard() {
                                 </span>
                               </div>
                               <div className="text-[28px] text-[var(--infoblox-orange)]" style={{ fontWeight: 700 }}>
-                                {scenario.uddiTokens.toLocaleString()}
+                                {(scenario.uddiTokens + scenario.niosTokens).toLocaleString()}
                               </div>
                               <div className="text-[11px] text-[var(--muted-foreground)] mb-2">
                                 Universal DDI Tokens
                               </div>
                               {scenario.niosTokens > 0 && (
-                                <div className="text-[11px] text-gray-500 mb-1">
-                                  + {scenario.niosTokens.toLocaleString()} on NIOS licensing
+                                <div className="text-[11px] space-y-0.5 mb-1">
+                                  <div className="text-blue-600">
+                                    {scenario.uddiTokens.toLocaleString()} on NIOS-X / Universal DDI
+                                  </div>
+                                  <div className="text-gray-500">
+                                    {scenario.niosTokens.toLocaleString()} on NIOS Licensing
+                                  </div>
                                 </div>
                               )}
                               <p className="text-[11px] text-[var(--muted-foreground)] border-t border-[var(--border)] pt-2 mt-2">
