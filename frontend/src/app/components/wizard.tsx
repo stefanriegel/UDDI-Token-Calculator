@@ -244,6 +244,7 @@ export function Wizard() {
   const [niosDragOver, setNiosDragOver] = useState(false);
   // NIOS-X migration planner: which NIOS sources (grid members) to migrate, with per-member form factor
   const [niosMigrationMap, setNiosMigrationMap] = useState<Map<string, ServerFormFactor>>(new Map());
+  const [memberSearchFilter, setMemberSearchFilter] = useState('');
 
   // Backend wiring: NIOS backup token returned from upload, and live server metrics from scan results
   const [backupToken, setBackupToken] = useState<string>('');
@@ -330,6 +331,7 @@ export function Wizard() {
     setNiosUploadedFile(null);
     setNiosDragOver(false);
     setNiosMigrationMap(new Map());
+    setMemberSearchFilter('');
     setBackupToken('');
     setNiosServerMetrics([]);
     setFindingsProviderFilter(new Set());
@@ -1022,7 +1024,7 @@ export function Wizard() {
               </h2>
               <p className="text-[13px] text-[var(--muted-foreground)] mb-6">
                 {isNiosOnly && niosMode === 'backup'
-                  ? 'Upload a NIOS Grid backup file (.tar.gz, .tgz, or .bak) exported from the Grid Master. The backup will be parsed locally to extract DDI configuration.'
+                  ? 'Upload a NIOS Grid backup file (.tar.gz, .tgz, .bak) or onedb.xml exported from the Grid Master.'
                   : 'Configure credentials for each selected provider. Credentials are sent only to your local Go backend — never to external servers.'}
               </p>
               <div className="space-y-4">
@@ -1122,7 +1124,7 @@ export function Wizard() {
                                 e.preventDefault();
                                 setNiosDragOver(false);
                                 const file = e.dataTransfer.files?.[0];
-                                if (file && (file.name.endsWith('.tar.gz') || file.name.endsWith('.tgz') || file.name.endsWith('.bak'))) {
+                                if (file && (file.name.endsWith('.tar.gz') || file.name.endsWith('.tgz') || file.name.endsWith('.bak') || file.name.endsWith('.xml'))) {
                                   setNiosUploadedFile(file);
                                 }
                               }}
@@ -1209,7 +1211,7 @@ export function Wizard() {
                                         browse
                                         <input
                                           type="file"
-                                          accept=".tar.gz,.tgz,.bak"
+                                          accept=".tar.gz,.tgz,.bak,.xml"
                                           className="hidden"
                                           onChange={(e) => {
                                             const file = e.target.files?.[0];
@@ -1219,7 +1221,7 @@ export function Wizard() {
                                       </label>
                                     </p>
                                     <p className="text-[11px] text-[var(--muted-foreground)] mt-1">
-                                      Accepts .tar.gz, .tgz, or .bak files exported from NIOS Grid Master
+                                      Accepts .tar.gz, .tgz, .bak, or .xml (onedb.xml) files
                                     </p>
                                   </div>
                                 </div>
@@ -1419,7 +1421,7 @@ export function Wizard() {
                             <button
                               onClick={() => {
                                 if (isNiosBackup) {
-                                  const input = document.querySelector('input[accept=".tar.gz,.tgz,.bak"]') as HTMLInputElement;
+                                  const input = document.querySelector('input[accept=".tar.gz,.tgz,.bak,.xml"]') as HTMLInputElement;
                                   if (input) input.click();
                                 } else {
                                   validateCredential(provId);
@@ -2436,13 +2438,26 @@ export function Wizard() {
                   });
                 };
 
+                // Filter sources by search term
+                const filteredSources = memberSearchFilter
+                  ? niosSources.filter(s => s.toLowerCase().includes(memberSearchFilter.toLowerCase()))
+                  : niosSources;
+
                 const toggleAllMigration = () => {
-                  if (niosMigrationMap.size === niosSources.length) {
-                    setNiosMigrationMap(new Map());
+                  const targets = memberSearchFilter ? filteredSources : niosSources;
+                  const allTargetsMigrated = targets.every(s => niosMigrationMap.has(s));
+                  if (allTargetsMigrated) {
+                    setNiosMigrationMap(prev => {
+                      const next = new Map(prev);
+                      targets.forEach(s => next.delete(s));
+                      return next;
+                    });
                   } else {
-                    const next = new Map<string, ServerFormFactor>();
-                    niosSources.forEach(s => next.set(s, niosMigrationMap.get(s) || 'nios-x'));
-                    setNiosMigrationMap(next);
+                    setNiosMigrationMap(prev => {
+                      const next = new Map(prev);
+                      targets.forEach(s => next.set(s, next.get(s) || 'nios-x'));
+                      return next;
+                    });
                   }
                 };
 
@@ -2482,27 +2497,49 @@ export function Wizard() {
 
                     {/* Member selector */}
                     <div className="px-4 py-3 border-b border-[var(--border)]">
+                      {/* Search filter */}
+                      <div className="relative mb-2">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
+                        <input
+                          type="text"
+                          placeholder="Filter members..."
+                          value={memberSearchFilter}
+                          onChange={(e) => setMemberSearchFilter(e.target.value)}
+                          className="w-full pl-8 pr-3 py-2 text-[12px] rounded-lg border border-[var(--border)] focus:outline-none focus:ring-1 focus:ring-[var(--infoblox-blue)] focus:border-[var(--infoblox-blue)]"
+                        />
+                      </div>
                       <div className="flex items-center gap-2 mb-3">
                         <button
                           onClick={toggleAllMigration}
                           className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[12px] border border-[var(--border)] hover:bg-gray-50 transition-colors"
                           style={{ fontWeight: 500 }}
                         >
-                          <div className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition-colors ${
-                            niosMigrationMap.size === niosSources.length
-                              ? 'bg-[var(--infoblox-blue)] border-[var(--infoblox-blue)]'
-                              : niosMigrationMap.size > 0
-                                ? 'bg-[var(--infoblox-blue)]/60 border-[var(--infoblox-blue)]'
-                                : 'border-gray-300'
-                          }`}>
-                            {niosMigrationMap.size === niosSources.length && <Check className="w-2.5 h-2.5 text-white" />}
-                            {niosMigrationMap.size > 0 && niosMigrationMap.size < niosSources.length && <Minus className="w-2.5 h-2.5 text-white" />}
-                          </div>
-                          {niosMigrationMap.size === niosSources.length ? 'Deselect All' : 'Migrate All'}
+                          {(() => {
+                            const targets = memberSearchFilter ? filteredSources : niosSources;
+                            const allTargetsMigrated = targets.length > 0 && targets.every(s => niosMigrationMap.has(s));
+                            const someTargetsMigrated = targets.some(s => niosMigrationMap.has(s));
+                            return (
+                              <>
+                                <div className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition-colors ${
+                                  allTargetsMigrated
+                                    ? 'bg-[var(--infoblox-blue)] border-[var(--infoblox-blue)]'
+                                    : someTargetsMigrated
+                                      ? 'bg-[var(--infoblox-blue)]/60 border-[var(--infoblox-blue)]'
+                                      : 'border-gray-300'
+                                }`}>
+                                  {allTargetsMigrated && <Check className="w-2.5 h-2.5 text-white" />}
+                                  {someTargetsMigrated && !allTargetsMigrated && <Minus className="w-2.5 h-2.5 text-white" />}
+                                </div>
+                                {allTargetsMigrated ? 'Deselect All' : 'Migrate All'}
+                              </>
+                            );
+                          })()}
                         </button>
                         <span className="text-[11px] text-[var(--muted-foreground)]">
-                          {niosMigrationMap.size} of {niosSources.length} members selected
-                          {niosMigrationMap.size > 0 && (() => {
+                          {memberSearchFilter
+                            ? `${filteredSources.length} of ${niosSources.length} members`
+                            : `${niosMigrationMap.size} of ${niosSources.length} members selected`}
+                          {niosMigrationMap.size > 0 && !memberSearchFilter && (() => {
                             const nx = Array.from(niosMigrationMap.values()).filter(v => v === 'nios-x').length;
                             const xs = Array.from(niosMigrationMap.values()).filter(v => v === 'nios-xaas').length;
                             if (nx > 0 && xs > 0) return ` (${nx} NIOS-X, ${xs} XaaS)`;
@@ -2511,8 +2548,9 @@ export function Wizard() {
                           })()}
                         </span>
                       </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-                        {niosSources.map((source) => {
+                      <div className="max-h-[320px] overflow-y-auto border-t border-b border-gray-100">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 py-1">
+                        {filteredSources.map((source) => {
                           const isMigrating = niosMigrationMap.has(source);
                           const memberFF = niosMigrationMap.get(source) || 'nios-x';
                           const sourceTokens = niosFindings.filter((f) => f.source === source).reduce((s, f) => s + f.managementTokens, 0);
@@ -2574,6 +2612,7 @@ export function Wizard() {
                             </div>
                           );
                         })}
+                      </div>
                       </div>
                     </div>
 
