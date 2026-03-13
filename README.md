@@ -1,10 +1,9 @@
 # UDDI Token Calculator
 
-[![CI](https://img.shields.io/github/actions/workflow/status/stefanriegel/UDDI-Token-Calculator/release.yml?branch=main&label=CI&logo=github)](https://github.com/stefanriegel/UDDI-Token-Calculator/actions/workflows/release.yml)
-[![Release](https://img.shields.io/github/v/release/stefanriegel/UDDI-Token-Calculator?logo=github&label=Release)](https://github.com/stefanriegel/UDDI-Token-Calculator/releases/latest)
-![Go](https://img.shields.io/github/go-mod/go-version/stefanriegel/UDDI-Token-Calculator?logo=go&label=Go)
+![Go](https://img.shields.io/badge/Go-1.24+-00ADD8?logo=go&logoColor=white)
 ![License](https://img.shields.io/badge/License-Proprietary-red)
 ![Platforms](https://img.shields.io/badge/Platforms-Windows%20%7C%20macOS%20%7C%20Linux-blue)
+![Providers](https://img.shields.io/badge/Providers-8-green)
 
 *A pre-sales tool for estimating Infoblox Universal DDI management tokens from existing infrastructure.*
 
