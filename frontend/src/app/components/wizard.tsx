@@ -1893,13 +1893,15 @@ export function Wizard() {
                     const HERO_LIMIT = 10;
                     const visibleSources = showAllHeroSources ? sources : sources.slice(0, HERO_LIMIT);
                     const hiddenCount = sources.length - HERO_LIMIT;
+                    const heroNeedsScroll = showAllHeroSources && sources.length > 15;
                     return (
                       <>
+                        <div className={heroNeedsScroll ? 'max-h-[400px] overflow-y-auto' : ''}>
                         {visibleSources.map((entry) => {
                           const provider = PROVIDERS.find((p) => p.id === entry.provider)!;
                           const pct = totalTokens > 0 ? (entry.tokens / totalTokens) * 100 : 0;
                           return (
-                            <div key={`${entry.provider}-${entry.source}`}>
+                            <div key={`${entry.provider}-${entry.source}`} className="mb-2.5">
                               <div className="flex items-center justify-between mb-1">
                                 <span className="text-[12px] flex items-center gap-1.5" style={{ fontWeight: 500 }}>
                                   <span
@@ -1924,6 +1926,7 @@ export function Wizard() {
                             </div>
                           );
                         })}
+                        </div>
                         {hiddenCount > 0 && (
                           <button
                             type="button"
@@ -2137,8 +2140,9 @@ export function Wizard() {
                                 const showAll = showAllCategorySources[cat.key] || false;
                                 const visible = showAll ? sources : sources.slice(0, CAT_LIMIT);
                                 const catHidden = sources.length - CAT_LIMIT;
+                                const needsScroll = showAll && sources.length > 10;
                                 return (
-                                  <>
+                                  <div className={needsScroll ? 'max-h-[300px] overflow-y-auto' : ''}>
                                     {visible.map((entry) => {
                                       const provider = PROVIDERS.find((p) => p.id === entry.provider)!;
                                       const pct = maxSourceTokens > 0 ? (entry.tokens / maxSourceTokens) * 100 : 0;
@@ -2178,7 +2182,7 @@ export function Wizard() {
                                         {showAll ? 'Show less' : `+${catHidden} more`}
                                       </button>
                                     )}
-                                  </>
+                                  </div>
                                 );
                               })()}
                               {sources.length === 0 && (
@@ -2808,10 +2812,10 @@ export function Wizard() {
                     </div>
 
                     {/* Per-member table */}
-                    <div className="overflow-x-auto">
+                    <div className="overflow-x-auto max-h-[500px] overflow-y-auto">
                       <table className="w-full text-[12px]">
-                        <thead>
-                          <tr className="border-b border-[var(--border)] bg-gray-50/80">
+                        <thead className="sticky top-0 z-10">
+                          <tr className="border-b border-[var(--border)] bg-gray-50">
                             <th className="text-left px-4 py-2.5" style={{ fontWeight: 600 }}>Grid Member</th>
                             <th className="text-center px-3 py-2.5" style={{ fontWeight: 600 }}>Role</th>
                             <th className="text-center px-3 py-2.5" style={{ fontWeight: 600 }}>Target</th>
@@ -2882,7 +2886,7 @@ export function Wizard() {
                           {xaasInstances.map((inst) => (
                             <tbody key={`xaas-inst-${inst.index}`}>
                               {/* Instance header row */}
-                              <tr className="bg-purple-50/60 border-b border-purple-200">
+                              <tr className="bg-purple-50 border-b border-purple-200">
                                 <td className="px-4 py-2 text-[11px] text-purple-800" style={{ fontWeight: 700 }} colSpan={8}>
                                   <div className="flex items-center gap-2">
                                     <span className="inline-flex items-center gap-1.5">
@@ -2980,8 +2984,8 @@ export function Wizard() {
                               </tr>
                             </tbody>
                           ))}
-                        <tfoot>
-                          <tr className="bg-emerald-50/80">
+                        <tfoot className="sticky bottom-0 z-10">
+                          <tr className="bg-emerald-50">
                             <td className="px-4 py-2.5 text-[12px]" style={{ fontWeight: 700 }} colSpan={7}>
                               Total Allocated Server Tokens
                               {hasAnyXaas && (
