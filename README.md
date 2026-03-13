@@ -8,7 +8,7 @@
 
 *A pre-sales tool for estimating Infoblox Universal DDI management tokens from existing infrastructure.*
 
-Estimates Infoblox Universal DDI management tokens from cloud infrastructure (AWS, Azure, GCP), Active Directory, and NIOS Grid backups.
+Estimates Infoblox Universal DDI management tokens from cloud infrastructure (AWS, Azure, GCP), Active Directory, NIOS Grid backups, NIOS WAPI, Bluecat Address Manager, and EfficientIP SOLIDserver.
 
 Single self-contained binary with embedded web UI. Launch it, scan your environment, get a token estimate -- no installation required.
 
@@ -22,6 +22,9 @@ Single self-contained binary with embedded web UI. Launch it, scan your environm
 - **GCP Discovery** -- VPC networks, subnets, Cloud DNS zones/records, compute instances
 - **Active Directory Discovery** -- DNS zones/records, DHCP scopes/leases, user accounts via WinRM
 - **NIOS Grid Backup Analysis** -- Upload `.tar.gz`/`.tgz`/`.bak` backups, per-member DDI object counts
+- **NIOS WAPI Discovery** -- Live REST API connection to Grid Manager, auto-detects WAPI version, capacity report
+- **Bluecat Discovery** -- DNS views/zones/records, IPAM blocks/networks/addresses, DHCP ranges via REST API
+- **EfficientIP Discovery** -- DNS views/zones/records, IPAM sites/subnets/pools/addresses, DHCP scopes/ranges via REST API
 - **SSO/Browser-OAuth** -- For AWS and Azure (alongside static credentials)
 - **Token Calculation** -- DDI Objects (25/token), Active IPs (13/token), Managed Assets (3/token)
 - **Excel Export** -- `.xlsx` with per-provider breakdown and error traceability
@@ -39,6 +42,9 @@ Single self-contained binary with embedded web UI. Launch it, scan your environm
 | GCP | Service Account JSON | VPC networks, subnets, Cloud DNS, compute instances |
 | Active Directory | WinRM (NTLM) | DNS zones/records, DHCP scopes/leases, users |
 | NIOS Grid | Backup file upload | DNS, DHCP, IPAM, DTC objects per member |
+| NIOS WAPI | Username / Password | Capacity report, DNS/DHCP/IPAM object totals per member |
+| Bluecat Address Manager | Username / Password | DNS views/zones/records, IPAM blocks/networks/addresses, DHCP ranges |
+| EfficientIP SOLIDserver | Username / Password | DNS views/zones/records, IPAM sites/subnets/pools/addresses, DHCP scopes/ranges |
 
 ## Supported Platforms
 
@@ -74,8 +80,8 @@ Single self-contained binary with embedded web UI. Launch it, scan your environm
 
 The web UI guides you through a wizard with the following steps:
 
-1. **Provider Selection** -- Choose one or more providers to scan (AWS, Azure, GCP, Active Directory, NIOS)
-2. **Credentials** -- Enter credentials for each selected provider. For NIOS, upload a Grid backup file (`.tar.gz`, `.tgz`, or `.bak`) instead of entering credentials, then select the members to analyze.
+1. **Provider Selection** -- Choose one or more providers to scan (AWS, Azure, GCP, Active Directory, NIOS Grid/WAPI, Bluecat, EfficientIP)
+2. **Credentials** -- Enter credentials for each selected provider. For NIOS Grid, upload a backup file (`.tar.gz`, `.tgz`, or `.bak`) instead of entering credentials, then select the members to analyze. For NIOS WAPI, Bluecat, and EfficientIP, provide the server URL and username/password.
 3. **Scan** -- The scanner discovers resources across all selected providers concurrently
 4. **Results** -- Review discovered resources, token estimates, and per-provider breakdowns
 5. **Export** -- Download an Excel report with full details and error traceability
@@ -103,6 +109,18 @@ Connects via WinRM using NTLM authentication. Discovers DNS zones and records, D
 ### NIOS Grid
 
 Accepts a Grid backup file (`.tar.gz`, `.tgz`, or `.bak`, up to 500 MB). Parses the `onedb.xml` database to count DDI objects per grid member, including DNS zones/records, DHCP ranges/leases, IPAM networks, and DTC objects. Provides per-member server metrics (QPS, LPS, object counts) for migration planning.
+
+### NIOS WAPI
+
+Connects directly to a NIOS Grid Manager via REST API. Auto-detects the supported WAPI version (probes from v2.13.7 down to v2.9.13), fetches the capacity report, and produces per-member DDI object counts. Authenticates with username/password. Supports optional TLS certificate verification skip for self-signed certificates.
+
+### Bluecat Address Manager
+
+Connects via REST API v2 (preferred) with automatic fallback to legacy v1 API. Discovers DNS views, zones, and records (A, AAAA, CNAME, MX, TXT, SRV, PTR, NS, SOA, and more), IPAM blocks, networks, and addresses (IPv4 and IPv6), and DHCP ranges. Authenticates with username/password. Supports optional TLS certificate verification skip.
+
+### EfficientIP SOLIDserver
+
+Connects via REST API using HTTP Basic authentication (preferred) with fallback to native X-IPM header authentication. Discovers DNS views, zones, and records, IPAM sites, subnets, pools, and addresses, and DHCP scopes and ranges. Supports optional site ID filtering and TLS certificate verification skip. Authenticates with username/password.
 
 ---
 
