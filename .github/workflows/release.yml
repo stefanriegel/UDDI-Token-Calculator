@@ -61,9 +61,6 @@ jobs:
         working-directory: frontend
         run: pnpm install --frozen-lockfile && pnpm build
 
-      - name: Stage frontend dist
-        run: git add -f frontend/dist/
-
       - name: Prepare release notes
         id: notes
         run: |
