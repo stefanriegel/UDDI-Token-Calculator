@@ -14,9 +14,8 @@ cookies.txt
 # GoReleaser output
 dist/
 
-# frontend/dist is intentionally committed for Phase 1 embedding.
-# Phase 8 CI/CD will build it in GitHub Actions and this line will be uncommented.
-# frontend/dist/
+# Frontend build output — CI rebuilds before release, go:embed reads from disk
+frontend/dist/
 
 # Node
 frontend/node_modules/
