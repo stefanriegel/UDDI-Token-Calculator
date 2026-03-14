@@ -1,6 +1,10 @@
 # GoReleaser OSS v2 — macOS ARM + Windows x64
 version: 2
 
+git:
+  # CI rebuilds frontend/dist before release — content-hash filenames may differ
+  allow_dirty: true
+
 builds:
   - id: uddi-token-calculator
     env:
