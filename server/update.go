@@ -266,8 +266,30 @@ func HandleSelfUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Download the new binary to a temp file in the same directory
+	// Detect Homebrew-managed installs — self-update won't have write permission
+	if isHomebrewManaged(execPath) {
+		json.NewEncoder(w).Encode(SelfUpdateResponse{
+			Success: false,
+			Error:   "This binary is managed by Homebrew. Run `brew upgrade uddi-token-calculator` to update.",
+		})
+		return
+	}
+
+	// Check write permission to the executable's directory before downloading
 	dir := filepath.Dir(execPath)
+	testFile, err := os.CreateTemp(dir, ".uddi-write-test-*")
+	if err != nil {
+		json.NewEncoder(w).Encode(SelfUpdateResponse{
+			Success: false,
+			Error:   fmt.Sprintf("No write permission to %s. Try running with elevated privileges or use your package manager to update.", dir),
+		})
+		return
+	}
+	testFile.Close()
+	os.Remove(testFile.Name())
+
+	// Download the new binary to a temp file in the same directory
+	// (must be same filesystem for atomic os.Rename)
 	tmpFile, err := os.CreateTemp(dir, "uddi-update-*.tmp")
 	if err != nil {
 		json.NewEncoder(w).Encode(SelfUpdateResponse{
@@ -370,4 +392,11 @@ func HandleSelfUpdate(w http.ResponseWriter, r *http.Request) {
 		Success: true,
 		Message: fmt.Sprintf("Updated to %s. Please restart the application.", result.LatestVersion),
 	})
+}
+
+// isHomebrewManaged returns true if the executable path is inside a Homebrew Cellar.
+func isHomebrewManaged(execPath string) bool {
+	// Homebrew symlinks: /opt/homebrew/bin/x -> ../Cellar/x/version/bin/x
+	// or: /usr/local/bin/x -> ../Cellar/x/version/bin/x
+	return strings.Contains(execPath, "/Cellar/")
 }
