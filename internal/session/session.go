@@ -41,6 +41,12 @@ type AWSCredentials struct {
 	// scanner to call sso:GetRoleCredentials, which exchanges it for temporary
 	// STS credentials without requiring a local ~/.aws/config SSO profile.
 	SSOAccessToken string
+	// SourceProfile is the AWS CLI profile used as the base credentials for
+	// assume-role authentication. Defaults to "default" if not specified.
+	SourceProfile string
+	// ExternalID is the STS external ID for cross-account assume-role.
+	// Only sent to STS when non-empty.
+	ExternalID string
 }
 
 // AzureCredentials holds Azure-specific authentication material.

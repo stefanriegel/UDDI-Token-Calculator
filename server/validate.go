@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/sso"
@@ -228,6 +229,8 @@ func storeCredentials(sess *session.Session, provider, authMethod string, creds 
 			// sso_access_token is written back into merged by realAWSSSO so it is
 			// available here. For non-SSO auth methods this will be an empty string.
 			SSOAccessToken:  creds["sso_access_token"],
+			SourceProfile:   creds["sourceProfile"],
+			ExternalID:      creds["externalId"],
 		}
 	case "azure":
 		var cachedCred azcore.TokenCredential
@@ -475,8 +478,70 @@ func realAWSValidator(ctx context.Context, creds map[string]string) ([]Subscript
 	switch creds["authMethod"] {
 	case "sso":
 		return realAWSSSO(ctx, creds)
-	case "profile", "assume_role", "assume-role":
-		return nil, errors.New("Coming soon — not yet implemented in this version")
+	case "profile":
+		profileName := creds["profile"]
+		if profileName == "" {
+			profileName = "default"
+		}
+		cfg, err := awsconfig.LoadDefaultConfig(ctx,
+			awsconfig.WithSharedConfigProfile(profileName),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("AWS CLI profile %q: %w", profileName, err)
+		}
+		stsClient := sts.NewFromConfig(cfg)
+		identity, err := stsClient.GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
+		if err != nil {
+			return nil, fmt.Errorf("AWS profile %q authentication failed: %w", profileName, err)
+		}
+		accountID := aws.ToString(identity.Account)
+		return []SubscriptionItem{{ID: accountID, Name: "Account " + accountID}}, nil
+
+	case "assume_role", "assume-role":
+		sourceProfile := creds["sourceProfile"]
+		if sourceProfile == "" {
+			sourceProfile = "default"
+		}
+		roleArn := creds["roleArn"]
+		if roleArn == "" {
+			return nil, errors.New("Role ARN is required for assume-role authentication")
+		}
+		baseCfg, err := awsconfig.LoadDefaultConfig(ctx,
+			awsconfig.WithSharedConfigProfile(sourceProfile),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("source profile %q: %w", sourceProfile, err)
+		}
+		stsClient := sts.NewFromConfig(baseCfg)
+		input := &sts.AssumeRoleInput{
+			RoleArn:         aws.String(roleArn),
+			RoleSessionName: aws.String("uddi-validate"),
+		}
+		if eid := creds["externalId"]; eid != "" {
+			input.ExternalId = aws.String(eid)
+		}
+		result, err := stsClient.AssumeRole(ctx, input)
+		if err != nil {
+			return nil, fmt.Errorf("assume role %s: %w", roleArn, err)
+		}
+		// Use GetCallerIdentity with assumed credentials for clean account ID.
+		assumedCfg, _ := awsconfig.LoadDefaultConfig(ctx,
+			awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
+				aws.ToString(result.Credentials.AccessKeyId),
+				aws.ToString(result.Credentials.SecretAccessKey),
+				aws.ToString(result.Credentials.SessionToken),
+			)),
+		)
+		assumedSTS := sts.NewFromConfig(assumedCfg)
+		identity, idErr := assumedSTS.GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
+		targetAccountID := ""
+		if idErr == nil {
+			targetAccountID = aws.ToString(identity.Account)
+		} else {
+			// Fallback: parse account ID from assumed role ARN
+			targetAccountID = parseAccountFromARN(aws.ToString(result.AssumedRoleUser.Arn))
+		}
+		return []SubscriptionItem{{ID: targetAccountID, Name: "Account " + targetAccountID + " (assumed role)"}}, nil
 	}
 
 	accessKeyID := creds["accessKeyId"]
@@ -514,6 +579,17 @@ func realAWSValidator(ctx context.Context, creds map[string]string) ([]Subscript
 		ID:   account,
 		Name: "AWS Account " + account,
 	}}, nil
+}
+
+// parseAccountFromARN extracts the AWS account ID (field [4]) from an ARN string.
+// ARN format: arn:aws:sts::ACCOUNT_ID:assumed-role/...
+// Returns "unknown" if parsing fails.
+func parseAccountFromARN(arn string) string {
+	parts := strings.Split(arn, ":")
+	if len(parts) >= 5 && parts[4] != "" {
+		return parts[4]
+	}
+	return "unknown"
 }
 
 // realAzureBrowserSSO implements interactive browser login via azidentity.InteractiveBrowserCredential.
