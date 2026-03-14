@@ -11,6 +11,47 @@ Estimates Infoblox Universal DDI management tokens from cloud infrastructure (AW
 
 Single self-contained binary with embedded web UI. Launch it, scan your environment, get a token estimate -- no installation required.
 
+## Quick Start
+
+### Install via Homebrew (macOS / Linux)
+
+```bash
+brew tap stefanriegel/tap
+brew install uddi-token-calculator
+```
+
+### Install via shell script (macOS / Linux)
+
+```bash
+curl -sL https://raw.githubusercontent.com/stefanriegel/UDDI-Token-Calculator/main/scripts/install.sh | sh
+```
+
+Or install to a custom directory:
+
+```bash
+INSTALL_DIR=~/.local/bin curl -sL https://raw.githubusercontent.com/stefanriegel/UDDI-Token-Calculator/main/scripts/install.sh | sh
+```
+
+### Manual download
+
+Download the latest release for your platform from the [Releases](https://github.com/stefanriegel/UDDI-Token-Calculator/releases/latest) page.
+
+### Run
+
+```bash
+uddi-token-calculator
+```
+
+On Windows:
+
+```
+uddi-token-calculator.exe
+```
+
+The web UI opens automatically in your default browser. Select a provider, enter credentials, start scanning, and review token estimates.
+
+**Note for Windows:** The binary is currently unsigned. Windows SmartScreen may show a warning -- click "More info" then "Run anyway".
+
 ---
 
 ## Features
@@ -57,47 +98,6 @@ Single self-contained binary with embedded web UI. Launch it, scan your environm
 | Linux | arm64 | `uddi-token-calculator_linux_arm64` |
 
 ---
-
-## Quick Start
-
-### Install via Homebrew (macOS / Linux)
-
-```bash
-brew tap stefanriegel/tap
-brew install uddi-token-calculator
-```
-
-### Install via shell script (macOS / Linux)
-
-```bash
-curl -sL https://raw.githubusercontent.com/stefanriegel/UDDI-Token-Calculator/main/scripts/install.sh | sh
-```
-
-Or install to a custom directory:
-
-```bash
-INSTALL_DIR=~/.local/bin curl -sL https://raw.githubusercontent.com/stefanriegel/UDDI-Token-Calculator/main/scripts/install.sh | sh
-```
-
-### Manual download
-
-Download the latest release for your platform from the [Releases](https://github.com/stefanriegel/UDDI-Token-Calculator/releases/latest) page.
-
-### Run
-
-```bash
-uddi-token-calculator
-```
-
-On Windows:
-
-```
-uddi-token-calculator.exe
-```
-
-The web UI opens automatically in your default browser. Select a provider, enter credentials, start scanning, and review token estimates.
-
-**Note for Windows:** The binary is currently unsigned. Windows SmartScreen may show a warning -- click "More info" then "Run anyway".
 
 ## Usage
 
