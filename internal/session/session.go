@@ -57,6 +57,11 @@ type AzureCredentials struct {
 	ClientID       string
 	ClientSecret   string
 	SubscriptionID string
+	// CertificateData holds base64-encoded or raw PEM certificate content
+	// for certificate-based Service Principal authentication.
+	CertificateData string
+	// CertificatePassword holds the optional password for encrypted private keys.
+	CertificatePassword string
 	// CachedCredential holds the live token credential obtained during browser-SSO
 	// validation. It must never be serialized (no json tag). When non-nil the scanner
 	// reuses it, preventing a second browser popup.
@@ -84,6 +89,9 @@ type ADCredentials struct {
 	Domain             string
 	UseSSL             bool
 	InsecureSkipVerify bool
+	// Kerberos-specific fields (pure Go via gokrb5, not Windows SSPI).
+	Realm string // Kerberos realm (e.g. "CORP.EXAMPLE.COM")
+	KDC   string // Key Distribution Center address (e.g. "dc01.corp.example.com:88")
 }
 
 // BluecatCredentials holds Bluecat Address Manager authentication material.

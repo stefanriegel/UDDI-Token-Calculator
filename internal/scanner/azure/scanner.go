@@ -72,8 +72,9 @@ func (s *Scanner) Scan(ctx context.Context, req scanner.ScanRequest, publish fun
 }
 
 // buildCredential creates an Azure TokenCredential from the credentials map.
-// Supported auth_method values: "service-principal" (default), "browser-sso".
-// When cached is non-nil and auth_method is "browser-sso", the cached credential
+// Supported auth_method values: "service-principal" (default), "browser-sso",
+// "az-cli", "certificate", "device_code"/"device-code".
+// When cached is non-nil and auth_method is interactive, the cached credential
 // is returned directly, preventing a second browser popup during scan.
 func buildCredential(creds map[string]string, cached azcore.TokenCredential) (azcore.TokenCredential, error) {
 	switch creds["auth_method"] {
@@ -98,6 +99,20 @@ func buildCredential(creds map[string]string, cached azcore.TokenCredential) (az
 		}
 		// Fallback: create fresh CLI credential (should not happen in normal flow).
 		return azidentity.NewAzureCLICredential(nil)
+
+	case "certificate":
+		if cached != nil {
+			return cached, nil
+		}
+		// Fallback: should not happen — certificate credential is always cached during validation.
+		return nil, errors.New("certificate credential not cached — re-validate")
+
+	case "device_code", "device-code":
+		if cached != nil {
+			return cached, nil
+		}
+		// Fallback: should not happen — device code credential is always cached during validation.
+		return nil, errors.New("device code credential not cached — re-validate")
 
 	default:
 		// service-principal (client secret) — the default and most common method.
