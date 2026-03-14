@@ -3157,9 +3157,6 @@ export function Wizard() {
               Stefan Riegel
             </a>
           </div>
-          <span className="text-[11px] text-white/60">
-            v{backend.health?.version ?? 'dev'}
-          </span>
           <a
             href="https://github.com/stefanriegel"
             target="_blank"
