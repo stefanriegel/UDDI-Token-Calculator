@@ -22,8 +22,8 @@ esac
 
 ASSET="${BINARY}_${OS}_${ARCH}"
 
-# Get latest release tag
-TAG=$(curl -sI "https://github.com/${REPO}/releases/latest" | grep -i '^location:' | sed 's|.*/||' | tr -d '\r')
+# Get latest release tag via GitHub API
+TAG=$(curl -s "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name"' | sed 's/.*"tag_name": *"//;s/".*//')
 if [ -z "$TAG" ]; then
   echo "Failed to determine latest release"
   exit 1
