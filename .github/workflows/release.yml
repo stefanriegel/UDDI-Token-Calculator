@@ -47,6 +47,17 @@ jobs:
           go-version: stable
           cache: true
 
+      - name: Prepare release notes
+        id: notes
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          NOTES_FILE=".github/release-notes/${TAG}.md"
+          if [ -f "$NOTES_FILE" ]; then
+            echo "file=${NOTES_FILE}" >> "$GITHUB_OUTPUT"
+          else
+            echo "file=" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Import GPG key
         uses: crazy-max/ghaction-import-gpg@v6
         id: import_gpg
@@ -56,7 +67,7 @@ jobs:
       - uses: goreleaser/goreleaser-action@v7
         with:
           version: "~> v2"
-          args: release --clean
+          args: release --clean ${{ steps.notes.outputs.file && format('--release-notes {0}', steps.notes.outputs.file) || '' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GPG_FINGERPRINT: ${{ steps.import_gpg.outputs.fingerprint }}

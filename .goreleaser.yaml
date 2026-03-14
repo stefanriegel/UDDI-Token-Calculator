@@ -42,12 +42,4 @@ release:
   make_latest: true
 
 changelog:
-  sort: asc
-  filters:
-    include:
-      - "^feat"
-      - "^fix"
-    exclude:
-      - "(?i)quick-\\d+"
-      - "(?i)gsd"
-      - "(?i)claude"
+  disable: true
