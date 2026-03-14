@@ -64,8 +64,8 @@ var pass1Types = map[string]struct{}{
 	".com.infoblox.dns.ns_group_grid_primary":   {},
 	".com.infoblox.dns.dhcp_member":             {},
 	".com.infoblox.dns.zone":                    {},
-	".com.infoblox.one.member_dns_properties":   {},
-	".com.infoblox.one.member_dhcp_properties":  {},
+	".com.infoblox.dns.member_dns_properties":   {},
+	".com.infoblox.dns.member_dhcp_properties":  {},
 }
 
 // pass2Types contains __type values for Pass 2 (object counting).
@@ -156,10 +156,10 @@ func (s *Scanner) Scan(_ context.Context, req scanner.ScanRequest, publish func(
 				gmHostname = hostname
 			}
 
-		case ".com.infoblox.one.member_dns_properties":
+		case ".com.infoblox.dns.member_dns_properties":
 			dnsServiceEnabled = append(dnsServiceEnabled, props["service_enabled"])
 
-		case ".com.infoblox.one.member_dhcp_properties":
+		case ".com.infoblox.dns.member_dhcp_properties":
 			dhcpServiceEnabled = append(dhcpServiceEnabled, props["service_enabled"])
 
 		case ".com.infoblox.dns.ns_group_grid_primary":

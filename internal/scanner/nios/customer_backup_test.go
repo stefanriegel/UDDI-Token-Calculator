@@ -71,10 +71,10 @@ func TestCustomerBackupRoles(t *testing.T) {
 					}
 					memberProps[hostname] = cloned
 
-				case ".com.infoblox.one.member_dns_properties":
+				case ".com.infoblox.dns.member_dns_properties":
 					dnsServiceEnabled = append(dnsServiceEnabled, props["service_enabled"])
 
-				case ".com.infoblox.one.member_dhcp_properties":
+				case ".com.infoblox.dns.member_dhcp_properties":
 					dhcpServiceEnabled = append(dhcpServiceEnabled, props["service_enabled"])
 				}
 			})

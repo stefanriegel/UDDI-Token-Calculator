@@ -533,27 +533,27 @@ func serviceRoleFixtureXML() string {
 <PROPERTY NAME="is_grid_master" VALUE="false"/>
 </OBJECT>
 <OBJECT>
-<PROPERTY NAME="__type" VALUE=".com.infoblox.one.member_dns_properties"/>
+<PROPERTY NAME="__type" VALUE=".com.infoblox.dns.member_dns_properties"/>
 <PROPERTY NAME="service_enabled" VALUE="true"/>
 </OBJECT>
 <OBJECT>
-<PROPERTY NAME="__type" VALUE=".com.infoblox.one.member_dns_properties"/>
+<PROPERTY NAME="__type" VALUE=".com.infoblox.dns.member_dns_properties"/>
 <PROPERTY NAME="service_enabled" VALUE="true"/>
 </OBJECT>
 <OBJECT>
-<PROPERTY NAME="__type" VALUE=".com.infoblox.one.member_dns_properties"/>
+<PROPERTY NAME="__type" VALUE=".com.infoblox.dns.member_dns_properties"/>
 <PROPERTY NAME="service_enabled" VALUE="false"/>
 </OBJECT>
 <OBJECT>
-<PROPERTY NAME="__type" VALUE=".com.infoblox.one.member_dhcp_properties"/>
+<PROPERTY NAME="__type" VALUE=".com.infoblox.dns.member_dhcp_properties"/>
 <PROPERTY NAME="service_enabled" VALUE="true"/>
 </OBJECT>
 <OBJECT>
-<PROPERTY NAME="__type" VALUE=".com.infoblox.one.member_dhcp_properties"/>
+<PROPERTY NAME="__type" VALUE=".com.infoblox.dns.member_dhcp_properties"/>
 <PROPERTY NAME="service_enabled" VALUE="false"/>
 </OBJECT>
 <OBJECT>
-<PROPERTY NAME="__type" VALUE=".com.infoblox.one.member_dhcp_properties"/>
+<PROPERTY NAME="__type" VALUE=".com.infoblox.dns.member_dhcp_properties"/>
 <PROPERTY NAME="service_enabled" VALUE="false"/>
 </OBJECT>
 </DATABASE>
