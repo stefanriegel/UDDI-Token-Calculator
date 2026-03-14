@@ -3,7 +3,7 @@ set -e
 
 REPO="stefanriegel/UDDI-Token-Calculator"
 BINARY="uddi-token-calculator"
-INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
+INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
 
 # Detect OS and architecture
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')
@@ -49,6 +49,9 @@ if [ "$OS" = "darwin" ]; then
   xattr -d com.apple.quarantine "$TMPFILE" 2>/dev/null || true
 fi
 
+# Ensure install directory exists
+mkdir -p "$INSTALL_DIR"
+
 # Install
 if [ -w "$INSTALL_DIR" ]; then
   mv "$TMPFILE" "${INSTALL_DIR}/${BINARY}"
@@ -58,4 +61,22 @@ else
 fi
 
 echo "Installed ${BINARY} ${TAG} to ${INSTALL_DIR}/${BINARY}"
+
+# Check if install dir is in PATH
+case ":$PATH:" in
+  *":${INSTALL_DIR}:"*) ;;
+  *)
+    echo ""
+    echo "NOTE: ${INSTALL_DIR} is not in your PATH."
+    SHELL_NAME=$(basename "$SHELL")
+    case "$SHELL_NAME" in
+      zsh)  RC="$HOME/.zshrc" ;;
+      bash) RC="$HOME/.bashrc" ;;
+      *)    RC="your shell rc file" ;;
+    esac
+    echo "Add it with:  echo 'export PATH=\"${INSTALL_DIR}:\$PATH\"' >> ${RC}"
+    echo "Then reload:  source ${RC}"
+    ;;
+esac
+
 echo "Run '${BINARY}' to start."
