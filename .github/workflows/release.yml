@@ -47,6 +47,17 @@ jobs:
           go-version: stable
           cache: true
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Build frontend
+        working-directory: frontend
+        run: npm ci && npm run build
+
+      - name: Stage frontend dist
+        run: git add -f frontend/dist/
+
       - name: Prepare release notes
         id: notes
         run: |
