@@ -252,6 +252,8 @@ func buildScanRequest(p ScanProviderRequest, sess *session.Session) scanner.Scan
 			req.Credentials["username"] = sess.AD.Username
 			req.Credentials["password"] = sess.AD.Password
 			req.Credentials["domain"] = sess.AD.Domain
+			req.Credentials["realm"] = sess.AD.Realm
+			req.Credentials["kdc"] = sess.AD.KDC
 			if sess.AD.UseSSL {
 				req.Credentials["use_ssl"] = "true"
 			}

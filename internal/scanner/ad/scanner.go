@@ -13,6 +13,8 @@ import (
 	"sync"
 	"time"
 
+	krbclient "github.com/jcmturner/gokrb5/v8/client"
+	krbconfig "github.com/jcmturner/gokrb5/v8/config"
 	"github.com/masterzen/winrm"
 
 	"github.com/infoblox/uddi-go-token-calculator/internal/calculator"
@@ -635,6 +637,50 @@ func BuildNTLMClient(host, username, password string, opts ...ClientOption) (*wi
 		return nil, fmt.Errorf("winrm encryption init: %w", err)
 	}
 	params.TransportDecorator = func() winrm.Transporter { return enc }
+	return winrm.NewClientWithParameters(endpoint, username, password, &params)
+}
+
+// BuildKerberosClient constructs a WinRM client using Kerberos (SPNEGO) authentication.
+// Uses pure Go gokrb5 — does not require a domain-joined machine or Windows SSPI.
+// The caller must provide the Kerberos realm and KDC address (host:port).
+func BuildKerberosClient(host, username, password, realm, kdc string, opts ...ClientOption) (*winrm.Client, error) {
+	o := ClientOptions{port: winrmPort} // default: HTTP on 5985
+	for _, opt := range opts {
+		opt(&o)
+	}
+
+	endpoint := winrm.NewEndpoint(host, o.port, o.useHTTPS, o.insecureSkipVerify, nil, nil, nil, winrmTimeout)
+	params := *winrm.DefaultParameters
+
+	// Build a minimal krb5.conf programmatically.
+	krbConf := krbconfig.New()
+	krbConf.LibDefaults.DefaultRealm = realm
+	krbConf.LibDefaults.DNSLookupKDC = false
+	krbConf.LibDefaults.DNSLookupRealm = false
+
+	// Add the realm with the KDC address.
+	krbConf.Realms = append(krbConf.Realms, krbconfig.Realm{
+		Realm: realm,
+		KDC:   []string{kdc},
+	})
+
+	// Create a Kerberos client and obtain a TGT.
+	krbClient := krbclient.NewWithPassword(username, realm, password, krbConf,
+		krbclient.DisablePAFXFAST(true), // Disable PA-FX-FAST for compatibility with many DCs
+	)
+	defer krbClient.Destroy()
+
+	if err := krbClient.Login(); err != nil {
+		return nil, fmt.Errorf("kerberos login failed (realm=%s, kdc=%s): %w", realm, kdc, err)
+	}
+
+	// Use Kerberos (SPNEGO) transport for WinRM.
+	enc, err := winrm.NewEncryption("kerberos")
+	if err != nil {
+		return nil, fmt.Errorf("winrm kerberos encryption init: %w", err)
+	}
+	params.TransportDecorator = func() winrm.Transporter { return enc }
+
 	return winrm.NewClientWithParameters(endpoint, username, password, &params)
 }
 

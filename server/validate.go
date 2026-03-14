@@ -241,11 +241,13 @@ func storeCredentials(sess *session.Session, provider, authMethod string, creds 
 			azureCredCacheMu.Unlock()
 		}
 		sess.Azure = &session.AzureCredentials{
-			AuthMethod:       authMethod,
-			TenantID:         creds["tenantId"],
-			ClientID:         creds["clientId"],
-			ClientSecret:     creds["clientSecret"],
-			CachedCredential: cachedCred,
+			AuthMethod:          authMethod,
+			TenantID:            creds["tenantId"],
+			ClientID:            creds["clientId"],
+			ClientSecret:        creds["clientSecret"],
+			CertificateData:     creds["certificateData"],
+			CertificatePassword: creds["certificatePassword"],
+			CachedCredential:    cachedCred,
 		}
 	case "gcp":
 		var cachedTS oauth2.TokenSource
@@ -277,6 +279,8 @@ func storeCredentials(sess *session.Session, provider, authMethod string, creds 
 			Domain:             creds["domain"],
 			UseSSL:             creds["useSSL"] == "true",
 			InsecureSkipVerify: creds["insecureSkipVerify"] == "true",
+			Realm:              creds["realm"],
+			KDC:                creds["kdc"],
 		}
 	case "bluecat":
 		var configIDs []string
@@ -686,6 +690,88 @@ func realAzureCLI(ctx context.Context, creds map[string]string) ([]SubscriptionI
 	return listAzureSubscriptions(ctx, cred)
 }
 
+// realAzureDeviceCode implements Azure Device Code Flow authentication.
+// It creates a DeviceCodeCredential that prints the device code and verification URL
+// to stdout for the user to complete in their browser, then polls until authentication
+// completes or times out.
+func realAzureDeviceCode(ctx context.Context, creds map[string]string) ([]SubscriptionItem, error) {
+	tenantID := creds["tenantId"]
+	if tenantID == "" {
+		return nil, errors.New("tenantId is required for device code authentication")
+	}
+
+	// Use the Azure CLI well-known public client ID — no client secret required.
+	const azureCLIClientID = "04b07795-8ddb-461a-bbee-02f9e1bf7b46"
+
+	cred, err := azidentity.NewDeviceCodeCredential(&azidentity.DeviceCodeCredentialOptions{
+		TenantID: tenantID,
+		ClientID: azureCLIClientID,
+		UserPrompt: func(ctx context.Context, msg azidentity.DeviceCodeMessage) error {
+			// The SDK calls this callback with the device code and verification URL.
+			// In a real browser-based UI flow, the frontend would display these.
+			// For now, print to stdout — the frontend polls for the validation result.
+			fmt.Printf("Azure Device Code: %s\n", msg.Message)
+			return nil
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create device code credential: %w", err)
+	}
+
+	// Cache the live credential so the scanner can reuse it.
+	cacheKey := fmt.Sprintf("azcred-%d", time.Now().UnixNano())
+	azureCredCacheMu.Lock()
+	azureCredCache[cacheKey] = cred
+	azureCredCacheMu.Unlock()
+	creds["azure_cred_cache_key"] = cacheKey
+
+	// List subscriptions accessible with this credential.
+	// This call triggers the device code flow — the user must complete browser auth
+	// before this returns.
+	return listAzureSubscriptions(ctx, cred)
+}
+
+// realAzureCertificate implements certificate-based Service Principal authentication.
+// Supports PEM-encoded certificates (with or without private key in the same file)
+// and optionally a password for encrypted private keys.
+// The frontend sends the certificate content as a base64-encoded string in the
+// "certificateData" credential field.
+func realAzureCertificate(ctx context.Context, creds map[string]string) ([]SubscriptionItem, error) {
+	tenantID := creds["tenantId"]
+	clientID := creds["clientId"]
+	certData := creds["certificateData"]
+	if tenantID == "" || clientID == "" || certData == "" {
+		return nil, errors.New("tenantId, clientId, and certificateData are required for certificate authentication")
+	}
+
+	// Decode the base64-encoded certificate data.
+	certBytes, err := base64.StdEncoding.DecodeString(certData)
+	if err != nil {
+		// Try raw (non-base64) — the frontend might send PEM content directly.
+		certBytes = []byte(certData)
+	}
+
+	// Parse PEM certificates and private key.
+	certs, key, err := azidentity.ParseCertificates(certBytes, []byte(creds["certificatePassword"]))
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse certificate: %w", err)
+	}
+
+	cred, err := azidentity.NewClientCertificateCredential(tenantID, clientID, certs, key, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create certificate credential: %w", err)
+	}
+
+	// Cache the live credential so the scanner can reuse it.
+	cacheKey := fmt.Sprintf("azcred-%d", time.Now().UnixNano())
+	azureCredCacheMu.Lock()
+	azureCredCache[cacheKey] = cred
+	azureCredCacheMu.Unlock()
+	creds["azure_cred_cache_key"] = cacheKey
+
+	return listAzureSubscriptions(ctx, cred)
+}
+
 // realAzureValidator lists subscriptions using ClientSecretCredential.
 // DefaultAzureCredential is explicitly prohibited — it may pick up ambient credentials
 // from the developer machine and bypass the user-supplied credentials entirely.
@@ -696,7 +782,10 @@ func realAzureValidator(ctx context.Context, creds map[string]string) ([]Subscri
 	case "az-cli":
 		return realAzureCLI(ctx, creds)
 	case "device_code", "device-code":
-		return nil, errors.New("Coming soon — not yet implemented in this version")
+		return realAzureDeviceCode(ctx, creds)
+
+	case "certificate":
+		return realAzureCertificate(ctx, creds)
 	}
 
 	tenantID := creds["tenantId"]
@@ -811,10 +900,15 @@ func realGCPADCValidator(ctx context.Context, creds map[string]string) ([]Subscr
 
 // realADValidator validates Active Directory / WinRM credentials by opening a
 // WinRM connection and running a lightweight PowerShell probe ($PSVersionTable).
-// NTLM is the only supported auth method — Kerberos requires a domain-joined machine.
+// Supports NTLM (default) and Kerberos (pure Go via gokrb5) auth methods.
 // The frontend sends a comma-separated "servers" field; the validator probes the first
 // server and returns one SubscriptionItem per server on success.
 func realADValidator(ctx context.Context, creds map[string]string) ([]SubscriptionItem, error) {
+	// Route Kerberos auth to its dedicated validator.
+	if creds["authMethod"] == "kerberos" {
+		return realADKerberosValidator(ctx, creds)
+	}
+
 	// Parse the first server from the comma-separated list for the connectivity probe.
 	servers := parseServers(creds["servers"])
 	if len(servers) == 0 {
@@ -1148,4 +1242,77 @@ func parseServers(s string) []string {
 		}
 	}
 	return out
+}
+
+// realADKerberosValidator validates Kerberos authentication by obtaining a TGT from
+// the KDC using username/password, then building a Kerberos-authenticated WinRM client
+// to probe the first DC. Uses pure Go (gokrb5) — does not require a domain-joined
+// machine or Windows SSPI.
+func realADKerberosValidator(ctx context.Context, creds map[string]string) ([]SubscriptionItem, error) {
+	servers := parseServers(creds["servers"])
+	if len(servers) == 0 {
+		if h := creds["server"]; h != "" {
+			servers = []string{h}
+		} else if h := creds["host"]; h != "" {
+			servers = []string{h}
+		}
+	}
+	host := ""
+	if len(servers) > 0 {
+		host = servers[0]
+	}
+	username := creds["username"]
+	password := creds["password"]
+	realm := creds["realm"]
+	kdc := creds["kdc"]
+
+	if host == "" || username == "" || password == "" {
+		return nil, errors.New("server address, username, and password are required")
+	}
+	if realm == "" {
+		return nil, errors.New("realm is required for Kerberos authentication (e.g. CORP.EXAMPLE.COM)")
+	}
+	if kdc == "" {
+		// Default KDC to the first server host on standard Kerberos port.
+		kdc = host + ":88"
+	}
+
+	// Build Kerberos-authenticated WinRM client via the shared helper.
+	var clientOpts []ad.ClientOption
+	if creds["useSSL"] == "true" {
+		clientOpts = append(clientOpts, ad.WithHTTPS())
+	}
+	if creds["insecureSkipVerify"] == "true" {
+		clientOpts = append(clientOpts, ad.WithInsecureSkipVerify())
+	}
+	client, err := ad.BuildKerberosClient(host, username, password, realm, kdc, clientOpts...)
+	if err != nil {
+		return nil, fmt.Errorf("Kerberos WinRM client error: %w", err)
+	}
+
+	// Wrap the connectivity probe in a hard 10s deadline.
+	probeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	var outBuf, errBuf strings.Builder
+	exitCode, err := client.RunWithContext(probeCtx,
+		winrm.Powershell(`$PSVersionTable.PSVersion.Major`),
+		&outBuf, &errBuf,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("Kerberos WinRM connection failed: %w", err)
+	}
+	if exitCode != 0 {
+		msg := strings.TrimSpace(errBuf.String())
+		if msg == "" {
+			msg = strings.TrimSpace(outBuf.String())
+		}
+		return nil, fmt.Errorf("Kerberos WinRM probe failed (exit %d): %s", exitCode, msg)
+	}
+
+	// Build subscription items for each server.
+	items := make([]SubscriptionItem, 0, len(servers))
+	for _, s := range servers {
+		items = append(items, SubscriptionItem{ID: s, Name: s + " (Kerberos)"})
+	}
+	return items, nil
 }
