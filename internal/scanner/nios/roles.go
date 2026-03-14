@@ -22,10 +22,10 @@ func ExportedExtractServiceRole(props map[string]string) string {
 // keys. The fallback default "DNS/DHCP" is intentionally conservative.
 func extractServiceRole(props map[string]string) string {
 	// Structural master roles take precedence over service flags.
-	if props["is_grid_master"] == "true" {
+	if props["is_master"] == "true" || props["is_grid_master"] == "true" {
 		return "GM"
 	}
-	if props["is_candidate_master"] == "true" {
+	if props["is_potential_master"] == "true" || props["is_candidate_master"] == "true" {
 		return "GMC"
 	}
 
