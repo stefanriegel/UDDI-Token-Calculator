@@ -156,6 +156,23 @@ type NiosWAPIValidateResponse struct {
 	WAPIVersion string           `json:"wapiVersion,omitempty"`
 }
 
+// UpdateCheckResponse is the JSON body for GET /api/v1/update/check.
+type UpdateCheckResponse struct {
+	CurrentVersion  string `json:"currentVersion"`
+	LatestVersion   string `json:"latestVersion"`
+	UpdateAvailable bool   `json:"updateAvailable"`
+	ReleaseURL      string `json:"releaseURL,omitempty"`
+	ReleaseNotes    string `json:"releaseNotes,omitempty"`
+	DownloadURL     string `json:"downloadURL,omitempty"`
+}
+
+// SelfUpdateResponse is the JSON body for POST /api/v1/update/apply.
+type SelfUpdateResponse struct {
+	Success bool   `json:"success"`
+	Error   string `json:"error,omitempty"`
+	Message string `json:"message,omitempty"`
+}
+
 // ScanResultsResponse is the body for GET /api/v1/scan/{id}/results.
 type ScanResultsResponse struct {
 	ScanID                string                  `json:"scanId"`
