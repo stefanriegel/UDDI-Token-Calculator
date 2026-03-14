@@ -240,6 +240,7 @@ func buildScanRequest(p ScanProviderRequest, sess *session.Session) scanner.Scan
 		if sess.GCP != nil {
 			req.Credentials["auth_method"] = sess.GCP.AuthMethod
 			req.Credentials["service_account_json"] = sess.GCP.ServiceAccountJSON
+			req.Credentials["workload_identity_json"] = sess.GCP.WorkloadIdentityJSON
 			req.Credentials["project_id"] = sess.GCP.ProjectID
 			// Pass the live cached token source through the ScanRequest side-channel
 			// so the GCP scanner can reuse it without a second browser popup.

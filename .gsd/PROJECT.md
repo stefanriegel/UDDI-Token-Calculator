@@ -45,8 +45,8 @@ A pre-sales engineer can hand this `.exe` to any customer and get an accurate to
 - [ ] Azure Certificate-based Service Principal auth (implemented in S02 — backend complete, frontend form pending)
 - [ ] Azure az-cli auth (currently falls through requiring tenantId/clientId/clientSecret)
 - [ ] Azure Device Code Flow auth (implemented in S02 — backend complete, frontend display pending)
-- [ ] GCP Browser OAuth auth (currently falls through to service account JSON)
-- [ ] GCP Workload Identity Federation auth (currently falls through to service account JSON)
+- [x] GCP Browser OAuth auth (S03 — backend complete, frontend form pending)
+- [x] GCP Workload Identity Federation auth (S03 — backend complete, frontend form pending)
 - [ ] AWS CLI Profile auth (currently returns "Coming soon")
 - [ ] AWS Assume Role (Cross-Account) auth (currently returns "Coming soon")
 

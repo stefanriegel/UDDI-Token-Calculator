@@ -74,8 +74,11 @@ type GCPCredentials struct {
 	AuthMethod         string
 	ServiceAccountJSON string
 	ProjectID          string
+	// WorkloadIdentityJSON holds the WIF configuration JSON for external_account auth.
+	// Distinct from ServiceAccountJSON to avoid overloading the same field.
+	WorkloadIdentityJSON string
 	// CachedTokenSource holds the live OAuth2 token source obtained during browser-oauth
-	// validation. The scanner reuses it to avoid triggering a second browser popup.
+	// or ADC validation. The scanner reuses it to avoid triggering a second browser popup.
 	CachedTokenSource oauth2.TokenSource
 }
 
