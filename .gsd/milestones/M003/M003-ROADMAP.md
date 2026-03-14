@@ -11,5 +11,5 @@
   > After this: Create failing test stubs (Wave 0 / Nyquist compliance) for the 5 new auth method behaviors that plans 15-01 and 15-02 will implement.
 - [x] **S02: Certificate, Device Code, and Kerberos Auth** `risk:medium` `depends:[S01]`
   > After this: unit tests prove Certificate, Device Code, and Kerberos Auth works
-- [ ] **S03: GCP Advanced Auth** `risk:medium` `depends:[S02]`
+- [x] **S03: GCP Advanced Auth** `risk:medium` `depends:[S02]`
   > After this: unit tests prove GCP Advanced Auth works

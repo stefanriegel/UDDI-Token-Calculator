@@ -25,18 +25,18 @@ User can authenticate via Azure Device Code Flow — backend relays the device c
 - Status: active
 - Class: core-capability
 - Source: inferred
-- Primary Slice: none yet
+- Primary Slice: S03
 
-User can authenticate via Browser OAuth by completing a consent flow — backend runs a localhost redirect server for the authorization code
+User can authenticate via Browser OAuth by completing a consent flow — backend runs a localhost redirect server for the authorization code. Backend implemented in S03: realGCPBrowserOAuth validator with localhost redirect, CSRF state token, 120s timeout, token source caching, project listing via Cloud Resource Manager API. Frontend OAuth credential form pending.
 
 ### GCP-AUTH-02 — User can authenticate via Workload Identity Federation by providing a WIF configuration JSON file
 
 - Status: active
 - Class: core-capability
 - Source: inferred
-- Primary Slice: none yet
+- Primary Slice: S03
 
-User can authenticate via Workload Identity Federation by providing a WIF configuration JSON file
+User can authenticate via Workload Identity Federation by providing a WIF configuration JSON file. Backend implemented in S03: realGCPWorkloadIdentity validator with structural validation (type=external_account), google.CredentialsFromJSON native WIF support, project ID extraction from SA impersonation URL, token source caching. Frontend WIF upload form pending.
 
 ### AD-AUTH-01 — User can authenticate via Kerberos protocol with username, password, realm, and KDC address — pure Go (gokrb5), not Windows SSPI integrated auth
 

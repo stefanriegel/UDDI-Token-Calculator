@@ -67,3 +67,8 @@
 - "Kerberos builds krb5.conf programmatically from realm/KDC params — no external config file required"
 - "KDC defaults to first server host on port 88 if not explicitly provided by user"
 - "Certificate/device-code credentials cached in azureCredCache during validation — scanner uses cached credential (no re-auth needed)"
+- "GCP Browser OAuth uses net.Listen on 127.0.0.1:0 for ephemeral port — no port conflict, matches Azure browser-sso pattern"
+- "GCP WIF uses google.CredentialsFromJSON which natively handles external_account type — no custom token exchange logic needed"
+- "WIF project ID fallback chain: list projects API → SA impersonation URL parsing → user-provided projectId"
+- "Scanner buildTokenSource routes browser-oauth through same cached path as ADC — both require re-validate on cache miss"
+- "BuildTokenSourceForTest exported in testing.go (not _test.go) for cross-package test access from server_test"

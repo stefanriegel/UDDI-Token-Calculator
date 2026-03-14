@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os/exec"
@@ -257,9 +258,11 @@ func storeCredentials(sess *session.Session, provider, authMethod string, creds 
 			gcpTokenCacheMu.Unlock()
 		}
 		sess.GCP = &session.GCPCredentials{
-			AuthMethod:         authMethod,
-			ServiceAccountJSON: creds["serviceAccountJson"],
-			CachedTokenSource:  cachedTS,
+			AuthMethod:           authMethod,
+			ServiceAccountJSON:   creds["serviceAccountJson"],
+			WorkloadIdentityJSON: creds["workloadIdentityJson"],
+			ProjectID:            creds["projectId"],
+			CachedTokenSource:    cachedTS,
 		}
 	case "ad":
 		// Frontend sends "server" (singular), backend historically read "servers" (plural).
@@ -804,12 +807,19 @@ func realAzureValidator(ctx context.Context, creds map[string]string) ([]Subscri
 }
 
 // realGCPValidator validates GCP credentials and returns a project list.
-// Supports two auth methods:
+// Supports four auth methods:
 //   - "adc": Application Default Credentials (gcloud auth application-default login)
+//   - "browser-oauth": Interactive browser consent flow with localhost redirect
+//   - "workload-identity": Workload Identity Federation via configuration JSON
 //   - "service-account" (default): parse service account JSON, return project_id
 func realGCPValidator(ctx context.Context, creds map[string]string) ([]SubscriptionItem, error) {
-	if creds["authMethod"] == "adc" {
+	switch creds["authMethod"] {
+	case "adc":
 		return realGCPADCValidator(ctx, creds)
+	case "browser-oauth":
+		return realGCPBrowserOAuth(ctx, creds)
+	case "workload-identity":
+		return realGCPWorkloadIdentity(ctx, creds)
 	}
 
 	saJSON := creds["serviceAccountJson"]
@@ -896,6 +906,248 @@ func realGCPADCValidator(ctx context.Context, creds map[string]string) ([]Subscr
 		items = append(items, SubscriptionItem{ID: p.ProjectID, Name: name})
 	}
 	return items, nil
+}
+
+// realGCPBrowserOAuth implements interactive browser-based OAuth2 authentication for GCP.
+// It starts a localhost redirect server, opens the system browser for user consent,
+// receives the authorization code, and exchanges it for tokens.
+// Uses the GCP OAuth2 client ID for installed applications.
+// The token source is cached so the scanner can reuse it without a second browser popup.
+func realGCPBrowserOAuth(ctx context.Context, creds map[string]string) ([]SubscriptionItem, error) {
+	clientID := creds["clientId"]
+	clientSecret := creds["clientSecret"]
+	if clientID == "" || clientSecret == "" {
+		return nil, errors.New("clientId and clientSecret are required for browser OAuth — create OAuth credentials in the GCP Console")
+	}
+
+	// Start a localhost listener for the OAuth2 redirect.
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return nil, fmt.Errorf("gcp browser-oauth: failed to start redirect listener: %w", err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	redirectURL := fmt.Sprintf("http://127.0.0.1:%d/callback", port)
+
+	conf := &oauth2.Config{
+		ClientID:     clientID,
+		ClientSecret: clientSecret,
+		Endpoint:     google.Endpoint,
+		RedirectURL:  redirectURL,
+		Scopes: []string{
+			"https://www.googleapis.com/auth/compute.readonly",
+			"https://www.googleapis.com/auth/ndev.clouddns.readonly",
+			"https://www.googleapis.com/auth/cloudplatformprojects.readonly",
+		},
+	}
+
+	// Generate state token for CSRF protection.
+	state := fmt.Sprintf("gcpoauth-%d", time.Now().UnixNano())
+	authURL := conf.AuthCodeURL(state, oauth2.AccessTypeOffline)
+
+	// Channel to receive the authorization code (or error).
+	type authResult struct {
+		code string
+		err  error
+	}
+	resultCh := make(chan authResult, 1)
+
+	// HTTP handler for the OAuth2 redirect.
+	mux := http.NewServeMux()
+	mux.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("state") != state {
+			resultCh <- authResult{err: errors.New("OAuth state mismatch")}
+			fmt.Fprintf(w, "<html><body><h2>Authentication failed</h2><p>State mismatch — please try again.</p></body></html>")
+			return
+		}
+		if errParam := r.URL.Query().Get("error"); errParam != "" {
+			resultCh <- authResult{err: fmt.Errorf("OAuth error: %s — %s", errParam, r.URL.Query().Get("error_description"))}
+			fmt.Fprintf(w, "<html><body><h2>Authentication failed</h2><p>%s</p></body></html>", r.URL.Query().Get("error_description"))
+			return
+		}
+		code := r.URL.Query().Get("code")
+		if code == "" {
+			resultCh <- authResult{err: errors.New("no authorization code received")}
+			fmt.Fprintf(w, "<html><body><h2>Authentication failed</h2><p>No authorization code received.</p></body></html>")
+			return
+		}
+		resultCh <- authResult{code: code}
+		fmt.Fprintf(w, "<html><body><h2>Authentication successful</h2><p>You can close this tab and return to the application.</p></body></html>")
+	})
+
+	srv := &http.Server{Handler: mux}
+	go func() {
+		_ = srv.Serve(listener)
+	}()
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(shutdownCtx)
+	}()
+
+	// Open the browser for user consent.
+	_ = pkgbrowser.OpenURL(authURL)
+
+	// Wait for the authorization code with a 120-second timeout.
+	var code string
+	select {
+	case result := <-resultCh:
+		if result.err != nil {
+			return nil, fmt.Errorf("gcp browser-oauth: %w", result.err)
+		}
+		code = result.code
+	case <-time.After(120 * time.Second):
+		return nil, errors.New("gcp browser-oauth: timed out waiting for browser consent — please try again")
+	case <-ctx.Done():
+		return nil, errors.New("gcp browser-oauth: cancelled")
+	}
+
+	// Exchange the authorization code for tokens.
+	token, err := conf.Exchange(ctx, code)
+	if err != nil {
+		return nil, fmt.Errorf("gcp browser-oauth: token exchange failed: %w", err)
+	}
+
+	ts := conf.TokenSource(ctx, token)
+
+	// Cache the token source for scanner reuse.
+	cacheKey := fmt.Sprintf("gcpts-%d", time.Now().UnixNano())
+	gcpTokenCacheMu.Lock()
+	gcpTokenCache[cacheKey] = ts
+	gcpTokenCacheMu.Unlock()
+	creds["gcp_token_cache_key"] = cacheKey
+
+	// List accessible projects to populate the subscription selector.
+	httpClient := oauth2.NewClient(ctx, ts)
+	resp, err := httpClient.Get("https://cloudresourcemanager.googleapis.com/v1/projects?filter=lifecycleState%3AACTIVE")
+	if err != nil {
+		return nil, fmt.Errorf("gcp browser-oauth: list projects: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("gcp browser-oauth: list projects returned HTTP %d", resp.StatusCode)
+	}
+
+	var projectsResult struct {
+		Projects []struct {
+			ProjectID string `json:"projectId"`
+			Name      string `json:"name"`
+		} `json:"projects"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&projectsResult); err != nil {
+		return nil, fmt.Errorf("gcp browser-oauth: decode projects: %w", err)
+	}
+
+	if len(projectsResult.Projects) == 0 {
+		return nil, errors.New("gcp browser-oauth: no accessible GCP projects found for this account")
+	}
+
+	items := make([]SubscriptionItem, 0, len(projectsResult.Projects))
+	for _, p := range projectsResult.Projects {
+		name := p.Name
+		if name == "" {
+			name = p.ProjectID
+		}
+		items = append(items, SubscriptionItem{ID: p.ProjectID, Name: name})
+	}
+	return items, nil
+}
+
+// realGCPWorkloadIdentity validates GCP Workload Identity Federation (WIF) credentials.
+// The user provides a WIF configuration JSON file (type "external_account") that contains
+// the federation settings (audience, subject token source, service account impersonation URL).
+// google.CredentialsFromJSON natively supports external_account type.
+func realGCPWorkloadIdentity(ctx context.Context, creds map[string]string) ([]SubscriptionItem, error) {
+	wifJSON := creds["workloadIdentityJson"]
+	if wifJSON == "" {
+		return nil, errors.New("workloadIdentityJson is required — download the WIF configuration file from the GCP Console")
+	}
+
+	// Structural validation: parse the JSON and verify type.
+	var wifFields struct {
+		Type                           string `json:"type"`
+		ServiceAccountImpersonationURL string `json:"service_account_impersonation_url"`
+	}
+	if err := json.Unmarshal([]byte(wifJSON), &wifFields); err != nil {
+		return nil, fmt.Errorf("gcp: invalid WIF configuration JSON: %w", err)
+	}
+	if wifFields.Type != "external_account" {
+		return nil, fmt.Errorf("gcp: expected type \"external_account\" in WIF configuration, got %q", wifFields.Type)
+	}
+
+	// google.CredentialsFromJSON handles external_account type natively —
+	// it configures the token exchange, optional service account impersonation,
+	// and returns a TokenSource that transparently handles refresh.
+	googleCreds, err := google.CredentialsFromJSON(ctx, []byte(wifJSON),
+		"https://www.googleapis.com/auth/compute.readonly",
+		"https://www.googleapis.com/auth/ndev.clouddns.readonly",
+		"https://www.googleapis.com/auth/cloudplatformprojects.readonly",
+	)
+	if err != nil {
+		return nil, fmt.Errorf("gcp wif: failed to parse WIF configuration: %w", err)
+	}
+
+	ts := googleCreds.TokenSource
+
+	// Cache the token source for scanner reuse.
+	cacheKey := fmt.Sprintf("gcpts-%d", time.Now().UnixNano())
+	gcpTokenCacheMu.Lock()
+	gcpTokenCache[cacheKey] = ts
+	gcpTokenCacheMu.Unlock()
+	creds["gcp_token_cache_key"] = cacheKey
+
+	// Extract project ID from the WIF config if available (via service account impersonation URL
+	// which contains the project's service account). Otherwise request a project_id from the user.
+	projectID := ""
+	if wifFields.ServiceAccountImpersonationURL != "" {
+		// URL format: https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/SA@PROJECT.iam.gserviceaccount.com:generateAccessToken
+		// Extract PROJECT from the service account email.
+		if idx := strings.Index(wifFields.ServiceAccountImpersonationURL, "@"); idx != -1 {
+			after := wifFields.ServiceAccountImpersonationURL[idx+1:]
+			if dotIAM := strings.Index(after, ".iam.gserviceaccount.com"); dotIAM != -1 {
+				projectID = after[:dotIAM]
+			}
+		}
+	}
+
+	// Try listing projects; if that fails (WIF may not have cloudplatformprojects scope),
+	// fall back to returning the extracted project ID.
+	httpClient := oauth2.NewClient(ctx, ts)
+	resp, err := httpClient.Get("https://cloudresourcemanager.googleapis.com/v1/projects?filter=lifecycleState%3AACTIVE")
+	if err == nil {
+		defer resp.Body.Close()
+		if resp.StatusCode == http.StatusOK {
+			var projectsResult struct {
+				Projects []struct {
+					ProjectID string `json:"projectId"`
+					Name      string `json:"name"`
+				} `json:"projects"`
+			}
+			if decErr := json.NewDecoder(resp.Body).Decode(&projectsResult); decErr == nil && len(projectsResult.Projects) > 0 {
+				items := make([]SubscriptionItem, 0, len(projectsResult.Projects))
+				for _, p := range projectsResult.Projects {
+					name := p.Name
+					if name == "" {
+						name = p.ProjectID
+					}
+					items = append(items, SubscriptionItem{ID: p.ProjectID, Name: name})
+				}
+				return items, nil
+			}
+		}
+	}
+
+	// Fallback: return the project ID extracted from the SA impersonation URL.
+	if projectID != "" {
+		return []SubscriptionItem{{ID: projectID, Name: projectID + " (from WIF config)"}}, nil
+	}
+
+	// Last resort: check if user provided a project_id in credentials.
+	if pid := creds["projectId"]; pid != "" {
+		return []SubscriptionItem{{ID: pid, Name: pid}}, nil
+	}
+
+	return nil, errors.New("gcp wif: unable to determine project ID — provide a projectId alongside the WIF configuration")
 }
 
 // realADValidator validates Active Directory / WinRM credentials by opening a
