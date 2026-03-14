@@ -1,18 +1,13 @@
-# GoReleaser OSS v2 — native cross-compilation
-# GoReleaser handles cross-compilation natively for all targets.
+# GoReleaser OSS v2 — macOS ARM + Windows x64
 version: 2
 
 builds:
   - id: uddi-token-calculator
     env:
       - CGO_ENABLED=0
-    goos:
-      - windows
-      - darwin
-      - linux
-    goarch:
-      - amd64
-      - arm64
+    targets:
+      - darwin_arm64
+      - windows_amd64
     ldflags:
       - -s -w
       - -X github.com/infoblox/uddi-go-token-calculator/internal/version.Version={{.Version}}
