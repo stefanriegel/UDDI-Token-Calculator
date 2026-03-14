@@ -48,7 +48,7 @@ release:
   name_template: "{{.ProjectName}} {{.Tag}}"
   make_latest: true
 
-homebrew_casks:
+brews:
   - ids: [homebrew]
     repository:
       owner: stefanriegel
