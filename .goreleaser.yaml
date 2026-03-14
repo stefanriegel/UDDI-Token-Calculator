@@ -21,7 +21,7 @@ archives:
   - id: homebrew
     name_template: "uddi-token-calculator_{{ .Os }}_{{ .Arch }}"
     formats: [tar.gz]
-    builds: [uddi-token-calculator]
+    ids: [uddi-token-calculator]
     files:
       - none*
 
@@ -47,7 +47,7 @@ release:
   name_template: "{{.ProjectName}} {{.Tag}}"
   make_latest: true
 
-brews:
+homebrew_casks:
   - ids: [homebrew]
     repository:
       owner: stefanriegel
