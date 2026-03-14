@@ -70,4 +70,5 @@ jobs:
           args: release --clean ${{ steps.notes.outputs.file && format('--release-notes {0}', steps.notes.outputs.file) || '' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           GPG_FINGERPRINT: ${{ steps.import_gpg.outputs.fingerprint }}
