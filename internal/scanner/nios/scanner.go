@@ -430,7 +430,8 @@ var familyDisplayNames = map[string]string{
 	NiosFamilyDTCServer:       "DTC Servers",
 	NiosFamilyDTCMonitor:      "DTC Monitors",
 	NiosFamilyDTCTopology:     "DTC Topologies",
-	NiosFamilyDiscoveryData:   "Discovered IPs",
+	NiosFamilyDiscoveryData:    "Discovered IPs",
+	NiosFamilyDNSRecordAlias:   "DNS Alias Records",
 }
 
 // familyDisplayName returns the human-readable name for a NiosFamily constant.
