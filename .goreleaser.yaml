@@ -8,6 +8,7 @@ builds:
     targets:
       - darwin_arm64
       - windows_amd64
+      - linux_amd64
     ldflags:
       - -s -w
       - -X github.com/infoblox/uddi-go-token-calculator/internal/version.Version={{.Version}}
