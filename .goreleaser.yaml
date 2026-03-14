@@ -22,7 +22,7 @@ builds:
 archives:
   - id: default
     name_template: "uddi-token-calculator_{{ .Os }}_{{ .Arch }}"
-    format: binary
+    formats: [binary]
 
 checksum:
   name_template: "checksums.txt"
