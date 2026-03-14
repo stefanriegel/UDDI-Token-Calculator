@@ -2,6 +2,8 @@ package aws
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
@@ -121,6 +123,14 @@ func TestStripZoneID(t *testing.T) {
 // when given a source_profile. The current implementation will fail because
 // it expects access_key_id/secret_access_key fields (not source_profile).
 func TestBuildConfigAssumeRole(t *testing.T) {
+	// Create a temporary AWS config so LoadDefaultConfig can resolve the "default" profile
+	// without requiring real credentials on the machine.
+	tmpDir := t.TempDir()
+	credFile := filepath.Join(tmpDir, "credentials")
+	os.WriteFile(credFile, []byte("[default]\naws_access_key_id = AKIAIOSFODNN7EXAMPLE\naws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\n"), 0600)
+	t.Setenv("AWS_SHARED_CREDENTIALS_FILE", credFile)
+	t.Setenv("AWS_CONFIG_FILE", filepath.Join(tmpDir, "config")) // empty, avoid host config
+
 	ctx := context.Background()
 	creds := map[string]string{
 		"auth_method":    "assume_role",

@@ -10,6 +10,7 @@ import (
 	awssdk "github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/sso"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
@@ -168,33 +169,28 @@ func buildConfig(ctx context.Context, creds map[string]string) (awssdk.Config, e
 		)
 
 	case "assume_role", "assume-role":
-		// Build base config first (access_key), then AssumeRole.
-		baseCfg, err := buildConfig(ctx, map[string]string{
-			"auth_method":       "access_key",
-			"access_key_id":     creds["access_key_id"],
-			"secret_access_key": creds["secret_access_key"],
-			"region":            region,
-		})
+		// Base credentials come from sourceProfile (not access key fields).
+		// Per user decision: matches AWS CLI source_profile convention.
+		sourceProfile := creds["source_profile"]
+		if sourceProfile == "" {
+			sourceProfile = "default"
+		}
+		baseCfg, err := awsconfig.LoadDefaultConfig(ctx,
+			append(retryOpts, awsconfig.WithSharedConfigProfile(sourceProfile))...,
+		)
 		if err != nil {
-			return awssdk.Config{}, fmt.Errorf("assume_role base config: %w", err)
+			return awssdk.Config{}, fmt.Errorf("assume_role source profile %q: %w", sourceProfile, err)
 		}
 		stsClient := sts.NewFromConfig(baseCfg)
-		result, err := stsClient.AssumeRole(ctx, &sts.AssumeRoleInput{
-			RoleArn:         awssdk.String(creds["role_arn"]),
-			RoleSessionName: awssdk.String("uddi-go-token-calculator"),
+		provider := stscreds.NewAssumeRoleProvider(stsClient, creds["role_arn"], func(o *stscreds.AssumeRoleOptions) {
+			o.RoleSessionName = "uddi-go-token-calculator"
+			if eid := creds["external_id"]; eid != "" {
+				o.ExternalID = &eid
+			}
 		})
-		if err != nil {
-			return awssdk.Config{}, fmt.Errorf("assume_role: %w", err)
-		}
-		return awsconfig.LoadDefaultConfig(ctx,
-			append(retryOpts,
-				awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
-					*result.Credentials.AccessKeyId,
-					*result.Credentials.SecretAccessKey,
-					*result.Credentials.SessionToken,
-				)),
-			)...,
-		)
+		// CredentialsCache auto-refreshes 5 minutes before expiry -- survives long multi-region scans.
+		baseCfg.Credentials = awssdk.NewCredentialsCache(provider)
+		return baseCfg, nil
 
 	default:
 		return awssdk.Config{}, fmt.Errorf("unknown auth_method: %q", creds["auth_method"])
