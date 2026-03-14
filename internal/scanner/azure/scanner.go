@@ -92,6 +92,13 @@ func buildCredential(creds map[string]string, cached azcore.TokenCredential) (az
 			ClientID: azureCLIClientID,
 		})
 
+	case "az-cli":
+		if cached != nil {
+			return cached, nil
+		}
+		// Fallback: create fresh CLI credential (should not happen in normal flow).
+		return azidentity.NewAzureCLICredential(nil)
+
 	default:
 		// service-principal (client secret) — the default and most common method.
 		tenantID := creds["tenant_id"]

@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os/exec"
 	"regexp"
 	"strings"
 	"sync"
@@ -622,6 +623,12 @@ func realAzureBrowserSSO(ctx context.Context, creds map[string]string) ([]Subscr
 	creds["azure_cred_cache_key"] = cacheKey
 
 	// List subscriptions accessible with this credential.
+	return listAzureSubscriptions(ctx, cred)
+}
+
+// listAzureSubscriptions lists all subscriptions accessible with the given credential.
+// Shared helper used by realAzureBrowserSSO, realAzureCLI, and realAzureValidator.
+func listAzureSubscriptions(ctx context.Context, cred azcore.TokenCredential) ([]SubscriptionItem, error) {
 	client, err := armsubscriptions.NewClient(cred, nil)
 	if err != nil {
 		return nil, err
@@ -654,6 +661,29 @@ func realAzureBrowserSSO(ctx context.Context, creds map[string]string) ([]Subscr
 	return items, nil
 }
 
+// realAzureCLI implements Azure CLI authentication using the existing `az login` session.
+// Pre-checks that the az binary exists before attempting credential creation.
+func realAzureCLI(ctx context.Context, creds map[string]string) ([]SubscriptionItem, error) {
+	// Pre-check az binary existence.
+	if _, err := exec.LookPath("az"); err != nil {
+		return nil, errors.New("Azure CLI (az) not found — install from https://aka.ms/installazurecli")
+	}
+
+	cred, err := azidentity.NewAzureCLICredential(nil)
+	if err != nil {
+		return nil, fmt.Errorf("Azure CLI credential failed — run 'az login' in a terminal first: %w", err)
+	}
+
+	// Cache credential using same pattern as browser-sso.
+	cacheKey := fmt.Sprintf("azcred-%d", time.Now().UnixNano())
+	azureCredCacheMu.Lock()
+	azureCredCache[cacheKey] = cred
+	azureCredCacheMu.Unlock()
+	creds["azure_cred_cache_key"] = cacheKey
+
+	return listAzureSubscriptions(ctx, cred)
+}
+
 // realAzureValidator lists subscriptions using ClientSecretCredential.
 // DefaultAzureCredential is explicitly prohibited — it may pick up ambient credentials
 // from the developer machine and bypass the user-supplied credentials entirely.
@@ -661,6 +691,8 @@ func realAzureValidator(ctx context.Context, creds map[string]string) ([]Subscri
 	switch creds["authMethod"] {
 	case "browser-sso":
 		return realAzureBrowserSSO(ctx, creds)
+	case "az-cli":
+		return realAzureCLI(ctx, creds)
 	case "device_code", "device-code":
 		return nil, errors.New("Coming soon — not yet implemented in this version")
 	}
@@ -677,36 +709,7 @@ func realAzureValidator(ctx context.Context, creds map[string]string) ([]Subscri
 		return nil, err
 	}
 
-	client, err := armsubscriptions.NewClient(cred, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	var items []SubscriptionItem
-	pager := client.NewListPager(nil)
-	for pager.More() {
-		page, err := pager.NextPage(ctx)
-		if err != nil {
-			return nil, err
-		}
-		for _, sub := range page.Value {
-			id := ""
-			name := ""
-			if sub.SubscriptionID != nil {
-				id = *sub.SubscriptionID
-			}
-			if sub.DisplayName != nil {
-				name = *sub.DisplayName
-			}
-			items = append(items, SubscriptionItem{ID: id, Name: name})
-		}
-	}
-
-	if len(items) == 0 {
-		return nil, errors.New("no Azure subscriptions found — ensure the service principal has Reader role on at least one subscription")
-	}
-
-	return items, nil
+	return listAzureSubscriptions(ctx, cred)
 }
 
 // realGCPValidator validates GCP credentials and returns a project list.
