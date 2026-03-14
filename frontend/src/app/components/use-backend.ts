@@ -1,7 +1,18 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { checkHealth, type HealthResponse, getBaseUrl, getScanStatus, type ScanStatusResponse } from './api-client';
+import {
+  checkHealth,
+  type HealthResponse,
+  getBaseUrl,
+  getScanStatus,
+  type ScanStatusResponse,
+  checkForUpdate,
+  applySelfUpdate,
+  type UpdateCheckResponse,
+} from './api-client';
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected';
+
+export type UpdateStatus = 'idle' | 'checking' | 'updating' | 'done' | 'error';
 
 interface BackendState {
   status: ConnectionStatus;
@@ -9,11 +20,52 @@ interface BackendState {
   baseUrl: string;
   isDemo: boolean;
   retry: () => void;
+  updateInfo: UpdateCheckResponse | null;
+  updateStatus: UpdateStatus;
+  updateError: string | null;
+  checkUpdate: () => void;
+  applyUpdate: () => void;
 }
 
 export function useBackendConnection(): BackendState {
   const [status, setStatus] = useState<ConnectionStatus>('connecting');
   const [health, setHealth] = useState<HealthResponse | null>(null);
+  const [updateInfo, setUpdateInfo] = useState<UpdateCheckResponse | null>(null);
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus>('idle');
+  const [updateError, setUpdateError] = useState<string | null>(null);
+  const updateCheckedRef = useRef(false);
+
+  const doCheckUpdate = useCallback(async () => {
+    setUpdateStatus('checking');
+    setUpdateError(null);
+    try {
+      const info = await checkForUpdate();
+      setUpdateInfo(info);
+      setUpdateStatus('idle');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Update check failed';
+      setUpdateError(msg);
+      setUpdateStatus('error');
+    }
+  }, []);
+
+  const doApplyUpdate = useCallback(async () => {
+    setUpdateStatus('updating');
+    setUpdateError(null);
+    try {
+      const result = await applySelfUpdate();
+      if (result.success) {
+        setUpdateStatus('done');
+      } else {
+        setUpdateError(result.error || 'Update failed');
+        setUpdateStatus('error');
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Self-update failed';
+      setUpdateError(msg);
+      setUpdateStatus('error');
+    }
+  }, []);
 
   const ping = useCallback(async () => {
     try {
@@ -32,12 +84,25 @@ export function useBackendConnection(): BackendState {
     return () => clearInterval(id);
   }, [ping]);
 
+  // Trigger one-time update check after first successful connection
+  useEffect(() => {
+    if (status === 'connected' && !updateCheckedRef.current) {
+      updateCheckedRef.current = true;
+      doCheckUpdate();
+    }
+  }, [status, doCheckUpdate]);
+
   return {
     status,
     health,
     baseUrl: getBaseUrl(),
     isDemo: status !== 'connected',
     retry: ping,
+    updateInfo,
+    updateStatus,
+    updateError,
+    checkUpdate: doCheckUpdate,
+    applyUpdate: doApplyUpdate,
   };
 }
 

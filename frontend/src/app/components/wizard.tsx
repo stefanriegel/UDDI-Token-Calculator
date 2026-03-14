@@ -31,6 +31,7 @@ import {
   X,
   Plus,
   Shield,
+  ArrowUpCircle,
 } from 'lucide-react';
 import { useBackendConnection } from './use-backend';
 import {
@@ -883,6 +884,28 @@ export function Wizard() {
                 <span className="hidden sm:inline">Connected v{backend.health?.version}</span>
               </div>
             )}
+            {backend.updateStatus === 'done' ? (
+              <div className="flex items-center gap-1.5 px-2.5 py-1 bg-green-500/20 border border-green-500/30 rounded-full text-[11px] text-green-300">
+                <ArrowUpCircle className="w-3 h-3" />
+                <span className="hidden sm:inline">Updated! Restart to apply</span>
+              </div>
+            ) : backend.updateStatus === 'error' ? (
+              <div className="flex items-center gap-1.5 px-2.5 py-1 bg-red-500/20 border border-red-500/30 rounded-full text-[11px] text-red-300">
+                <ArrowUpCircle className="w-3 h-3" />
+                <span className="hidden sm:inline">{backend.updateError || 'Update failed'}</span>
+              </div>
+            ) : backend.updateInfo?.updateAvailable ? (
+              <button
+                onClick={backend.applyUpdate}
+                disabled={backend.updateStatus === 'updating'}
+                className="flex items-center gap-1.5 px-2.5 py-1 bg-blue-500/20 border border-blue-500/30 rounded-full text-[11px] text-blue-300 hover:bg-blue-500/30 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-wait"
+              >
+                <ArrowUpCircle className="w-3 h-3" />
+                <span className="hidden sm:inline">
+                  {backend.updateStatus === 'updating' ? 'Updating...' : `Update to ${backend.updateInfo.latestVersion}`}
+                </span>
+              </button>
+            ) : null}
           </div>
         </div>
       </header>
@@ -3129,6 +3152,9 @@ export function Wizard() {
               Stefan Riegel
             </a>
           </div>
+          <span className="text-[11px] text-white/30">
+            v{backend.health?.version ?? 'dev'}
+          </span>
           <a
             href="https://github.com/stefanriegel"
             target="_blank"
