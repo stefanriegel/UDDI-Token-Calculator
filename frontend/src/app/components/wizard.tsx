@@ -905,6 +905,11 @@ export function Wizard() {
                   {backend.updateStatus === 'updating' ? 'Updating...' : `Update to ${backend.updateInfo.latestVersion}`}
                 </span>
               </button>
+            ) : backend.updateInfo && !backend.updateInfo.updateAvailable ? (
+              <div className="flex items-center gap-1.5 px-2.5 py-1 bg-green-500/10 border border-green-500/20 rounded-full text-[11px] text-green-400">
+                <CheckCircle2 className="w-3 h-3" />
+                <span className="hidden sm:inline">Up to date</span>
+              </div>
             ) : null}
           </div>
         </div>
@@ -3152,7 +3157,7 @@ export function Wizard() {
               Stefan Riegel
             </a>
           </div>
-          <span className="text-[11px] text-white/30">
+          <span className="text-[11px] text-white/60">
             v{backend.health?.version ?? 'dev'}
           </span>
           <a
