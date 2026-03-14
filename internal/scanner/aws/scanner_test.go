@@ -1,6 +1,7 @@
 package aws
 
 import (
+	"context"
 	"testing"
 
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
@@ -107,5 +108,33 @@ func TestStripZoneID(t *testing.T) {
 		if got != c.want {
 			t.Errorf("stripZoneID(%q) = %q, want %q", c.input, got, c.want)
 		}
+	}
+}
+
+// TestBuildConfigAssumeRole: assume_role buildConfig must use stscreds.AssumeRoleProvider
+// wrapped in CredentialsCache (not one-time static credentials).
+// Wave 0 stub -- currently fails because buildConfig assume_role uses static creds.
+// Plan 15-01 Task 2 will refactor to use AssumeRoleProvider.
+//
+// NOTE: This test cannot call real AWS STS. It verifies the code path by
+// checking that buildConfig returns without error for the assume_role case
+// when given a source_profile. The current implementation will fail because
+// it expects access_key_id/secret_access_key fields (not source_profile).
+func TestBuildConfigAssumeRole(t *testing.T) {
+	ctx := context.Background()
+	creds := map[string]string{
+		"auth_method":    "assume_role",
+		"source_profile": "default",
+		"role_arn":       "arn:aws:iam::123456789012:role/TestRole",
+		"region":         "us-east-1",
+	}
+	// After plan 15-01 refactor, this should succeed (source_profile based).
+	// Before refactor, it fails because the old code reads access_key_id/secret_access_key.
+	cfg, err := buildConfig(ctx, creds)
+	if err != nil {
+		t.Fatalf("buildConfig assume_role with source_profile failed: %v", err)
+	}
+	if cfg.Credentials == nil {
+		t.Error("expected non-nil Credentials (CredentialsCache wrapping AssumeRoleProvider)")
 	}
 }

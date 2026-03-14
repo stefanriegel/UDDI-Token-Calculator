@@ -241,3 +241,28 @@ func TestAllZeroCountReturnsEmpty(t *testing.T) {
 		t.Errorf("all-zero rows: filtered count = %d, want 0", len(filtered))
 	}
 }
+
+// TestBuildNTLMClientHTTPS: BuildNTLMClient with HTTPS options must connect on port 5986.
+// Wave 0 stub -- currently tests only the HTTP path because the HTTPS functional
+// options (WithHTTPS, WithInsecureSkipVerify) do not exist yet.
+// Plan 15-02 will add the options and this test will be updated to use them.
+func TestBuildNTLMClientHTTPS(t *testing.T) {
+	// Current signature: BuildNTLMClient(host, username, password string) (*winrm.Client, error)
+	// After plan 15-02: BuildNTLMClient(host, username, password string, opts ...ClientOption)
+	//
+	// For now, verify the HTTP path works (baseline).
+	// The test name reserves the slot for HTTPS verification after 15-02.
+	client, err := BuildNTLMClient("127.0.0.1", "testuser", "testpass")
+	if err != nil {
+		t.Fatalf("BuildNTLMClient (HTTP) failed: %v", err)
+	}
+	if client == nil {
+		t.Fatal("expected non-nil client")
+	}
+	// TODO(15-02): After WithHTTPS() is added, test:
+	//   client, err := BuildNTLMClient("127.0.0.1", "testuser", "testpass", WithHTTPS())
+	//   Verify endpoint uses port 5986 and TLS=true
+	//   client, err := BuildNTLMClient("127.0.0.1", "testuser", "testpass", WithHTTPS(), WithInsecureSkipVerify())
+	//   Verify endpoint uses port 5986, TLS=true, InsecureSkipVerify=true
+	t.Log("HTTPS options not yet available -- test reserved for plan 15-02")
+}

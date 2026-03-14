@@ -758,3 +758,114 @@ func TestValidate_ADMissingField(t *testing.T) {
 		t.Error("expected valid=false for missing host")
 	}
 }
+
+// TestValidateAWSProfile: authMethod="profile" must not return "Coming soon".
+// Wave 0 stub -- currently fails because the profile case returns "Coming soon".
+// Plan 15-01 will make this pass by implementing the real profile validator.
+func TestValidateAWSProfile(t *testing.T) {
+	store := session.NewStore()
+	h := server.NewValidateHandler(store) // real validator
+	rec := postValidate(t, store, h, "aws", map[string]interface{}{
+		"authMethod": "profile",
+		"credentials": map[string]string{
+			"profile": "default",
+		},
+	})
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp server.ValidateResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	// The profile validator must not return the "Coming soon" stub message.
+	if strings.Contains(resp.Error, "Coming soon") {
+		t.Errorf("profile auth still returns 'Coming soon' stub -- not implemented yet")
+	}
+}
+
+// TestValidateAWSAssumeRole: authMethod="assume_role" must not return "Coming soon".
+// Wave 0 stub -- currently fails because the assume_role case returns "Coming soon".
+// Plan 15-01 will make this pass.
+func TestValidateAWSAssumeRole(t *testing.T) {
+	store := session.NewStore()
+	h := server.NewValidateHandler(store) // real validator
+
+	// Subtest 1: assume_role with roleArn must not return "Coming soon"
+	t.Run("not_coming_soon", func(t *testing.T) {
+		rec := postValidate(t, store, h, "aws", map[string]interface{}{
+			"authMethod": "assume_role",
+			"credentials": map[string]string{
+				"roleArn":       "arn:aws:iam::123456789012:role/TestRole",
+				"sourceProfile": "default",
+			},
+		})
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		var resp server.ValidateResponse
+		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		if strings.Contains(resp.Error, "Coming soon") {
+			t.Errorf("assume_role auth still returns 'Coming soon' stub -- not implemented yet")
+		}
+	})
+
+	// Subtest 2: assume_role without roleArn must return a descriptive error (not "Coming soon")
+	t.Run("missing_role_arn", func(t *testing.T) {
+		rec := postValidate(t, store, h, "aws", map[string]interface{}{
+			"authMethod": "assume_role",
+			"credentials": map[string]string{
+				"sourceProfile": "default",
+				// roleArn intentionally missing
+			},
+		})
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		var resp server.ValidateResponse
+		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		if strings.Contains(resp.Error, "Coming soon") {
+			t.Errorf("assume_role missing roleArn returns 'Coming soon' instead of a field-validation error")
+		}
+	})
+}
+
+// TestValidateAzureCLI: authMethod="az-cli" must not be treated as unknown or "Coming soon".
+// Wave 0 stub -- currently fails because az-cli is not a recognized case in realAzureValidator.
+// Plan 15-02 will make this pass.
+func TestValidateAzureCLI(t *testing.T) {
+	store := session.NewStore()
+	h := server.NewValidateHandler(store) // real validator
+	rec := postValidate(t, store, h, "azure", map[string]interface{}{
+		"authMethod":  "az-cli",
+		"credentials": map[string]string{},
+	})
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp server.ValidateResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	// az-cli must be a recognized auth method with its own case in realAzureValidator.
+	// It should NOT fall through to the service-principal path (which checks tenantId/clientId/clientSecret).
+	// Acceptable errors: "az not found", "az login" needed, or valid=true if az is installed.
+	if strings.Contains(resp.Error, "Coming soon") {
+		t.Errorf("az-cli auth returns 'Coming soon' stub -- not implemented yet")
+	}
+	if strings.Contains(resp.Error, "unknown") {
+		t.Errorf("az-cli treated as unknown auth method -- case not added to realAzureValidator")
+	}
+	// If the error mentions service-principal fields, az-cli fell through to the wrong case.
+	if strings.Contains(resp.Error, "tenantId") || strings.Contains(resp.Error, "clientId") || strings.Contains(resp.Error, "clientSecret") {
+		t.Errorf("az-cli fell through to service-principal validation -- needs its own case in realAzureValidator; got error: %q", resp.Error)
+	}
+}
