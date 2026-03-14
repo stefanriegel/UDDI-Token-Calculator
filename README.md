@@ -4,7 +4,7 @@
 ![License](https://img.shields.io/badge/License-Proprietary-red)
 ![Platforms](https://img.shields.io/badge/Platforms-macOS%20%7C%20Windows%20%7C%20Linux-blue)
 
-Estimates Infoblox Universal DDI management tokens from existing infrastructure. Single self-contained binary with embedded web UI -- no installation required.
+Estimates Infoblox Universal DDI management tokens from existing infrastructure. Single self-contained binary with embedded web UI.
 
 ## Quick Start
 
