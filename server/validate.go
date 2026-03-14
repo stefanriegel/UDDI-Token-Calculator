@@ -270,11 +270,13 @@ func storeCredentials(sess *session.Session, provider, authMethod string, creds 
 			}
 		}
 		sess.AD = &session.ADCredentials{
-			AuthMethod: authMethod,
-			Hosts:      hosts,
-			Username:   creds["username"],
-			Password:   creds["password"],
-			Domain:     creds["domain"],
+			AuthMethod:         authMethod,
+			Hosts:              hosts,
+			Username:           creds["username"],
+			Password:           creds["password"],
+			Domain:             creds["domain"],
+			UseSSL:             creds["useSSL"] == "true",
+			InsecureSkipVerify: creds["insecureSkipVerify"] == "true",
 		}
 	case "bluecat":
 		var configIDs []string
@@ -833,11 +835,16 @@ func realADValidator(ctx context.Context, creds map[string]string) ([]Subscripti
 		return nil, errors.New("server address, username, and password are required")
 	}
 
-	// Build a WinRM client with NTLM + message-level encryption via the shared
-	// BuildNTLMClient helper in the ad package — single source of truth for NTLM
-	// client construction. Windows DCs reject unencrypted sessions; BuildNTLMClient
-	// uses bodgit/ntlmssp to produce the SPNEGO multipart/encrypted framing DCs require.
-	client, err := ad.BuildNTLMClient(host, username, password)
+	// Build a WinRM client with NTLM via the shared BuildNTLMClient helper.
+	// Pass HTTPS options if the user enabled SSL transport.
+	var clientOpts []ad.ClientOption
+	if creds["useSSL"] == "true" {
+		clientOpts = append(clientOpts, ad.WithHTTPS())
+	}
+	if creds["insecureSkipVerify"] == "true" {
+		clientOpts = append(clientOpts, ad.WithInsecureSkipVerify())
+	}
+	client, err := ad.BuildNTLMClient(host, username, password, clientOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("WinRM client error: %w", err)
 	}
@@ -875,7 +882,7 @@ func realADValidator(ctx context.Context, creds map[string]string) ([]Subscripti
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			c, cerr := ad.BuildNTLMClient(host, username, password)
+			c, cerr := ad.BuildNTLMClient(host, username, password, clientOpts...)
 			if cerr != nil {
 				names[idx] = host
 				return

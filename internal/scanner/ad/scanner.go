@@ -130,7 +130,15 @@ func (s *Scanner) Scan(ctx context.Context, req scanner.ScanRequest, publish fun
 	username := req.Credentials["username"]
 	password := req.Credentials["password"]
 
-	agg := scanAllDCs(ctx, hosts, username, password, publish)
+	var clientOpts []ClientOption
+	if req.Credentials["use_ssl"] == "true" {
+		clientOpts = append(clientOpts, WithHTTPS())
+	}
+	if req.Credentials["insecure_skip_verify"] == "true" {
+		clientOpts = append(clientOpts, WithInsecureSkipVerify())
+	}
+
+	agg := scanAllDCs(ctx, hosts, username, password, publish, clientOpts...)
 
 	// If no DC connected at all, return a top-level error so the orchestrator
 	// records a ProviderError that is surfaced in the results API.
@@ -266,7 +274,7 @@ func (s *Scanner) Scan(ctx context.Context, req scanner.ScanRequest, publish fun
 
 // scanAllDCs fans out to all DCs concurrently (up to maxConcurrentDCs), merges
 // results via dcAggregator, and returns the aggregated totals.
-func scanAllDCs(ctx context.Context, hosts []string, username, password string, publish func(scanner.Event)) *dcAggregator {
+func scanAllDCs(ctx context.Context, hosts []string, username, password string, publish func(scanner.Event), opts ...ClientOption) *dcAggregator {
 	var (
 		mu  sync.Mutex
 		wg  sync.WaitGroup
@@ -300,7 +308,7 @@ func scanAllDCs(ctx context.Context, hosts []string, username, password string, 
 				return
 			}
 
-			result := scanOneDC(ctx, host, username, password, publish)
+			result := scanOneDC(ctx, host, username, password, publish, opts...)
 			if result == nil {
 				return
 			}
@@ -318,8 +326,8 @@ func scanAllDCs(ctx context.Context, hosts []string, username, password string, 
 // scanOneDC connects to a single DC and collects DNS, DHCP, and user data.
 // Returns nil on connection failure (error is published as an event). Per-resource
 // errors are isolated: a DNS failure does not prevent DHCP or user collection.
-func scanOneDC(ctx context.Context, host, username, password string, publish func(scanner.Event)) *dcResult {
-	client, err := BuildNTLMClient(host, username, password)
+func scanOneDC(ctx context.Context, host, username, password string, publish func(scanner.Event), opts ...ClientOption) *dcResult {
+	client, err := BuildNTLMClient(host, username, password, opts...)
 	if err != nil {
 		publish(scanner.Event{
 			Type:     "error",
@@ -567,15 +575,61 @@ func str(v interface{}) string {
 	return ""
 }
 
-// BuildNTLMClient constructs a WinRM client using NTLM with message-level encryption
-// (SPNEGO session encryption, HTTP port 5985). Windows DCs require WinRM message
-// encryption by default — ClientNTLM (raw NTLM, no encryption) will be rejected with
-// a 401 or 500. winrm.NewEncryption("ntlm") uses bodgit/ntlmssp which implements the
-// full NTLM + SPNEGO multipart/encrypted framing that DCs expect.
+// ClientOptions configures BuildNTLMClient behavior.
+type ClientOptions struct {
+	useHTTPS           bool
+	insecureSkipVerify bool
+	port               int
+}
+
+// ClientOption is a functional option for BuildNTLMClient.
+type ClientOption func(*ClientOptions)
+
+// WithHTTPS enables TLS transport on port 5986.
+func WithHTTPS() ClientOption {
+	return func(o *ClientOptions) {
+		o.useHTTPS = true
+		o.port = 5986
+	}
+}
+
+// WithInsecureSkipVerify skips TLS certificate validation (for self-signed certs).
+func WithInsecureSkipVerify() ClientOption {
+	return func(o *ClientOptions) {
+		o.insecureSkipVerify = true
+	}
+}
+
+// BuildNTLMClient constructs a WinRM client using NTLM authentication.
+//
+// With no options: HTTP on port 5985 with SPNEGO message-level encryption.
+// With WithHTTPS(): HTTPS on port 5986 with TLS transport encryption (no SPNEGO).
+// With WithInsecureSkipVerify(): skips TLS certificate validation (self-signed certs).
+//
+// Windows DCs require WinRM message encryption by default on HTTP — ClientNTLM
+// (raw NTLM, no encryption) will be rejected. Over HTTPS, TLS provides transport
+// security so SPNEGO message-level encryption is not used (avoids double-encryption
+// or protocol errors on some Windows Server versions).
 // Kerberos requires a domain-joined machine and is out of scope for this tool.
-func BuildNTLMClient(host, username, password string) (*winrm.Client, error) {
-	endpoint := winrm.NewEndpoint(host, winrmPort, false, false, nil, nil, nil, winrmTimeout)
+func BuildNTLMClient(host, username, password string, opts ...ClientOption) (*winrm.Client, error) {
+	o := ClientOptions{port: winrmPort} // default: HTTP on 5985
+	for _, opt := range opts {
+		opt(&o)
+	}
+
+	endpoint := winrm.NewEndpoint(host, o.port, o.useHTTPS, o.insecureSkipVerify, nil, nil, nil, winrmTimeout)
 	params := *winrm.DefaultParameters
+
+	if o.useHTTPS {
+		// HTTPS provides transport encryption via TLS.
+		// Do NOT use SPNEGO message-level encryption over TLS — it causes
+		// double-encryption or protocol errors on some Windows Server versions.
+		// Use plain NTLM auth (no TransportDecorator) — TLS provides confidentiality.
+		return winrm.NewClientWithParameters(endpoint, username, password, &params)
+	}
+
+	// Plain HTTP: SPNEGO message-level encryption required.
+	// Windows DCs reject unencrypted WinRM sessions over HTTP.
 	enc, err := winrm.NewEncryption("ntlm")
 	if err != nil {
 		return nil, fmt.Errorf("winrm encryption init: %w", err)

@@ -14,7 +14,7 @@ import (
 // Compile-time signature assertion — BuildNTLMClient must remain exported
 // with this exact signature. This test will FAIL TO COMPILE (not just fail)
 // if the signature changes.
-var _ func(string, string, string) (*winrm.Client, error) = BuildNTLMClient
+var _ func(string, string, string, ...ClientOption) (*winrm.Client, error) = BuildNTLMClient
 
 // TestMaxConcurrentDCs verifies the constant exists and has the expected value.
 func TestMaxConcurrentDCs(t *testing.T) {
@@ -242,27 +242,32 @@ func TestAllZeroCountReturnsEmpty(t *testing.T) {
 	}
 }
 
-// TestBuildNTLMClientHTTPS: BuildNTLMClient with HTTPS options must connect on port 5986.
-// Wave 0 stub -- currently tests only the HTTP path because the HTTPS functional
-// options (WithHTTPS, WithInsecureSkipVerify) do not exist yet.
-// Plan 15-02 will add the options and this test will be updated to use them.
+// TestBuildNTLMClientHTTPS verifies BuildNTLMClient with HTTP, HTTPS, and HTTPS+insecure variants.
 func TestBuildNTLMClientHTTPS(t *testing.T) {
-	// Current signature: BuildNTLMClient(host, username, password string) (*winrm.Client, error)
-	// After plan 15-02: BuildNTLMClient(host, username, password string, opts ...ClientOption)
-	//
-	// For now, verify the HTTP path works (baseline).
-	// The test name reserves the slot for HTTPS verification after 15-02.
+	// HTTP baseline (no options)
 	client, err := BuildNTLMClient("127.0.0.1", "testuser", "testpass")
 	if err != nil {
 		t.Fatalf("BuildNTLMClient (HTTP) failed: %v", err)
 	}
 	if client == nil {
-		t.Fatal("expected non-nil client")
+		t.Fatal("expected non-nil client for HTTP")
 	}
-	// TODO(15-02): After WithHTTPS() is added, test:
-	//   client, err := BuildNTLMClient("127.0.0.1", "testuser", "testpass", WithHTTPS())
-	//   Verify endpoint uses port 5986 and TLS=true
-	//   client, err := BuildNTLMClient("127.0.0.1", "testuser", "testpass", WithHTTPS(), WithInsecureSkipVerify())
-	//   Verify endpoint uses port 5986, TLS=true, InsecureSkipVerify=true
-	t.Log("HTTPS options not yet available -- test reserved for plan 15-02")
+
+	// HTTPS with WithHTTPS()
+	clientHTTPS, err := BuildNTLMClient("127.0.0.1", "testuser", "testpass", WithHTTPS())
+	if err != nil {
+		t.Fatalf("BuildNTLMClient (HTTPS) failed: %v", err)
+	}
+	if clientHTTPS == nil {
+		t.Fatal("expected non-nil client for HTTPS")
+	}
+
+	// HTTPS + InsecureSkipVerify
+	clientInsecure, err := BuildNTLMClient("127.0.0.1", "testuser", "testpass", WithHTTPS(), WithInsecureSkipVerify())
+	if err != nil {
+		t.Fatalf("BuildNTLMClient (HTTPS+insecure) failed: %v", err)
+	}
+	if clientInsecure == nil {
+		t.Fatal("expected non-nil client for HTTPS+insecure")
+	}
 }

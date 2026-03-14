@@ -77,11 +77,13 @@ type GCPCredentials struct {
 // ADCredentials holds Active Directory / WinRM authentication material.
 // No json tags — credentials must never be accidentally serialized.
 type ADCredentials struct {
-	AuthMethod string
-	Hosts      []string // One entry per domain controller. Was: Host string (single DC only).
-	Username   string
-	Password   string
-	Domain     string
+	AuthMethod         string
+	Hosts              []string // One entry per domain controller. Was: Host string (single DC only).
+	Username           string
+	Password           string
+	Domain             string
+	UseSSL             bool
+	InsecureSkipVerify bool
 }
 
 // BluecatCredentials holds Bluecat Address Manager authentication material.

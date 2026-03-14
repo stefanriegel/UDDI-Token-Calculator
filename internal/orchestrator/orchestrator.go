@@ -252,6 +252,12 @@ func buildScanRequest(p ScanProviderRequest, sess *session.Session) scanner.Scan
 			req.Credentials["username"] = sess.AD.Username
 			req.Credentials["password"] = sess.AD.Password
 			req.Credentials["domain"] = sess.AD.Domain
+			if sess.AD.UseSSL {
+				req.Credentials["use_ssl"] = "true"
+			}
+			if sess.AD.InsecureSkipVerify {
+				req.Credentials["insecure_skip_verify"] = "true"
+			}
 		}
 	case scanner.ProviderNIOS:
 		if p.Mode == "wapi" {
