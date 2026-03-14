@@ -17,14 +17,8 @@ frontend/node_modules/
 # OS
 .DS_Store
 
-# ── GSD baseline (auto-generated) ──
-.gsd/activity/
-.gsd/runtime/
-.gsd/worktrees/
-.gsd/auto.lock
-.gsd/metrics.json
-.gsd/completed-units.json
-.gsd/STATE.md
+# GSD agent workspace — internal planning, never shipped
+.gsd/
 Thumbs.db
 *.swp
 *.swo
