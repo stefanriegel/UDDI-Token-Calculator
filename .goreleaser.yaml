@@ -44,7 +44,10 @@ release:
 changelog:
   sort: asc
   filters:
+    include:
+      - "^feat"
+      - "^fix"
     exclude:
-      - "^docs:"
-      - "^test:"
-      - "^chore:"
+      - "(?i)quick-\\d+"
+      - "(?i)gsd"
+      - "(?i)claude"
