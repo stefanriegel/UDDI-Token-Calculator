@@ -4,6 +4,9 @@
 package nios_test
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"os"
@@ -497,5 +500,211 @@ func TestNIOS_PerMemberActiveIPs(t *testing.T) {
 		if r.Item == "NIOS Active IPs (All Sources)" {
 			t.Errorf("unexpected grid-level Active IPs row: %+v", r)
 		}
+	}
+}
+
+// serviceRoleFixtureXML returns a minimal onedb.xml with 3 virtual_nodes that have
+// NO enable_dns/enable_dhcp properties, plus member_dns_properties and
+// member_dhcp_properties in positional order to test synthetic injection.
+//
+// Positional order (matching virtual_node appearance):
+//   pos 0: GM        -> dns=true,  dhcp=true  (but GM role takes precedence)
+//   pos 1: dns1      -> dns=true,  dhcp=false -> role should be "DNS"
+//   pos 2: noservice -> dns=false, dhcp=false -> role should be "DNS/DHCP" (default)
+func serviceRoleFixtureXML() string {
+	return `<?xml version="1.0" encoding="UTF-8"?>
+<DATABASE NAME="onedb" VERSION="9.0.6-test">
+<OBJECT>
+<PROPERTY NAME="__type" VALUE=".com.infoblox.one.virtual_node"/>
+<PROPERTY NAME="virtual_oid" VALUE="201"/>
+<PROPERTY NAME="host_name" VALUE="gm.role.local"/>
+<PROPERTY NAME="is_grid_master" VALUE="true"/>
+</OBJECT>
+<OBJECT>
+<PROPERTY NAME="__type" VALUE=".com.infoblox.one.virtual_node"/>
+<PROPERTY NAME="virtual_oid" VALUE="202"/>
+<PROPERTY NAME="host_name" VALUE="dns1.role.local"/>
+<PROPERTY NAME="is_grid_master" VALUE="false"/>
+</OBJECT>
+<OBJECT>
+<PROPERTY NAME="__type" VALUE=".com.infoblox.one.virtual_node"/>
+<PROPERTY NAME="virtual_oid" VALUE="203"/>
+<PROPERTY NAME="host_name" VALUE="noservice.role.local"/>
+<PROPERTY NAME="is_grid_master" VALUE="false"/>
+</OBJECT>
+<OBJECT>
+<PROPERTY NAME="__type" VALUE=".com.infoblox.one.member_dns_properties"/>
+<PROPERTY NAME="service_enabled" VALUE="true"/>
+</OBJECT>
+<OBJECT>
+<PROPERTY NAME="__type" VALUE=".com.infoblox.one.member_dns_properties"/>
+<PROPERTY NAME="service_enabled" VALUE="true"/>
+</OBJECT>
+<OBJECT>
+<PROPERTY NAME="__type" VALUE=".com.infoblox.one.member_dns_properties"/>
+<PROPERTY NAME="service_enabled" VALUE="false"/>
+</OBJECT>
+<OBJECT>
+<PROPERTY NAME="__type" VALUE=".com.infoblox.one.member_dhcp_properties"/>
+<PROPERTY NAME="service_enabled" VALUE="true"/>
+</OBJECT>
+<OBJECT>
+<PROPERTY NAME="__type" VALUE=".com.infoblox.one.member_dhcp_properties"/>
+<PROPERTY NAME="service_enabled" VALUE="false"/>
+</OBJECT>
+<OBJECT>
+<PROPERTY NAME="__type" VALUE=".com.infoblox.one.member_dhcp_properties"/>
+<PROPERTY NAME="service_enabled" VALUE="false"/>
+</OBJECT>
+</DATABASE>
+`
+}
+
+// buildTarGz creates an in-memory tar.gz containing onedb.xml with the given content,
+// writes it to a temp file, and returns its path. Caller must NOT delete the file
+// (scanner.Scan will only delete files in os.TempDir, and the test file IS in TempDir).
+func buildTarGz(t *testing.T, xmlContent string) string {
+	t.Helper()
+	var buf bytes.Buffer
+	gw := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gw)
+	data := []byte(xmlContent)
+	if err := tw.WriteHeader(&tar.Header{Name: "onedb.xml", Mode: 0600, Size: int64(len(data))}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tw.Write(data); err != nil {
+		t.Fatal(err)
+	}
+	tw.Close()
+	gw.Close()
+	f, err := os.CreateTemp("", "nios-test-*.tar.gz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write(buf.Bytes()); err != nil {
+		f.Close()
+		t.Fatal(err)
+	}
+	f.Close()
+	return f.Name()
+}
+
+// TestServiceRole_DNSOnly verifies that a member with member_dns_properties
+// service_enabled=true and member_dhcp_properties service_enabled=false gets
+// role "DNS", not the default "DNS/DHCP".
+func TestServiceRole_DNSOnly(t *testing.T) {
+	path := buildTarGz(t, serviceRoleFixtureXML())
+
+	s := niosscanner.New()
+	req := scanner.ScanRequest{
+		Provider: "nios",
+		Credentials: map[string]string{
+			"backup_path":      path,
+			"selected_members": "gm.role.local,dns1.role.local,noservice.role.local",
+		},
+	}
+	_, err := s.Scan(context.Background(), req, func(scanner.Event) {})
+	if err != nil {
+		t.Fatalf("Scan error: %v", err)
+	}
+
+	data := any(s).(NiosResultScanner).GetNiosServerMetricsJSON()
+	var metrics []niosscanner.NiosServerMetric
+	if err := json.Unmarshal(data, &metrics); err != nil {
+		t.Fatal(err)
+	}
+
+	byHost := make(map[string]string)
+	for _, m := range metrics {
+		byHost[m.MemberID] = m.Role
+	}
+
+	// dns1 has dns=true, dhcp=false -> should be "DNS"
+	if role := byHost["dns1.role.local"]; role != "DNS" {
+		t.Errorf("dns1.role.local role = %q, want %q", role, "DNS")
+	}
+}
+
+// TestServiceRole_ThreeMemberPositional verifies positional matching of
+// member_dns_properties/member_dhcp_properties across all 3 members.
+func TestServiceRole_ThreeMemberPositional(t *testing.T) {
+	path := buildTarGz(t, serviceRoleFixtureXML())
+
+	s := niosscanner.New()
+	req := scanner.ScanRequest{
+		Provider: "nios",
+		Credentials: map[string]string{
+			"backup_path":      path,
+			"selected_members": "gm.role.local,dns1.role.local,noservice.role.local",
+		},
+	}
+	_, err := s.Scan(context.Background(), req, func(scanner.Event) {})
+	if err != nil {
+		t.Fatalf("Scan error: %v", err)
+	}
+
+	data := any(s).(NiosResultScanner).GetNiosServerMetricsJSON()
+	var metrics []niosscanner.NiosServerMetric
+	if err := json.Unmarshal(data, &metrics); err != nil {
+		t.Fatal(err)
+	}
+
+	byHost := make(map[string]string)
+	for _, m := range metrics {
+		byHost[m.MemberID] = m.Role
+	}
+
+	// GM: is_grid_master=true takes precedence -> "GM"
+	if role := byHost["gm.role.local"]; role != "GM" {
+		t.Errorf("gm.role.local role = %q, want %q", role, "GM")
+	}
+
+	// dns1: dns=true, dhcp=false -> "DNS"
+	if role := byHost["dns1.role.local"]; role != "DNS" {
+		t.Errorf("dns1.role.local role = %q, want %q", role, "DNS")
+	}
+
+	// noservice: dns=false, dhcp=false -> "DNS/DHCP" (default fallback)
+	if role := byHost["noservice.role.local"]; role != "DNS/DHCP" {
+		t.Errorf("noservice.role.local role = %q, want %q", role, "DNS/DHCP")
+	}
+}
+
+// TestServiceRole_LegacyBackupUnchanged verifies that when member_dns_properties
+// and member_dhcp_properties are ABSENT (legacy backup), existing behavior is unchanged.
+func TestServiceRole_LegacyBackupUnchanged(t *testing.T) {
+	// Use the standard fixture which has enable_dhcp=true on dhcp1 but no
+	// member_dns_properties / member_dhcp_properties objects.
+	rows := runScan(t)
+	_ = rows // just verify it doesn't crash
+
+	path := openFixture(t)
+	s := niosscanner.New()
+	req := scanner.ScanRequest{
+		Provider: "nios",
+		Credentials: map[string]string{
+			"backup_path":      path,
+			"selected_members": "gm.test.local,dns1.test.local,dhcp1.test.local",
+		},
+	}
+	_, err := s.Scan(context.Background(), req, func(scanner.Event) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	data := any(s).(NiosResultScanner).GetNiosServerMetricsJSON()
+	var metrics []niosscanner.NiosServerMetric
+	if err := json.Unmarshal(data, &metrics); err != nil {
+		t.Fatal(err)
+	}
+
+	byHost := make(map[string]string)
+	for _, m := range metrics {
+		byHost[m.MemberID] = m.Role
+	}
+
+	// dhcp1 has enable_dhcp=true directly on virtual_node -> "DHCP"
+	if role := byHost["dhcp1.test.local"]; role != "DHCP" {
+		t.Errorf("dhcp1.test.local role = %q, want %q (legacy enable_dhcp on virtual_node)", role, "DHCP")
 	}
 }
