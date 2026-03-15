@@ -227,7 +227,7 @@ func storeCredentials(sess *session.Session, provider, authMethod string, creds 
 			ProfileName:     profileName,
 			RoleARN:         creds["roleArn"],
 			SSOStartURL:     creds["ssoStartUrl"],
-			SSORegion:       creds["ssoRegion"],
+			SSORegion:       defaultIfEmpty(creds["ssoRegion"], "us-east-1"),
 			// sso_access_token is written back into merged by realAWSSSO so it is
 			// available here. For non-SSO auth methods this will be an empty string.
 			SSOAccessToken:  creds["sso_access_token"],
@@ -341,8 +341,11 @@ func storeCredentials(sess *session.Session, provider, authMethod string, creds 
 func realAWSSSO(ctx context.Context, creds map[string]string) ([]SubscriptionItem, error) {
 	startURL := creds["ssoStartUrl"]
 	ssoRegion := creds["ssoRegion"]
-	if startURL == "" || ssoRegion == "" {
-		return nil, errors.New("ssoStartUrl and ssoRegion are required for SSO authentication")
+	if startURL == "" {
+		return nil, errors.New("ssoStartUrl is required for SSO authentication")
+	}
+	if ssoRegion == "" {
+		ssoRegion = "us-east-1"
 	}
 
 	cfg, err := awsconfig.LoadDefaultConfig(ctx,
@@ -468,6 +471,14 @@ func realAWSSSO(ctx context.Context, creds map[string]string) ([]SubscriptionIte
 
 // strPtr returns a pointer to the given string value.
 func strPtr(s string) *string { return &s }
+
+// defaultIfEmpty returns val if non-empty, otherwise fallback.
+func defaultIfEmpty(val, fallback string) string {
+	if val == "" {
+		return fallback
+	}
+	return val
+}
 
 // contains reports whether substr is present in s (case-insensitive not needed here).
 func contains(s, substr string) bool {

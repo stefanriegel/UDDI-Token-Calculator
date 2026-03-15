@@ -51,6 +51,7 @@ func NewRouter(staticHandler http.Handler, store *session.Store, orch *orchestra
 			r.Get("/version", HandleVersion)
 			r.Get("/update/check", HandleCheckUpdate)
 			r.Post("/update/apply", HandleSelfUpdate)
+			r.Post("/update/restart", HandleRestart)
 			r.Post("/scan", scanHandler.HandleStartScan)
 			r.Get("/scan/{scanId}/status", scanHandler.HandleGetScanStatus)
 			r.Get("/scan/{scanId}/results", scanHandler.HandleScanResults)
@@ -64,6 +65,7 @@ func NewRouter(staticHandler http.Handler, store *session.Store, orch *orchestra
 			r.Get("/version", HandleVersion)
 			r.Get("/update/check", HandleCheckUpdate)
 			r.Post("/update/apply", HandleSelfUpdate)
+			r.Post("/update/restart", HandleRestart)
 		})
 	}
 
