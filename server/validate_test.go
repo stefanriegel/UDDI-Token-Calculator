@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	ad "github.com/infoblox/uddi-go-token-calculator/internal/scanner/ad"
+	gcp "github.com/infoblox/uddi-go-token-calculator/internal/scanner/gcp"
 	"github.com/infoblox/uddi-go-token-calculator/internal/session"
 	"github.com/infoblox/uddi-go-token-calculator/server"
 )
@@ -756,5 +758,733 @@ func TestValidate_ADMissingField(t *testing.T) {
 	}
 	if resp.Valid {
 		t.Error("expected valid=false for missing host")
+	}
+}
+
+// TestValidateAWSProfile: authMethod="profile" must not return "Coming soon".
+// Wave 0 stub -- currently fails because the profile case returns "Coming soon".
+// Plan 15-01 will make this pass by implementing the real profile validator.
+func TestValidateAWSProfile(t *testing.T) {
+	store := session.NewStore()
+	h := server.NewValidateHandler(store) // real validator
+	rec := postValidate(t, store, h, "aws", map[string]interface{}{
+		"authMethod": "profile",
+		"credentials": map[string]string{
+			"profile": "default",
+		},
+	})
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp server.ValidateResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	// The profile validator must not return the "Coming soon" stub message.
+	if strings.Contains(resp.Error, "Coming soon") {
+		t.Errorf("profile auth still returns 'Coming soon' stub -- not implemented yet")
+	}
+}
+
+// TestValidateAWSAssumeRole: authMethod="assume_role" must not return "Coming soon".
+// Wave 0 stub -- currently fails because the assume_role case returns "Coming soon".
+// Plan 15-01 will make this pass.
+func TestValidateAWSAssumeRole(t *testing.T) {
+	store := session.NewStore()
+	h := server.NewValidateHandler(store) // real validator
+
+	// Subtest 1: assume_role with roleArn must not return "Coming soon"
+	t.Run("not_coming_soon", func(t *testing.T) {
+		rec := postValidate(t, store, h, "aws", map[string]interface{}{
+			"authMethod": "assume_role",
+			"credentials": map[string]string{
+				"roleArn":       "arn:aws:iam::123456789012:role/TestRole",
+				"sourceProfile": "default",
+			},
+		})
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		var resp server.ValidateResponse
+		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		if strings.Contains(resp.Error, "Coming soon") {
+			t.Errorf("assume_role auth still returns 'Coming soon' stub -- not implemented yet")
+		}
+	})
+
+	// Subtest 2: assume_role without roleArn must return a descriptive error (not "Coming soon")
+	t.Run("missing_role_arn", func(t *testing.T) {
+		rec := postValidate(t, store, h, "aws", map[string]interface{}{
+			"authMethod": "assume_role",
+			"credentials": map[string]string{
+				"sourceProfile": "default",
+				// roleArn intentionally missing
+			},
+		})
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		var resp server.ValidateResponse
+		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		if strings.Contains(resp.Error, "Coming soon") {
+			t.Errorf("assume_role missing roleArn returns 'Coming soon' instead of a field-validation error")
+		}
+	})
+}
+
+// TestValidateAzureCLI: authMethod="az-cli" must not be treated as unknown or "Coming soon".
+// Wave 0 stub -- currently fails because az-cli is not a recognized case in realAzureValidator.
+// Plan 15-02 will make this pass.
+func TestValidateAzureCLI(t *testing.T) {
+	store := session.NewStore()
+	h := server.NewValidateHandler(store) // real validator
+	rec := postValidate(t, store, h, "azure", map[string]interface{}{
+		"authMethod":  "az-cli",
+		"credentials": map[string]string{},
+	})
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp server.ValidateResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	// az-cli must be a recognized auth method with its own case in realAzureValidator.
+	// It should NOT fall through to the service-principal path (which checks tenantId/clientId/clientSecret).
+	// Acceptable errors: "az not found", "az login" needed, or valid=true if az is installed.
+	if strings.Contains(resp.Error, "Coming soon") {
+		t.Errorf("az-cli auth returns 'Coming soon' stub -- not implemented yet")
+	}
+	if strings.Contains(resp.Error, "unknown") {
+		t.Errorf("az-cli treated as unknown auth method -- case not added to realAzureValidator")
+	}
+	// If the error mentions service-principal fields, az-cli fell through to the wrong case.
+	if strings.Contains(resp.Error, "tenantId") || strings.Contains(resp.Error, "clientId") || strings.Contains(resp.Error, "clientSecret") {
+		t.Errorf("az-cli fell through to service-principal validation -- needs its own case in realAzureValidator; got error: %q", resp.Error)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// S02: Certificate, Device Code, and Kerberos Auth Tests
+// ---------------------------------------------------------------------------
+
+// TestValidateAzureDeviceCode: authMethod="device_code" must not return "Coming soon".
+// It should be a recognized auth method that requires tenantId.
+func TestValidateAzureDeviceCode(t *testing.T) {
+	store := session.NewStore()
+	h := server.NewValidateHandler(store) // real validator
+	rec := postValidate(t, store, h, "azure", map[string]interface{}{
+		"authMethod":  "device_code",
+		"credentials": map[string]string{},
+	})
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp server.ValidateResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	// Must NOT return "Coming soon" — the device code path is now implemented.
+	if strings.Contains(resp.Error, "Coming soon") {
+		t.Errorf("device_code auth still returns 'Coming soon' stub — not implemented yet")
+	}
+	// Must NOT fall through to service-principal validation.
+	if strings.Contains(resp.Error, "clientSecret") {
+		t.Errorf("device_code fell through to service-principal — got error: %q", resp.Error)
+	}
+	// Without tenantId, should get a descriptive field-validation error.
+	if resp.Valid {
+		t.Log("device_code with empty creds returned valid=true (running in az-authenticated environment)")
+	} else if !strings.Contains(resp.Error, "tenantId") {
+		t.Errorf("expected error about tenantId, got %q", resp.Error)
+	}
+}
+
+// TestValidateAzureDeviceCode_HyphenVariant: authMethod="device-code" (hyphenated) must also work.
+func TestValidateAzureDeviceCode_HyphenVariant(t *testing.T) {
+	store := session.NewStore()
+	h := server.NewValidateHandler(store) // real validator
+	rec := postValidate(t, store, h, "azure", map[string]interface{}{
+		"authMethod":  "device-code",
+		"credentials": map[string]string{},
+	})
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp server.ValidateResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if strings.Contains(resp.Error, "Coming soon") {
+		t.Errorf("device-code (hyphenated) still returns 'Coming soon' stub")
+	}
+	if strings.Contains(resp.Error, "clientSecret") {
+		t.Errorf("device-code fell through to service-principal — got error: %q", resp.Error)
+	}
+}
+
+// TestValidateAzureCertificate: authMethod="certificate" is recognized and requires
+// tenantId, clientId, and certificateData.
+func TestValidateAzureCertificate(t *testing.T) {
+	store := session.NewStore()
+	h := server.NewValidateHandler(store) // real validator
+
+	// Subtest 1: missing fields → descriptive error
+	t.Run("missing_fields", func(t *testing.T) {
+		rec := postValidate(t, store, h, "azure", map[string]interface{}{
+			"authMethod":  "certificate",
+			"credentials": map[string]string{},
+		})
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		var resp server.ValidateResponse
+		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		if resp.Valid {
+			t.Error("expected valid=false for missing certificate fields")
+		}
+		if !strings.Contains(resp.Error, "certificateData") {
+			t.Errorf("expected error about certificateData, got %q", resp.Error)
+		}
+		if strings.Contains(resp.Error, "Coming soon") {
+			t.Errorf("certificate auth returns 'Coming soon' stub — not implemented")
+		}
+	})
+
+	// Subtest 2: invalid certificate data → parse error (not "Coming soon")
+	t.Run("invalid_cert", func(t *testing.T) {
+		rec := postValidate(t, store, h, "azure", map[string]interface{}{
+			"authMethod": "certificate",
+			"credentials": map[string]string{
+				"tenantId":        "tenant-123",
+				"clientId":        "client-456",
+				"certificateData": "not-a-real-certificate",
+			},
+		})
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		var resp server.ValidateResponse
+		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		if resp.Valid {
+			t.Error("expected valid=false for invalid certificate data")
+		}
+		// Should get a certificate parse error, not "Coming soon".
+		if strings.Contains(resp.Error, "Coming soon") {
+			t.Errorf("certificate auth returns 'Coming soon' — not implemented")
+		}
+		if !strings.Contains(resp.Error, "certificate") && !strings.Contains(resp.Error, "parse") {
+			t.Errorf("expected error about certificate parsing, got %q", resp.Error)
+		}
+	})
+}
+
+// TestStoreCredentials_AzureCertificate: certificate fields stored in session.
+func TestStoreCredentials_AzureCertificate(t *testing.T) {
+	store := session.NewStore()
+	h := newTestValidateHandler(store)
+	rec := postValidate(t, store, h, "azure", map[string]interface{}{
+		"authMethod": "certificate",
+		"credentials": map[string]string{
+			"tenantId":            "tenant-cert",
+			"clientId":            "client-cert",
+			"certificateData":     "Y2VydC1kYXRh", // base64 of "cert-data"
+			"certificatePassword": "cert-pass",
+		},
+	})
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	resp := &http.Response{Header: rec.Header()}
+	var sessionID string
+	for _, c := range resp.Cookies() {
+		if c.Name == "ddi_session" {
+			sessionID = c.Value
+			break
+		}
+	}
+	if sessionID == "" {
+		t.Fatal("expected ddi_session cookie")
+	}
+
+	sess, ok := store.Get(sessionID)
+	if !ok {
+		t.Fatal("session not found in store")
+	}
+	if sess.Azure == nil {
+		t.Fatal("expected sess.Azure to be set")
+	}
+	if sess.Azure.AuthMethod != "certificate" {
+		t.Errorf("expected AuthMethod=%q, got %q", "certificate", sess.Azure.AuthMethod)
+	}
+	if sess.Azure.TenantID != "tenant-cert" {
+		t.Errorf("expected TenantID=%q, got %q", "tenant-cert", sess.Azure.TenantID)
+	}
+	if sess.Azure.ClientID != "client-cert" {
+		t.Errorf("expected ClientID=%q, got %q", "client-cert", sess.Azure.ClientID)
+	}
+	if sess.Azure.CertificateData != "Y2VydC1kYXRh" {
+		t.Errorf("expected CertificateData=%q, got %q", "Y2VydC1kYXRh", sess.Azure.CertificateData)
+	}
+	if sess.Azure.CertificatePassword != "cert-pass" {
+		t.Errorf("expected CertificatePassword=%q, got %q", "cert-pass", sess.Azure.CertificatePassword)
+	}
+}
+
+// TestValidateADKerberos: authMethod="kerberos" is recognized and requires realm.
+func TestValidateADKerberos(t *testing.T) {
+	store := session.NewStore()
+	h := server.NewValidateHandler(store) // real validator
+
+	// Subtest 1: missing realm → descriptive error
+	t.Run("missing_realm", func(t *testing.T) {
+		rec := postValidate(t, store, h, "ad", map[string]interface{}{
+			"authMethod": "kerberos",
+			"credentials": map[string]string{
+				"server":   "dc01.corp.example.com",
+				"username": "admin",
+				"password": "secret",
+				// realm intentionally missing
+			},
+		})
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		var resp server.ValidateResponse
+		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		if resp.Valid {
+			t.Error("expected valid=false for missing realm")
+		}
+		if !strings.Contains(resp.Error, "realm") {
+			t.Errorf("expected error about realm, got %q", resp.Error)
+		}
+	})
+
+	// Subtest 2: with realm but invalid KDC → connection error (not "Coming soon" or "unknown")
+	t.Run("invalid_kdc", func(t *testing.T) {
+		rec := postValidate(t, store, h, "ad", map[string]interface{}{
+			"authMethod": "kerberos",
+			"credentials": map[string]string{
+				"server":   "dc01.corp.example.com",
+				"username": "admin",
+				"password": "secret",
+				"realm":    "CORP.EXAMPLE.COM",
+				"kdc":      "127.0.0.1:88",
+			},
+		})
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		var resp server.ValidateResponse
+		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		if resp.Valid {
+			t.Error("expected valid=false for invalid KDC")
+		}
+		if strings.Contains(resp.Error, "Coming soon") {
+			t.Errorf("kerberos auth returns 'Coming soon' — not implemented")
+		}
+		if strings.Contains(resp.Error, "unknown") {
+			t.Errorf("kerberos treated as unknown auth method")
+		}
+		// Should mention Kerberos in the error.
+		if !strings.Contains(strings.ToLower(resp.Error), "kerberos") && !strings.Contains(resp.Error, "login") {
+			t.Errorf("expected kerberos-related error, got %q", resp.Error)
+		}
+	})
+
+	// Subtest 3: missing basic fields → standard field-validation error
+	t.Run("missing_fields", func(t *testing.T) {
+		rec := postValidate(t, store, h, "ad", map[string]interface{}{
+			"authMethod":  "kerberos",
+			"credentials": map[string]string{},
+		})
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		var resp server.ValidateResponse
+		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		if resp.Valid {
+			t.Error("expected valid=false for missing kerberos fields")
+		}
+		if !strings.Contains(resp.Error, "required") {
+			t.Errorf("expected error mentioning 'required', got %q", resp.Error)
+		}
+	})
+}
+
+// TestStoreCredentials_ADKerberos: kerberos fields stored in session.
+func TestStoreCredentials_ADKerberos(t *testing.T) {
+	store := session.NewStore()
+	h := newTestValidateHandler(store)
+	rec := postValidate(t, store, h, "ad", map[string]interface{}{
+		"authMethod": "kerberos",
+		"credentials": map[string]string{
+			"server":   "dc01.corp.example.com",
+			"username": "admin",
+			"password": "secret",
+			"realm":    "CORP.EXAMPLE.COM",
+			"kdc":      "dc01.corp.example.com:88",
+		},
+	})
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	resp := &http.Response{Header: rec.Header()}
+	var sessionID string
+	for _, c := range resp.Cookies() {
+		if c.Name == "ddi_session" {
+			sessionID = c.Value
+			break
+		}
+	}
+	if sessionID == "" {
+		t.Fatal("expected ddi_session cookie")
+	}
+
+	sess, ok := store.Get(sessionID)
+	if !ok {
+		t.Fatal("session not found in store")
+	}
+	if sess.AD == nil {
+		t.Fatal("expected sess.AD to be set")
+	}
+	if sess.AD.AuthMethod != "kerberos" {
+		t.Errorf("expected AuthMethod=%q, got %q", "kerberos", sess.AD.AuthMethod)
+	}
+	if sess.AD.Realm != "CORP.EXAMPLE.COM" {
+		t.Errorf("expected Realm=%q, got %q", "CORP.EXAMPLE.COM", sess.AD.Realm)
+	}
+	if sess.AD.KDC != "dc01.corp.example.com:88" {
+		t.Errorf("expected KDC=%q, got %q", "dc01.corp.example.com:88", sess.AD.KDC)
+	}
+}
+
+// TestBuildKerberosClient_FailsWithInvalidKDC: verifies BuildKerberosClient exists and
+// fails gracefully when KDC is unreachable.
+func TestBuildKerberosClient_FailsWithInvalidKDC(t *testing.T) {
+	_, err := ad.BuildKerberosClient("127.0.0.1", "testuser", "testpass",
+		"TEST.REALM", "127.0.0.1:88")
+	if err == nil {
+		t.Fatal("expected error from BuildKerberosClient with non-existent KDC")
+	}
+	errStr := strings.ToLower(err.Error())
+	if !strings.Contains(errStr, "kerberos") {
+		t.Errorf("expected kerberos-related error, got %q", err.Error())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// S03: GCP Advanced Auth Tests
+// ---------------------------------------------------------------------------
+
+// TestValidateGCPBrowserOAuth_MissingFields: authMethod="browser-oauth" without
+// clientId and clientSecret → valid=false, descriptive error about required fields.
+func TestValidateGCPBrowserOAuth_MissingFields(t *testing.T) {
+	store := session.NewStore()
+	h := server.NewValidateHandler(store) // real validator
+	rec := postValidate(t, store, h, "gcp", map[string]interface{}{
+		"authMethod":  "browser-oauth",
+		"credentials": map[string]string{},
+	})
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp server.ValidateResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Valid {
+		t.Error("expected valid=false for missing browser-oauth credentials")
+	}
+	if !strings.Contains(resp.Error, "clientId") || !strings.Contains(resp.Error, "clientSecret") {
+		t.Errorf("expected error mentioning clientId and clientSecret, got %q", resp.Error)
+	}
+	if strings.Contains(resp.Error, "Coming soon") {
+		t.Errorf("browser-oauth returns 'Coming soon' stub — not implemented")
+	}
+}
+
+// TestValidateGCPBrowserOAuth_NotComingSoon: browser-oauth must be a recognized auth method,
+// not falling through to the service-account path. We use the real validator with missing
+// fields to confirm it dispatches to the browser-oauth handler (not service-account).
+// The missing-fields test above already proves this; this test verifies with partial creds.
+func TestValidateGCPBrowserOAuth_NotComingSoon(t *testing.T) {
+	store := session.NewStore()
+	h := server.NewValidateHandler(store)
+	// Only clientId, no clientSecret → should get "clientId and clientSecret are required",
+	// not "serviceAccountJson is required" (which would mean fallthrough).
+	rec := postValidate(t, store, h, "gcp", map[string]interface{}{
+		"authMethod": "browser-oauth",
+		"credentials": map[string]string{
+			"clientId": "test-client-id",
+			// clientSecret intentionally missing
+		},
+	})
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp server.ValidateResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	// The validator should NOT fall through to service-account (which checks serviceAccountJson).
+	if strings.Contains(resp.Error, "serviceAccountJson") {
+		t.Errorf("browser-oauth fell through to service-account path — got error: %q", resp.Error)
+	}
+	if strings.Contains(resp.Error, "Coming soon") {
+		t.Errorf("browser-oauth returns 'Coming soon' — not implemented")
+	}
+	// Should get the browser-oauth field validation error.
+	if !strings.Contains(resp.Error, "clientSecret") {
+		t.Errorf("expected error mentioning clientSecret, got %q", resp.Error)
+	}
+}
+
+// TestValidateGCPWorkloadIdentity_MissingJSON: authMethod="workload-identity" without
+// workloadIdentityJson → valid=false, descriptive error.
+func TestValidateGCPWorkloadIdentity_MissingJSON(t *testing.T) {
+	store := session.NewStore()
+	h := server.NewValidateHandler(store)
+	rec := postValidate(t, store, h, "gcp", map[string]interface{}{
+		"authMethod":  "workload-identity",
+		"credentials": map[string]string{},
+	})
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp server.ValidateResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Valid {
+		t.Error("expected valid=false for missing WIF JSON")
+	}
+	if !strings.Contains(resp.Error, "workloadIdentityJson") {
+		t.Errorf("expected error mentioning workloadIdentityJson, got %q", resp.Error)
+	}
+	if strings.Contains(resp.Error, "Coming soon") {
+		t.Errorf("workload-identity returns 'Coming soon' — not implemented")
+	}
+}
+
+// TestValidateGCPWorkloadIdentity_WrongType: WIF JSON with wrong type field
+// → valid=false, error about expected "external_account".
+func TestValidateGCPWorkloadIdentity_WrongType(t *testing.T) {
+	store := session.NewStore()
+	h := server.NewValidateHandler(store)
+	rec := postValidate(t, store, h, "gcp", map[string]interface{}{
+		"authMethod": "workload-identity",
+		"credentials": map[string]string{
+			"workloadIdentityJson": `{"type":"service_account","project_id":"my-project"}`,
+		},
+	})
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp server.ValidateResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Valid {
+		t.Error("expected valid=false for wrong type in WIF JSON")
+	}
+	if !strings.Contains(resp.Error, "external_account") {
+		t.Errorf("expected error mentioning 'external_account', got %q", resp.Error)
+	}
+}
+
+// TestValidateGCPWorkloadIdentity_InvalidJSON: malformed JSON → valid=false, parse error.
+func TestValidateGCPWorkloadIdentity_InvalidJSON(t *testing.T) {
+	store := session.NewStore()
+	h := server.NewValidateHandler(store)
+	rec := postValidate(t, store, h, "gcp", map[string]interface{}{
+		"authMethod": "workload-identity",
+		"credentials": map[string]string{
+			"workloadIdentityJson": `{not valid json}`,
+		},
+	})
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp server.ValidateResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Valid {
+		t.Error("expected valid=false for invalid JSON")
+	}
+	if !strings.Contains(resp.Error, "invalid") {
+		t.Errorf("expected parse error, got %q", resp.Error)
+	}
+}
+
+// TestValidateGCPWorkloadIdentity_NotFallthrough: workload-identity must not fall through
+// to the service-account path (which checks serviceAccountJson).
+func TestValidateGCPWorkloadIdentity_NotFallthrough(t *testing.T) {
+	store := session.NewStore()
+	h := server.NewValidateHandler(store)
+	rec := postValidate(t, store, h, "gcp", map[string]interface{}{
+		"authMethod":  "workload-identity",
+		"credentials": map[string]string{},
+	})
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp server.ValidateResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if strings.Contains(resp.Error, "serviceAccountJson") {
+		t.Errorf("workload-identity fell through to service-account — got error: %q", resp.Error)
+	}
+}
+
+// TestStoreCredentials_GCPWorkloadIdentity: workload-identity fields stored in session.
+func TestStoreCredentials_GCPWorkloadIdentity(t *testing.T) {
+	store := session.NewStore()
+	h := newTestValidateHandler(store)
+	rec := postValidate(t, store, h, "gcp", map[string]interface{}{
+		"authMethod": "workload-identity",
+		"credentials": map[string]string{
+			"workloadIdentityJson": `{"type":"external_account","audience":"//iam.googleapis.com/projects/123/locations/global/workloadIdentityPools/my-pool/providers/my-provider"}`,
+			"projectId":            "my-wif-project",
+		},
+	})
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	resp := &http.Response{Header: rec.Header()}
+	var sessionID string
+	for _, c := range resp.Cookies() {
+		if c.Name == "ddi_session" {
+			sessionID = c.Value
+			break
+		}
+	}
+	if sessionID == "" {
+		t.Fatal("expected ddi_session cookie")
+	}
+
+	sess, ok := store.Get(sessionID)
+	if !ok {
+		t.Fatal("session not found in store")
+	}
+	if sess.GCP == nil {
+		t.Fatal("expected sess.GCP to be set")
+	}
+	if sess.GCP.AuthMethod != "workload-identity" {
+		t.Errorf("expected AuthMethod=%q, got %q", "workload-identity", sess.GCP.AuthMethod)
+	}
+	if sess.GCP.WorkloadIdentityJSON == "" {
+		t.Error("expected WorkloadIdentityJSON to be populated")
+	}
+	if sess.GCP.ProjectID != "my-wif-project" {
+		t.Errorf("expected ProjectID=%q, got %q", "my-wif-project", sess.GCP.ProjectID)
+	}
+}
+
+// TestStoreCredentials_GCPBrowserOAuth: browser-oauth stores auth method in session.
+func TestStoreCredentials_GCPBrowserOAuth(t *testing.T) {
+	store := session.NewStore()
+	h := newTestValidateHandler(store)
+	rec := postValidate(t, store, h, "gcp", map[string]interface{}{
+		"authMethod": "browser-oauth",
+		"credentials": map[string]string{
+			"clientId":     "test-client",
+			"clientSecret": "test-secret",
+		},
+	})
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	resp := &http.Response{Header: rec.Header()}
+	var sessionID string
+	for _, c := range resp.Cookies() {
+		if c.Name == "ddi_session" {
+			sessionID = c.Value
+			break
+		}
+	}
+	if sessionID == "" {
+		t.Fatal("expected ddi_session cookie")
+	}
+
+	sess, ok := store.Get(sessionID)
+	if !ok {
+		t.Fatal("session not found in store")
+	}
+	if sess.GCP == nil {
+		t.Fatal("expected sess.GCP to be set")
+	}
+	if sess.GCP.AuthMethod != "browser-oauth" {
+		t.Errorf("expected AuthMethod=%q, got %q", "browser-oauth", sess.GCP.AuthMethod)
+	}
+}
+
+// TestBuildTokenSource_BrowserOAuth_NoCachedTokenSource: browser-oauth without cached
+// token source returns a descriptive error (not panic or service-account fallback).
+func TestBuildTokenSource_BrowserOAuth_NoCachedTokenSource(t *testing.T) {
+	creds := map[string]string{"auth_method": "browser-oauth"}
+	_, err := gcp.BuildTokenSourceForTest(context.Background(), creds, nil)
+	if err == nil {
+		t.Fatal("expected error when cached token source is nil for browser-oauth")
+	}
+	if !strings.Contains(err.Error(), "browser-oauth") {
+		t.Errorf("expected error mentioning browser-oauth, got %q", err.Error())
+	}
+	if strings.Contains(err.Error(), "service_account_json") {
+		t.Error("browser-oauth should not fall through to service-account")
+	}
+}
+
+// TestBuildTokenSource_WorkloadIdentity_NoCachedTokenSource: workload-identity without
+// cached token source and without WIF JSON returns a descriptive error.
+func TestBuildTokenSource_WorkloadIdentity_NoCachedTokenSource(t *testing.T) {
+	creds := map[string]string{"auth_method": "workload-identity"}
+	_, err := gcp.BuildTokenSourceForTest(context.Background(), creds, nil)
+	if err == nil {
+		t.Fatal("expected error when WIF JSON is missing for workload-identity")
+	}
+	if !strings.Contains(err.Error(), "workload_identity_json") {
+		t.Errorf("expected error mentioning workload_identity_json, got %q", err.Error())
 	}
 }
