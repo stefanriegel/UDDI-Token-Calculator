@@ -1,8 +1,10 @@
 package server
 
 import (
+	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -11,8 +13,60 @@ import (
 	"github.com/infoblox/uddi-go-token-calculator/internal/session"
 )
 
+// silentPaths are request paths that should not produce log output.
+// These are either high-frequency polling endpoints or static assets
+// that add nothing but noise to the console.
+var silentPaths = map[string]bool{
+	"/api/v1/health":       true,
+	"/api/v1/update/check": true,
+	"/api/v1/version":      true,
+}
+
+// shouldLog returns true if this request is worth logging.
+func shouldLog(path string) bool {
+	// Suppress scan status polling (e.g. /api/v1/scan/{id}/status)
+	if strings.HasSuffix(path, "/status") {
+		return false
+	}
+	// Suppress known noisy endpoints
+	if silentPaths[path] {
+		return false
+	}
+	// Suppress static asset requests (CSS, JS, SVG, images, favicon)
+	if !strings.HasPrefix(path, "/api/") {
+		return false
+	}
+	return true
+}
+
+// requestLogger is a minimal chi middleware that logs only meaningful
+// API requests: validations, scans, updates, exports. Static assets,
+// health polls, and status polls are suppressed to keep console output clean.
+func requestLogger(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !shouldLog(r.URL.Path) {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
+		start := time.Now()
+
+		next.ServeHTTP(ww, r)
+
+		status := ww.Status()
+		dur := time.Since(start)
+
+		if status >= 400 {
+			log.Printf("⚠ %s %s → %d (%s)", r.Method, r.URL.Path, status, dur.Round(time.Millisecond))
+		} else {
+			log.Printf("  %s %s → %d (%s)", r.Method, r.URL.Path, status, dur.Round(time.Millisecond))
+		}
+	})
+}
+
 // NewRouter builds the chi router with:
-//   - Middleware: Logger (polling status endpoints suppressed), Recoverer
+//   - Middleware: requestLogger (only meaningful API calls), Recoverer
 //   - /api/v1/health → HandleHealth
 //   - /api/v1/providers/{provider}/validate → ValidateHandler (credential validation + session creation)
 //   - /api/v1/scan → scan lifecycle handlers (start, status, results)
@@ -25,19 +79,7 @@ import (
 // orch may be nil when only the validate handler needs to be exercised (tests).
 func NewRouter(staticHandler http.Handler, store *session.Store, orch *orchestrator.Orchestrator) *chi.Mux {
 	r := chi.NewRouter()
-	// Suppress logger for polling status endpoint (/api/v1/scan/.../status) — the frontend
-	// polls it every 1.5 seconds and it would produce nothing but noise in the console.
-	r.Use(func(next http.Handler) http.Handler {
-		logger := middleware.Logger
-		loggerHandler := logger(next)
-		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-			if strings.HasSuffix(req.URL.Path, "/status") {
-				next.ServeHTTP(w, req)
-				return
-			}
-			loggerHandler.ServeHTTP(w, req)
-		})
-	})
+	r.Use(requestLogger)
 	r.Use(middleware.Recoverer)
 
 	validateHandler := NewValidateHandler(store)
