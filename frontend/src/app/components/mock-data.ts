@@ -120,6 +120,17 @@ export const PROVIDERS: ProviderOption[] = [
           { key: 'sourceProfile', label: 'Source Profile', placeholder: 'default', helpText: 'AWS CLI profile to use for assuming the role' },
         ],
       },
+      {
+        id: 'org',
+        name: 'Org Scanning (AWS Organizations)',
+        description: 'Scan all accounts in your AWS Organization by assuming a role in each child account',
+        fields: [
+          { key: 'accessKeyId', label: 'Access Key ID', placeholder: 'AKIA...' },
+          { key: 'secretAccessKey', label: 'Secret Access Key', placeholder: '********', secret: true },
+          { key: 'region', label: 'Default Region', placeholder: 'us-east-1', helpText: 'Optional — defaults to us-east-1' },
+          { key: 'orgRoleName', label: 'Org Role Name', placeholder: 'OrganizationAccountAccessRole', helpText: 'IAM role name assumed in each child account' },
+        ],
+      },
     ],
   },
   {
@@ -211,6 +222,15 @@ export const PROVIDERS: ProviderOption[] = [
           { key: 'poolId', label: 'Workload Identity Pool ID', placeholder: 'my-pool' },
           { key: 'providerId', label: 'Provider ID', placeholder: 'my-provider' },
           { key: 'serviceAccountEmail', label: 'Service Account Email', placeholder: 'scanner@project.iam.gserviceaccount.com' },
+        ],
+      },
+      {
+        id: 'org',
+        name: 'Org Scanning (GCP Organization)',
+        description: 'Scan all projects in your GCP Organization using org-level service account permissions',
+        fields: [
+          { key: 'orgId', label: 'Organization ID', placeholder: '123456789', helpText: 'GCP organization ID (numeric)' },
+          { key: 'serviceAccountJson', label: 'Service Account Key', placeholder: 'Paste JSON key with org-level permissions', multiline: true },
         ],
       },
     ],
