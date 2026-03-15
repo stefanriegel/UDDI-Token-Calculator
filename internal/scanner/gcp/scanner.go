@@ -283,5 +283,30 @@ func (s *Scanner) Scan(ctx context.Context, req scanner.ScanRequest, publish fun
 		calculator.CategoryActiveIPs, calculator.TokensPerActiveIP, publish,
 		func() (int, error) { return countInstanceIPs(ctx, opts, projectID) }))
 
+	// Compute Addresses (static/reserved IPs) — CategoryActiveIPs
+	findings = append(findings, runResourceScan(ctx, projectID, "compute_address",
+		calculator.CategoryActiveIPs, calculator.TokensPerActiveIP, publish,
+		func() (int, error) { return countAddresses(ctx, opts, projectID) }))
+
+	// Cloud Routers — CategoryManagedAssets
+	findings = append(findings, runResourceScan(ctx, projectID, "cloud_router",
+		calculator.CategoryManagedAssets, calculator.TokensPerManagedAsset, publish,
+		func() (int, error) { return countRouters(ctx, opts, projectID) }))
+
+	// VPN Gateways — CategoryManagedAssets
+	findings = append(findings, runResourceScan(ctx, projectID, "vpn_gateway",
+		calculator.CategoryManagedAssets, calculator.TokensPerManagedAsset, publish,
+		func() (int, error) { return countVPNGateways(ctx, opts, projectID) }))
+
+	// Forwarding Rules (load balancer frontends) — CategoryManagedAssets
+	findings = append(findings, runResourceScan(ctx, projectID, "forwarding_rule",
+		calculator.CategoryManagedAssets, calculator.TokensPerManagedAsset, publish,
+		func() (int, error) { return countForwardingRules(ctx, opts, projectID) }))
+
+	// Internal Ranges — CategoryDDIObjects (Address Block, included by default)
+	findings = append(findings, runResourceScan(ctx, projectID, "internal_range",
+		calculator.CategoryDDIObjects, calculator.TokensPerDDIObject, publish,
+		func() (int, error) { return countInternalRanges(ctx, opts, projectID) }))
+
 	return findings, nil
 }

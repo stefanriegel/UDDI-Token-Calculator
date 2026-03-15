@@ -2043,7 +2043,7 @@ export function Wizard() {
                   {
                     key: 'ip',
                     label: 'Top 5 IP / Network Consumers',
-                    filter: (f) => /ip|subnet|network|cidr|address|vnet|vpc/i.test(f.item) && !/dhcp|dns|unsupported/i.test(f.item),
+                    filter: (f) => /ip|subnet|network|cidr|address|vnet|vpc|gateway|firewall|hub|router|forwarding|internal_range/i.test(f.item) && !/dhcp|dns|unsupported/i.test(f.item),
                     expanded: topIpExpanded,
                     toggle: () => setTopIpExpanded((v) => !v),
                     icon: Gauge,
