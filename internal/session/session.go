@@ -83,6 +83,9 @@ type GCPCredentials struct {
 	// WorkloadIdentityJSON holds the WIF configuration JSON for external_account auth.
 	// Distinct from ServiceAccountJSON to avoid overloading the same field.
 	WorkloadIdentityJSON string
+	// OrgID is the GCP organization ID for org-mode scanning (e.g. "123456789").
+	// When set, the scanner discovers all projects in the org and fans out per-project.
+	OrgID string
 	// CachedTokenSource holds the live OAuth2 token source obtained during browser-oauth
 	// or ADC validation. The scanner reuses it to avoid triggering a second browser popup.
 	CachedTokenSource oauth2.TokenSource

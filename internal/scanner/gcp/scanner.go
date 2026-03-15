@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sync"
 	"time"
 
 	"golang.org/x/oauth2"
@@ -14,6 +15,7 @@ import (
 	"google.golang.org/api/option"
 
 	"github.com/infoblox/uddi-go-token-calculator/internal/calculator"
+	"github.com/infoblox/uddi-go-token-calculator/internal/cloudutil"
 	"github.com/infoblox/uddi-go-token-calculator/internal/scanner"
 )
 
@@ -33,6 +35,9 @@ import (
 const (
 	scopeComputeReadonly = "https://www.googleapis.com/auth/compute.readonly"
 	scopeDNSReadonly     = "https://www.googleapis.com/auth/dns.readonly"
+
+	// maxConcurrentProjects is the default semaphore capacity for multi-project fan-out.
+	maxConcurrentProjects = 5
 )
 
 // Scanner is the real GCP scanner implementation.
@@ -44,10 +49,11 @@ func New() *Scanner {
 }
 
 // buildTokenSource returns an OAuth2 token source for GCP API calls.
-// Supports four auth methods:
+// Supports five auth methods:
 //   - "adc": cached token source from ADC validation
 //   - "browser-oauth": cached token source from browser consent flow
 //   - "workload-identity": parse WIF configuration JSON (external_account type)
+//   - "org": service account key for org-level scanning (same handling as service-account)
 //   - "service-account" (default): parse service_account JSON credential
 func buildTokenSource(ctx context.Context, creds map[string]string, cached oauth2.TokenSource) (oauth2.TokenSource, error) {
 	switch creds["auth_method"] {
@@ -70,6 +76,22 @@ func buildTokenSource(ctx context.Context, creds map[string]string, cached oauth
 		googleCreds, err := google.CredentialsFromJSON(ctx, []byte(wifJSON), scopeComputeReadonly, scopeDNSReadonly)
 		if err != nil {
 			return nil, fmt.Errorf("gcp: failed to parse WIF configuration: %w", err)
+		}
+		return googleCreds.TokenSource, nil
+
+	case "org":
+		// Org mode uses the same service account key path as "service-account".
+		// Prefer cached token source (set during validate) when available.
+		if cached != nil {
+			return cached, nil
+		}
+		saJSON := creds["service_account_json"]
+		if saJSON == "" {
+			return nil, fmt.Errorf("gcp: service_account_json credential is required for org mode")
+		}
+		googleCreds, err := google.CredentialsFromJSON(ctx, []byte(saJSON), scopeComputeReadonly, scopeDNSReadonly)
+		if err != nil {
+			return nil, fmt.Errorf("gcp: failed to parse service account credentials for org mode: %w", err)
 		}
 		return googleCreds.TokenSource, nil
 	}
@@ -157,31 +179,14 @@ func runResourceScan(ctx context.Context, projectID, item, category string, toke
 	}
 }
 
-// Scan implements scanner.Scanner for GCP.
-// It discovers VPC networks, subnets, Cloud DNS zones + records, compute instances, and instance IPs.
-func (s *Scanner) Scan(ctx context.Context, req scanner.ScanRequest, publish func(scanner.Event)) ([]calculator.FindingRow, error) {
-	// Step 1: Build token source.
-	ts, err := buildTokenSource(ctx, req.Credentials, req.CachedGCPTokenSource)
-	if err != nil {
-		return nil, err
-	}
-
-	// Step 2: Extract project ID — Subscriptions[0] takes precedence over credentials map.
-	projectID := ""
-	if len(req.Subscriptions) > 0 {
-		projectID = req.Subscriptions[0]
-	}
-	if projectID == "" {
-		projectID = req.Credentials["project_id"]
-	}
-	if projectID == "" {
-		return nil, fmt.Errorf("gcp: project ID is required — set Subscriptions[0] or credentials[\"project_id\"]")
-	}
-
-	// Step 3: Build shared client options.
-	opts := []option.ClientOption{option.WithTokenSource(ts)}
-
+// scanOneProject runs all resource scans for a single GCP project and returns
+// the aggregated FindingRows. It scans all 13 resource types:
+//   - Original 6: VPC networks, subnets, DNS zones, DNS records, compute instances, compute IPs
+//   - Expanded 7: addresses, firewalls, routers, VPN gateways, VPN tunnels, GKE cluster CIDRs, secondary subnet ranges
+func scanOneProject(ctx context.Context, projectID string, ts oauth2.TokenSource, opts []option.ClientOption, publish func(scanner.Event)) []calculator.FindingRow {
 	var findings []calculator.FindingRow
+
+	// ── Original 6 resource types ──
 
 	// GCP-01: VPC Networks — CategoryDDIObjects
 	findings = append(findings, runResourceScan(ctx, projectID, "vpc_network",
@@ -283,5 +288,132 @@ func (s *Scanner) Scan(ctx context.Context, req scanner.ScanRequest, publish fun
 		calculator.CategoryActiveIPs, calculator.TokensPerActiveIP, publish,
 		func() (int, error) { return countInstanceIPs(ctx, opts, projectID) }))
 
+	// ── Expanded 7 resource types (T02) ──
+
+	// GCP-06: Addresses — CategoryDDIObjects
+	findings = append(findings, runResourceScan(ctx, projectID, "address",
+		calculator.CategoryDDIObjects, calculator.TokensPerDDIObject, publish,
+		func() (int, error) { return countAddresses(ctx, opts, projectID) }))
+
+	// GCP-07: Firewalls — CategoryDDIObjects
+	findings = append(findings, runResourceScan(ctx, projectID, "firewall",
+		calculator.CategoryDDIObjects, calculator.TokensPerDDIObject, publish,
+		func() (int, error) { return countFirewalls(ctx, opts, projectID) }))
+
+	// GCP-08: Routers — CategoryManagedAssets
+	findings = append(findings, runResourceScan(ctx, projectID, "router",
+		calculator.CategoryManagedAssets, calculator.TokensPerManagedAsset, publish,
+		func() (int, error) { return countRouters(ctx, opts, projectID) }))
+
+	// GCP-09: VPN Gateways — CategoryManagedAssets
+	findings = append(findings, runResourceScan(ctx, projectID, "vpn_gateway",
+		calculator.CategoryManagedAssets, calculator.TokensPerManagedAsset, publish,
+		func() (int, error) { return countVPNGateways(ctx, opts, projectID) }))
+
+	// GCP-10: VPN Tunnels — CategoryManagedAssets
+	findings = append(findings, runResourceScan(ctx, projectID, "vpn_tunnel",
+		calculator.CategoryManagedAssets, calculator.TokensPerManagedAsset, publish,
+		func() (int, error) { return countVPNTunnels(ctx, opts, projectID) }))
+
+	// GCP-11: GKE Cluster CIDRs — CategoryDDIObjects
+	findings = append(findings, runResourceScan(ctx, projectID, "gke_cluster_cidr",
+		calculator.CategoryDDIObjects, calculator.TokensPerDDIObject, publish,
+		func() (int, error) { return countGKEClusterCIDRs(ctx, opts, projectID) }))
+
+	// GCP-12: Secondary Subnet Ranges — CategoryDDIObjects
+	findings = append(findings, runResourceScan(ctx, projectID, "secondary_range",
+		calculator.CategoryDDIObjects, calculator.TokensPerDDIObject, publish,
+		func() (int, error) { return countSecondarySubnetRanges(ctx, opts, projectID) }))
+
+	return findings
+}
+
+// scanAllProjects fans out scanning across all projects concurrently.
+// Concurrency is limited by maxConcurrentProjects (default 5), overridden
+// by maxWorkers when non-zero. Per-project failures are non-fatal: an error
+// event is published and remaining projects continue.
+func scanAllProjects(ctx context.Context, ts oauth2.TokenSource, projects []string, maxWorkers int, publish func(scanner.Event)) ([]calculator.FindingRow, error) {
+	workers := maxConcurrentProjects
+	if maxWorkers > 0 {
+		workers = maxWorkers
+	}
+	sem := cloudutil.NewSemaphore(workers)
+
+	var (
+		mu       sync.Mutex
+		wg       sync.WaitGroup
+		findings []calculator.FindingRow
+	)
+
+	for _, projID := range projects {
+		projID := projID // capture
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			if err := sem.Acquire(ctx); err != nil {
+				return
+			}
+			defer sem.Release()
+
+			publish(scanner.Event{
+				Type:     "project_progress",
+				Provider: scanner.ProviderGCP,
+				Status:   "scanning",
+				Message:  fmt.Sprintf("scanning project %s", projID),
+			})
+
+			// Each project gets its own client options from the shared token source.
+			opts := []option.ClientOption{option.WithTokenSource(ts)}
+			rows := scanOneProject(ctx, projID, ts, opts, publish)
+
+			mu.Lock()
+			findings = append(findings, rows...)
+			mu.Unlock()
+
+			publish(scanner.Event{
+				Type:     "project_progress",
+				Provider: scanner.ProviderGCP,
+				Status:   "complete",
+				Message:  fmt.Sprintf("completed project %s: %d findings", projID, len(rows)),
+			})
+		}()
+	}
+
+	wg.Wait()
 	return findings, nil
+}
+
+// Scan implements scanner.Scanner for GCP.
+// It discovers VPC networks, subnets, Cloud DNS zones + records, compute instances,
+// instance IPs, and 7 expanded resource types (addresses, firewalls, routers,
+// VPN gateways, VPN tunnels, GKE cluster CIDRs, secondary subnet ranges).
+// When multiple subscriptions (projects) are provided, it fans out concurrently.
+func (s *Scanner) Scan(ctx context.Context, req scanner.ScanRequest, publish func(scanner.Event)) ([]calculator.FindingRow, error) {
+	// Step 1: Build token source.
+	ts, err := buildTokenSource(ctx, req.Credentials, req.CachedGCPTokenSource)
+	if err != nil {
+		return nil, err
+	}
+
+	// Step 2: Multi-project fan-out when more than one subscription is provided.
+	if len(req.Subscriptions) > 1 {
+		return scanAllProjects(ctx, ts, req.Subscriptions, req.MaxWorkers, publish)
+	}
+
+	// Step 3: Single-project scan — extract project ID.
+	projectID := ""
+	if len(req.Subscriptions) > 0 {
+		projectID = req.Subscriptions[0]
+	}
+	if projectID == "" {
+		projectID = req.Credentials["project_id"]
+	}
+	if projectID == "" {
+		return nil, fmt.Errorf("gcp: project ID is required — set Subscriptions[0] or credentials[\"project_id\"]")
+	}
+
+	// Step 4: Build shared client options and scan.
+	opts := []option.ClientOption{option.WithTokenSource(ts)}
+	return scanOneProject(ctx, projectID, ts, opts, publish), nil
 }
