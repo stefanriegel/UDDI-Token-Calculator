@@ -10,6 +10,7 @@ import (
 	awssdk "github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/sso"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/infoblox/uddi-go-token-calculator/internal/calculator"
 	"github.com/infoblox/uddi-go-token-calculator/internal/scanner"
@@ -28,7 +29,18 @@ func New() *Scanner { return &Scanner{} }
 //  4. Enumerates all enabled regions and fans out per-region scans with semaphore
 //  5. Returns all FindingRows and any per-provider error
 func (s *Scanner) Scan(ctx context.Context, req scanner.ScanRequest, publish func(scanner.Event)) ([]calculator.FindingRow, error) {
-	baseCfg, err := buildConfig(ctx, req.Credentials)
+	// For SSO auth, inject the first selected account ID into the credentials map
+	// so buildConfig can call sso:GetRoleCredentials for the correct account.
+	// A shallow copy is used to avoid mutating the caller's map.
+	creds := make(map[string]string, len(req.Credentials))
+	for k, v := range req.Credentials {
+		creds[k] = v
+	}
+	if creds["auth_method"] == "sso" && len(req.Subscriptions) > 0 && creds["sso_account_id"] == "" {
+		creds["sso_account_id"] = req.Subscriptions[0]
+	}
+
+	baseCfg, err := buildConfig(ctx, creds)
 	if err != nil {
 		return nil, fmt.Errorf("aws: build config: %w", err)
 	}
@@ -58,7 +70,10 @@ func (s *Scanner) Scan(ctx context.Context, req scanner.ScanRequest, publish fun
 }
 
 // buildConfig constructs an aws.Config from the credential map.
-// auth_method values: "access_key" | "profile" | "sso" | "assume_role"
+// auth_method values: "access_key" | "access-key" | "profile" | "sso" | "assume_role" | "assume-role"
+// Hyphenated variants ("access-key", "assume-role") are accepted as aliases for the
+// underscore forms so that the frontend's kebab-case auth method IDs work without
+// a mapping step.
 // For all paths: adaptive retry (5 attempts) and explicit region are set.
 func buildConfig(ctx context.Context, creds map[string]string) (awssdk.Config, error) {
 	region := creds["region"]
@@ -73,7 +88,7 @@ func buildConfig(ctx context.Context, creds map[string]string) (awssdk.Config, e
 	}
 
 	switch creds["auth_method"] {
-	case "access_key", "":
+	case "access_key", "access-key", "":
 		keyID := creds["access_key_id"]
 		secret := creds["secret_access_key"]
 		if keyID == "" || secret == "" {
@@ -87,14 +102,68 @@ func buildConfig(ctx context.Context, creds map[string]string) (awssdk.Config, e
 			)...,
 		)
 
-	case "profile", "sso":
-		// SSO uses LoadDefaultConfig with a named profile that points to an SSO config.
-		// The ~/.aws/sso/cache token must already exist (user ran `aws sso login` first).
+	case "profile":
+		// Profile uses LoadDefaultConfig with a named profile from ~/.aws/config.
 		profile := creds["profile_name"]
 		opts := append(retryOpts, awsconfig.WithSharedConfigProfile(profile))
 		return awsconfig.LoadDefaultConfig(ctx, opts...)
 
-	case "assume_role":
+	case "sso":
+		// SSO uses the access token obtained during the OIDC device-authorization flow
+		// (stored in sso_access_token) to call sso:GetRoleCredentials for the target
+		// account. This avoids requiring a pre-configured ~/.aws/config SSO profile.
+		accessToken := creds["sso_access_token"]
+		ssoRegion := creds["sso_region"]
+		accountID := creds["sso_account_id"]
+		if accessToken == "" {
+			return awssdk.Config{}, fmt.Errorf("sso_access_token is required for SSO scanning (re-validate your SSO credentials)")
+		}
+		if ssoRegion == "" {
+			ssoRegion = region // fall back to the main region if sso_region is unset
+		}
+
+		// Build a bootstrap config (no credentials needed — just region) to create the SSO client.
+		ssoCfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(ssoRegion))
+		if err != nil {
+			return awssdk.Config{}, fmt.Errorf("sso bootstrap config: %w", err)
+		}
+		ssoClient := sso.NewFromConfig(ssoCfg)
+
+		// List the roles available for this account and pick the first one.
+		// In most enterprise setups there is exactly one read-only scanner role per account.
+		rolesOut, err := ssoClient.ListAccountRoles(ctx, &sso.ListAccountRolesInput{
+			AccessToken: awssdk.String(accessToken),
+			AccountId:   awssdk.String(accountID),
+		})
+		if err != nil {
+			return awssdk.Config{}, fmt.Errorf("sso: list account roles for %s: %w", accountID, err)
+		}
+		if len(rolesOut.RoleList) == 0 {
+			return awssdk.Config{}, fmt.Errorf("sso: no roles available for account %s", accountID)
+		}
+		roleName := awssdk.ToString(rolesOut.RoleList[0].RoleName)
+
+		// Exchange the SSO token for temporary STS credentials.
+		credsOut, err := ssoClient.GetRoleCredentials(ctx, &sso.GetRoleCredentialsInput{
+			AccessToken: awssdk.String(accessToken),
+			AccountId:   awssdk.String(accountID),
+			RoleName:    awssdk.String(roleName),
+		})
+		if err != nil {
+			return awssdk.Config{}, fmt.Errorf("sso: get role credentials for %s/%s: %w", accountID, roleName, err)
+		}
+		rc := credsOut.RoleCredentials
+		return awsconfig.LoadDefaultConfig(ctx,
+			append(retryOpts,
+				awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
+					awssdk.ToString(rc.AccessKeyId),
+					awssdk.ToString(rc.SecretAccessKey),
+					awssdk.ToString(rc.SessionToken),
+				)),
+			)...,
+		)
+
+	case "assume_role", "assume-role":
 		// Build base config first (access_key), then AssumeRole.
 		baseCfg, err := buildConfig(ctx, map[string]string{
 			"auth_method":       "access_key",

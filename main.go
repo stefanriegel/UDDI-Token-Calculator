@@ -13,9 +13,9 @@ import (
 	"github.com/pkg/browser"
 
 	awsscanner "github.com/infoblox/uddi-go-token-calculator/internal/scanner/aws"
-	azurestub "github.com/infoblox/uddi-go-token-calculator/internal/scanner/azure"
-	gcpstub "github.com/infoblox/uddi-go-token-calculator/internal/scanner/gcp"
-	adstub "github.com/infoblox/uddi-go-token-calculator/internal/scanner/ad"
+	azurescanner "github.com/infoblox/uddi-go-token-calculator/internal/scanner/azure"
+	gcpscanner "github.com/infoblox/uddi-go-token-calculator/internal/scanner/gcp"
+	adscanner "github.com/infoblox/uddi-go-token-calculator/internal/scanner/ad"
 
 	"github.com/infoblox/uddi-go-token-calculator/internal/orchestrator"
 	"github.com/infoblox/uddi-go-token-calculator/internal/scanner"
@@ -44,14 +44,14 @@ func main() {
 	}
 
 	// 3. Create the session store and orchestrator.
-	//    AWS scanner is the real implementation (Phase 3).
-	//    Azure, GCP, AD stubs are replaced in Phases 4, 5, 6 respectively.
+	//    AWS and Azure scanners are real implementations (Phases 3 and 4).
+	//    GCP scanner is the real Phase 5 implementation. AD real implementation added in Phase 6.
 	store := session.NewStore()
 	orch := orchestrator.New(map[string]scanner.Scanner{
 		scanner.ProviderAWS:   awsscanner.New(),
-		scanner.ProviderAzure: &azurestub.Stub{},
-		scanner.ProviderGCP:   &gcpstub.Stub{},
-		scanner.ProviderAD:    &adstub.Stub{},
+		scanner.ProviderAzure: azurescanner.New(),
+		scanner.ProviderGCP:   gcpscanner.New(),
+		scanner.ProviderAD:    adscanner.New(),
 	})
 
 	// 4. Build the chi router (health endpoint + scan lifecycle + static fallback).

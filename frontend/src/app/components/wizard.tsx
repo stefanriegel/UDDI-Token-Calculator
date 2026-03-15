@@ -306,6 +306,13 @@ export function Wizard() {
       (event) => {
         if (event.type === 'resource_progress' && event.provider) {
           providerResourcesDone[event.provider] = (providerResourcesDone[event.provider] ?? 0) + 1;
+          // Capture resource-level errors (e.g. API not enabled, permission denied)
+          if (event.status === 'error' && event.resource && event.message) {
+            setProviderErrors((prev) => [
+              ...prev,
+              { provider: event.provider!, resource: event.resource!, message: event.message! },
+            ]);
+          }
           // Show indeterminate progress: increment by small amount per resource
           setProviderScanProgress((prev) => {
             const cur = prev[event.provider as ProviderType] ?? 0;
@@ -855,7 +862,7 @@ export function Wizard() {
                             const COMING_SOON: Record<ProviderType, string[]> = {
                               aws: ['profile', 'assume-role'],
                               azure: ['device-code', 'certificate', 'az-cli'],
-                              gcp: ['adc', 'workload-identity'],
+                              gcp: [],
                               ad: ['kerberos', 'powershell-remote'],
                             };
                             const isComingSoon = COMING_SOON[provId]?.includes(method.id) ?? false;
@@ -976,7 +983,7 @@ export function Wizard() {
                         ) : (
                           <div className="py-2 px-3 bg-green-50 rounded-lg border border-green-100 mb-3">
                             <p className="text-[12px] text-green-700">
-                              No credentials needed — the scanner will use your existing session. Click the button below to verify access.
+                              No credentials needed — the scanner will use your local gcloud application-default credentials. Click Validate to verify access.
                             </p>
                           </div>
                         )}
@@ -1021,13 +1028,13 @@ export function Wizard() {
                           {status === 'valid' && <CheckCircle2 className="w-3.5 h-3.5" />}
                           {status === 'error' && <AlertCircle className="w-3.5 h-3.5" />}
                           {status === 'validating'
-                            ? (isBrowserFlow ? 'Waiting for browser...' : hasFields ? 'Validating...' : 'Authenticating...')
+                            ? (isBrowserFlow ? 'Waiting for browser...' : 'Validating...')
                             : status === 'valid'
                               ? 'Verified'
                               : status === 'error'
                                 ? 'Retry'
-                                : (hasFields ? 'Validate & Connect' : 'Authenticate via Browser')}
-                          {status === 'idle' && !hasFields && <Globe className="w-3.5 h-3.5" />}
+                                : (isBrowserFlow ? 'Authenticate via Browser' : 'Validate')}
+                          {status === 'idle' && isBrowserFlow && <Globe className="w-3.5 h-3.5" />}
                         </button>
                         {status === 'error' && credentialError[provId] && (
                           <div className="mt-2 flex items-start gap-2 p-2.5 bg-red-50 rounded-lg border border-red-100">

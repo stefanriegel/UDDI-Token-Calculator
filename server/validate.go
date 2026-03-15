@@ -2,12 +2,9 @@ package server
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -556,126 +553,67 @@ func realAzureValidator(ctx context.Context, creds map[string]string) ([]Subscri
 	return items, nil
 }
 
-// realGCPValidator performs Phase 2 structural validation only — real API calls are
-// deferred to Phase 5. If service_account_json is non-empty the credentials are
-// accepted as structurally valid and a stub project list is returned.
-// browser-oauth is handled by realGCPBrowserOAuth.
+// realGCPValidator validates GCP credentials and returns a project list.
+// Supports two auth methods:
+//   - "adc": Application Default Credentials (gcloud auth application-default login)
+//   - "service-account" (default): parse service account JSON, return project_id
 func realGCPValidator(ctx context.Context, creds map[string]string) ([]SubscriptionItem, error) {
-	if creds["authMethod"] == "browser-oauth" {
-		return realGCPBrowserOAuth(ctx, creds)
+	if creds["authMethod"] == "adc" {
+		return realGCPADCValidator(ctx, creds)
 	}
 
-	if creds["serviceAccountJson"] == "" {
+	saJSON := creds["serviceAccountJson"]
+	if saJSON == "" {
 		return nil, errors.New("serviceAccountJson is required")
 	}
 
+	// Structural validation: parse the JSON and extract project_id.
+	// Deep credential verification happens when the scan actually calls GCP APIs.
+	var saFields struct {
+		Type      string `json:"type"`
+		ProjectID string `json:"project_id"`
+	}
+	if err := json.Unmarshal([]byte(saJSON), &saFields); err != nil {
+		return nil, fmt.Errorf("gcp: invalid service account JSON: %w", err)
+	}
+	if saFields.ProjectID == "" {
+		return nil, errors.New("gcp: service account JSON must contain a non-empty project_id field")
+	}
+	if saFields.Type != "service_account" {
+		return nil, fmt.Errorf("gcp: expected type \"service_account\", got %q", saFields.Type)
+	}
+
 	return []SubscriptionItem{{
-		ID:   "stub-gcp-project",
-		Name: "GCP Project (stub — connect in Phase 5)",
+		ID:   saFields.ProjectID,
+		Name: saFields.ProjectID,
 	}}, nil
 }
 
-// realGCPBrowserOAuth implements interactive browser login for GCP using
-// the OAuth2 "installed application" flow with a localhost redirect listener.
-// It uses the Google Cloud SDK client ID (well-known public client, no secret).
-// After login, the token source is cached so the scanner can reuse it.
-func realGCPBrowserOAuth(ctx context.Context, creds map[string]string) ([]SubscriptionItem, error) {
-	// Google Cloud SDK well-known public OAuth2 client (no client secret required).
-	const (
-		gcloudClientID     = "764086051850-6qr4p6gpi6hn506pt8ejuq83di341hur.apps.googleusercontent.com"
-		gcloudClientSecret = "d-FL95Q19q7MQmFpd7hHD0Ty"
+// realGCPADCValidator validates using Application Default Credentials (ADC).
+// ADC is populated by running: gcloud auth application-default login
+// It discovers accessible projects via the Cloud Resource Manager API.
+func realGCPADCValidator(ctx context.Context, creds map[string]string) ([]SubscriptionItem, error) {
+	googleCreds, err := google.FindDefaultCredentials(ctx,
+		"https://www.googleapis.com/auth/compute.readonly",
+		"https://www.googleapis.com/auth/ndev.clouddns.readonly",
+		"https://www.googleapis.com/auth/cloudplatformprojects.readonly",
 	)
-
-	conf := &oauth2.Config{
-		ClientID:     gcloudClientID,
-		ClientSecret: gcloudClientSecret,
-		Scopes:       []string{"https://www.googleapis.com/auth/cloudplatformprojects.readonly"},
-		Endpoint:     google.Endpoint,
-	}
-
-	// Pick a random localhost port for the callback.
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		return nil, fmt.Errorf("gcp browser-oauth: could not open callback listener: %w", err)
-	}
-	port := ln.Addr().(*net.TCPAddr).Port
-	conf.RedirectURL = fmt.Sprintf("http://127.0.0.1:%d/callback", port)
-
-	// Generate a random state to prevent CSRF.
-	stateBytes := make([]byte, 16)
-	if _, err := rand.Read(stateBytes); err != nil {
-		ln.Close()
-		return nil, fmt.Errorf("gcp browser-oauth: rand: %w", err)
-	}
-	state := hex.EncodeToString(stateBytes)
-
-	// Build the auth URL and open the browser.
-	authURL := conf.AuthCodeURL(state, oauth2.AccessTypeOffline)
-	if err := pkgbrowser.OpenURL(authURL); err != nil {
-		ln.Close()
-		return nil, fmt.Errorf("gcp browser-oauth: could not open browser: %w", err)
+		return nil, fmt.Errorf("gcp adc: no application default credentials found — run: gcloud auth application-default login\n(%w)", err)
 	}
 
-	// Start a one-shot HTTP server on the callback listener.
-	codeCh := make(chan string, 1)
-	errCh := make(chan error, 1)
-	srv := &http.Server{
-		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path != "/callback" {
-				http.NotFound(w, r)
-				return
-			}
-			if got := r.URL.Query().Get("state"); got != state {
-				http.Error(w, "state mismatch", http.StatusBadRequest)
-				errCh <- errors.New("gcp browser-oauth: state mismatch — possible CSRF")
-				return
-			}
-			code := r.URL.Query().Get("code")
-			if code == "" {
-				http.Error(w, "missing code", http.StatusBadRequest)
-				errCh <- errors.New("gcp browser-oauth: no code in callback")
-				return
-			}
-			fmt.Fprintln(w, "<html><body><h2>Login successful — you can close this window.</h2></body></html>")
-			codeCh <- code
-		}),
-	}
-	go func() {
-		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errCh <- fmt.Errorf("gcp browser-oauth: callback server error: %w", err)
-		}
-	}()
-	defer srv.Close()
-
-	// Wait for code, error, or context cancellation.
-	var code string
-	select {
-	case code = <-codeCh:
-	case err := <-errCh:
-		return nil, err
-	case <-ctx.Done():
-		return nil, errors.New("gcp browser-oauth: login cancelled or timed out")
-	}
-
-	// Exchange code for token.
-	token, err := conf.Exchange(ctx, code)
-	if err != nil {
-		return nil, fmt.Errorf("gcp browser-oauth: token exchange failed: %w", err)
-	}
-
-	ts := conf.TokenSource(ctx, token)
+	ts := googleCreds.TokenSource
 
 	// List accessible projects via Cloud Resource Manager REST API.
-	// Using net/http directly to avoid adding a large googleapis dependency for validation.
 	httpClient := oauth2.NewClient(ctx, ts)
 	resp, err := httpClient.Get("https://cloudresourcemanager.googleapis.com/v1/projects?filter=lifecycleState%3AACTIVE")
 	if err != nil {
-		return nil, fmt.Errorf("gcp browser-oauth: list projects: %w", err)
+		return nil, fmt.Errorf("gcp adc: list projects: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("gcp browser-oauth: list projects returned HTTP %d", resp.StatusCode)
+		return nil, fmt.Errorf("gcp adc: list projects returned HTTP %d", resp.StatusCode)
 	}
 
 	var result struct {
@@ -685,11 +623,11 @@ func realGCPBrowserOAuth(ctx context.Context, creds map[string]string) ([]Subscr
 		} `json:"projects"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("gcp browser-oauth: decode projects: %w", err)
+		return nil, fmt.Errorf("gcp adc: decode projects: %w", err)
 	}
 
 	if len(result.Projects) == 0 {
-		return nil, errors.New("gcp browser-oauth: no accessible GCP projects found for this account")
+		return nil, errors.New("gcp adc: no accessible GCP projects found for this account")
 	}
 
 	// Cache the token source so storeCredentials can attach it to the session.

@@ -31,6 +31,7 @@ type ScanStartResponse struct {
 type FindingRowResponse struct {
 	Provider         string `json:"provider"`
 	Source           string `json:"source"`
+	Region           string `json:"region"`    // cloud region (e.g. "us-east-1"); empty for global resources
 	Category         string `json:"category"`  // "DDI Objects" | "Active IPs" | "Managed Assets"
 	Item             string `json:"item"`
 	Count            int    `json:"count"`

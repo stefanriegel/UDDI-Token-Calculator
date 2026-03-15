@@ -164,6 +164,7 @@ func (h *ScanHandler) HandleScanResults(w http.ResponseWriter, r *http.Request) 
 		findings = append(findings, FindingRowResponse{
 			Provider:         row.Provider,
 			Source:           row.Source,
+			Region:           row.Region,
 			Category:         row.Category,
 			Item:             row.Item,
 			Count:            row.Count,
