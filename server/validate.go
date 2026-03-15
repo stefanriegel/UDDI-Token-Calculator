@@ -34,6 +34,7 @@ import (
 	"golang.org/x/oauth2/google"
 
 	ad "github.com/infoblox/uddi-go-token-calculator/internal/scanner/ad"
+	awsscanner "github.com/infoblox/uddi-go-token-calculator/internal/scanner/aws"
 	"github.com/infoblox/uddi-go-token-calculator/internal/session"
 )
 
@@ -233,6 +234,8 @@ func storeCredentials(sess *session.Session, provider, authMethod string, creds 
 			SSOAccessToken:  creds["sso_access_token"],
 			SourceProfile:   creds["sourceProfile"],
 			ExternalID:      creds["externalId"],
+			OrgEnabled:      creds["orgEnabled"] == "true",
+			OrgRoleName:     creds["orgRoleName"],
 		}
 	case "azure":
 		var cachedCred azcore.TokenCredential
@@ -494,11 +497,14 @@ func contains(s, substr string) bool {
 }
 
 // realAWSValidator calls sts:GetCallerIdentity with the supplied static credentials.
-// SSO is handled by realAWSSSO; profile and assume-role return a coming-soon message.
+// SSO is handled by realAWSSSO; profile and assume-role use their respective configs.
+// Org mode discovers all accounts in the organization and returns them as SubscriptionItems.
 func realAWSValidator(ctx context.Context, creds map[string]string) ([]SubscriptionItem, error) {
 	switch creds["authMethod"] {
 	case "sso":
 		return realAWSSSO(ctx, creds)
+	case "org":
+		return realAWSOrgValidator(ctx, creds)
 	case "profile":
 		profileName := creds["profile"]
 		if profileName == "" {
@@ -611,6 +617,65 @@ func parseAccountFromARN(arn string) string {
 		return parts[4]
 	}
 	return "unknown"
+}
+
+// realAWSOrgValidator validates AWS credentials and discovers organization accounts.
+// It builds a config from the supplied credentials (access key or profile), then calls
+// DiscoverAccounts to list all ACTIVE accounts in the organization. On failure (e.g.
+// insufficient Organizations permissions), falls back to single-account mode with a
+// descriptive error message.
+func realAWSOrgValidator(ctx context.Context, creds map[string]string) ([]SubscriptionItem, error) {
+	// Build a base config using the underlying auth method.
+	// Org mode uses access_key credentials to authenticate, then discovers accounts.
+	region := creds["region"]
+	if region == "" {
+		region = "us-east-1"
+	}
+
+	accessKeyID := creds["accessKeyId"]
+	secretAccessKey := creds["secretAccessKey"]
+	if accessKeyID == "" || secretAccessKey == "" {
+		return nil, errors.New("accessKeyId and secretAccessKey are required for org authentication")
+	}
+
+	cfg, err := awsconfig.LoadDefaultConfig(ctx,
+		awsconfig.WithCredentialsProvider(
+			credentials.NewStaticCredentialsProvider(accessKeyID, secretAccessKey, creds["sessionToken"]),
+		),
+		awsconfig.WithRegion(region),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("aws org: load config: %w", err)
+	}
+
+	// Verify credentials first.
+	stsClient := sts.NewFromConfig(cfg)
+	_, err = stsClient.GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
+	if err != nil {
+		return nil, fmt.Errorf("aws org: credentials invalid: %w", err)
+	}
+
+	// Discover organization accounts.
+	accounts, err := awsscanner.DiscoverAccounts(ctx, cfg)
+	if err != nil {
+		// Fall back to single-account with error message — the user may not have
+		// Organizations permissions but the credentials are valid.
+		return nil, fmt.Errorf("aws org: failed to list organization accounts (ensure credentials have organizations:ListAccounts permission): %w", err)
+	}
+
+	if len(accounts) == 0 {
+		return nil, errors.New("aws org: no active accounts found in the organization")
+	}
+
+	items := make([]SubscriptionItem, 0, len(accounts))
+	for _, acct := range accounts {
+		name := acct.Name
+		if name == "" {
+			name = "Account " + acct.ID
+		}
+		items = append(items, SubscriptionItem{ID: acct.ID, Name: name})
+	}
+	return items, nil
 }
 
 // realAzureBrowserSSO implements interactive browser login via azidentity.InteractiveBrowserCredential.

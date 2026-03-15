@@ -47,6 +47,12 @@ type AWSCredentials struct {
 	// ExternalID is the STS external ID for cross-account assume-role.
 	// Only sent to STS when non-empty.
 	ExternalID string
+	// OrgEnabled indicates that Organizations multi-account scanning is active.
+	// When true, the scanner fans out per-account using AssumeRole.
+	OrgEnabled bool
+	// OrgRoleName is the IAM role name assumed in each child account during
+	// org-mode scanning (e.g. "OrganizationAccountAccessRole").
+	OrgRoleName string
 }
 
 // AzureCredentials holds Azure-specific authentication material.

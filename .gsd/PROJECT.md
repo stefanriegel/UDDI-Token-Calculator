@@ -3,7 +3,7 @@
 ## Current State
 
 **Last completed milestone:** M003 — Auth Method Completion (v2.1, shipped 2026-03-14)
-**In progress:** M004-2qci81 — Enterprise-Scale Cloud Scanning (S01 complete: retry/backoff infrastructure + configurable scan parameters)
+**In progress:** M004-2qci81 — Enterprise-Scale Cloud Scanning (S01 ✅ retry/backoff + configurable params, S02 ✅ AWS multi-account org scanning + 12 expanded resource types)
 
 All 9 backend auth methods across AWS, Azure, GCP, and AD are implemented with validators, session storage, orchestrator wiring, and scanner credential routing. No "Coming soon" stubs or silent fallthrough errors remain. Five auth methods still need frontend credential forms (AZ-AUTH-01, AZ-AUTH-03, AD-AUTH-01, GCP-AUTH-01, GCP-AUTH-02).
 
@@ -101,4 +101,4 @@ A pre-sales engineer can hand this `.exe` to any customer and get an accurate to
 | Session clone for re-scan | SSO credential objects (azcore.TokenCredential) shared by pointer — prevents second browser popup | ✓ Good |
 
 ---
-*Last updated: 2026-03-15 after M004-2qci81/S01 (Retry/Backoff Infrastructure) completed*
+*Last updated: 2026-03-15 after M004-2qci81/S02 (AWS Multi-Account Org Scanning + Expanded Resources) completed*

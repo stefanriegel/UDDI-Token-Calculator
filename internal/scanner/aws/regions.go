@@ -115,6 +115,56 @@ func scanRegion(ctx context.Context, cfg awssdk.Config, region string, accountID
 		"load_balancer", calculator.CategoryManagedAssets, calculator.TokensPerManagedAsset,
 		publish, func() (int, error) { return scanLoadBalancers(ctx, cfg) }))
 
+	// Elastic IPs
+	findings = append(findings, runResourceScan(ctx, cfg, region, accountID,
+		"elastic_ip", calculator.CategoryDDIObjects, calculator.TokensPerDDIObject,
+		publish, func() (int, error) { return scanElasticIPs(ctx, cfg) }))
+
+	// NAT gateways (excludes deleted)
+	findings = append(findings, runResourceScan(ctx, cfg, region, accountID,
+		"nat_gateway", calculator.CategoryManagedAssets, calculator.TokensPerManagedAsset,
+		publish, func() (int, error) { return scanNATGateways(ctx, cfg) }))
+
+	// Transit gateways
+	findings = append(findings, runResourceScan(ctx, cfg, region, accountID,
+		"transit_gateway", calculator.CategoryManagedAssets, calculator.TokensPerManagedAsset,
+		publish, func() (int, error) { return scanTransitGateways(ctx, cfg) }))
+
+	// Internet gateways
+	findings = append(findings, runResourceScan(ctx, cfg, region, accountID,
+		"internet_gateway", calculator.CategoryDDIObjects, calculator.TokensPerDDIObject,
+		publish, func() (int, error) { return scanInternetGateways(ctx, cfg) }))
+
+	// Route tables
+	findings = append(findings, runResourceScan(ctx, cfg, region, accountID,
+		"route_table", calculator.CategoryDDIObjects, calculator.TokensPerDDIObject,
+		publish, func() (int, error) { return scanRouteTables(ctx, cfg) }))
+
+	// Security groups
+	findings = append(findings, runResourceScan(ctx, cfg, region, accountID,
+		"security_group", calculator.CategoryDDIObjects, calculator.TokensPerDDIObject,
+		publish, func() (int, error) { return scanSecurityGroups(ctx, cfg) }))
+
+	// VPN gateways (excludes deleted)
+	findings = append(findings, runResourceScan(ctx, cfg, region, accountID,
+		"vpn_gateway", calculator.CategoryManagedAssets, calculator.TokensPerManagedAsset,
+		publish, func() (int, error) { return scanVPNGateways(ctx, cfg) }))
+
+	// IPAM pools (graceful 0 when IPAM not enabled)
+	findings = append(findings, runResourceScan(ctx, cfg, region, accountID,
+		"ipam_pool", calculator.CategoryDDIObjects, calculator.TokensPerDDIObject,
+		publish, func() (int, error) { return scanIPAMPools(ctx, cfg) }))
+
+	// VPC CIDR blocks (counts associations, not VPC count)
+	findings = append(findings, runResourceScan(ctx, cfg, region, accountID,
+		"vpc_cidr_block", calculator.CategoryDDIObjects, calculator.TokensPerDDIObject,
+		publish, func() (int, error) { return scanVPCCIDRBlocks(ctx, cfg) }))
+
+	// Route53 Resolver endpoints (regional service, separate from Route53)
+	findings = append(findings, runResourceScan(ctx, cfg, region, accountID,
+		"resolver_endpoint", calculator.CategoryDDIObjects, calculator.TokensPerDDIObject,
+		publish, func() (int, error) { return scanResolverEndpoints(ctx, cfg) }))
+
 	return findings
 }
 
