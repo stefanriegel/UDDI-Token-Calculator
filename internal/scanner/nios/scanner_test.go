@@ -71,7 +71,7 @@ func TestNIOS_DDIFamilyCounts(t *testing.T) {
 }
 
 // TestNIOS_ActiveIPCounts verifies that Active IP findings reflect all active lease IPs
-// plus fixed, host, network, and discovery IPs (deduplicated).
+// plus fixed, host, network, and discovery IPs (deduplicated per-member).
 func TestNIOS_ActiveIPCounts(t *testing.T) {
 	rows := runScan(t)
 
@@ -81,12 +81,12 @@ func TestNIOS_ActiveIPCounts(t *testing.T) {
 			totalActiveIPs += r.Count
 		}
 	}
-	// Expect 9 unique IPs:
-	// 4 active leases (10.0.0.1,.2,.3 on GM + 10.0.0.20 on dhcp1)
-	// + 1 fixed (10.0.0.50) + 1 host (10.0.0.51) + 2 network (10.0.1.0, 10.0.1.255)
-	// + 1 unique discovery (10.0.0.100; 10.0.0.1 from discovery dedupes with lease)
-	if totalActiveIPs < 9 {
-		t.Errorf("expected total Active IPs >= 9; got %d (rows: %+v)", totalActiveIPs, rows)
+	// Expect 11 unique IPs across per-member rows:
+	// GM (owns 10.0.0.0/24): 3 leases + fixed + host + discovery + 2 network IPs = 8
+	// dhcp1 (owns 10.0.1.0/24): 1 lease (vnode) + 2 network IPs = 3
+	// Total = 11 (no overlap between member sets since IPs fall in different subnets)
+	if totalActiveIPs != 11 {
+		t.Errorf("expected total Active IPs = 11; got %d (rows: %+v)", totalActiveIPs, rows)
 	}
 }
 
@@ -123,11 +123,12 @@ func TestNIOS_Deduplication(t *testing.T) {
 			totalActiveIPs += r.Count
 		}
 	}
-	// The fixture has 9 unique IPs across all sources:
-	// 4 active leases + 1 fixed + 1 host + 2 network + 1 unique discovery (10.0.0.1 deduped).
-	// If totalActiveIPs > 9, double-counting occurred.
-	if totalActiveIPs > 9 {
-		t.Errorf("Active IP double-counting detected: total=%d but fixture has 9 unique IPs", totalActiveIPs)
+	// The fixture has 11 unique IPs across all sources (with 2 networks):
+	// 4 active leases + 1 fixed + 1 host + 4 network IPs (2 networks) + 1 unique discovery.
+	// Per-member sets don't overlap (different subnets), so sum should equal 11.
+	// If totalActiveIPs > 11, double-counting occurred.
+	if totalActiveIPs > 11 {
+		t.Errorf("Active IP double-counting detected: total=%d but fixture has 11 unique IPs", totalActiveIPs)
 	}
 }
 
@@ -205,11 +206,11 @@ func TestFindingRowsHaveTokensAndSource(t *testing.T) {
 		}
 	}
 
-	// Active IPs row must have tokens.
+	// Active IPs rows must have tokens.
 	for _, r := range rows {
-		if r.Category == calculator.CategoryActiveIPs && r.Item == "NIOS Active IPs (All Sources)" {
+		if r.Category == calculator.CategoryActiveIPs && r.Item == "Active IPs" {
 			if r.ManagementTokens == 0 {
-				t.Errorf("Active IPs row has ManagementTokens=0 (Count=%d)", r.Count)
+				t.Errorf("Active IPs row for %s has ManagementTokens=0 (Count=%d)", r.Source, r.Count)
 			}
 		}
 	}
@@ -217,32 +218,36 @@ func TestFindingRowsHaveTokensAndSource(t *testing.T) {
 
 // TestNIOS_DiscoveryDataActiveIPs verifies that discovery_data objects contribute
 // their ip_address to the Active IP count, with deduplication against leases.
+// Discovery IP 10.0.0.100 should be attributed to gm.test.local (its containing
+// subnet 10.0.0.0/24 is owned by GM via dhcp_member).
 func TestNIOS_DiscoveryDataActiveIPs(t *testing.T) {
 	rows := runScan(t)
 
-	// Count Active IP rows.
-	var activeIPRow *calculator.FindingRow
-	for i, r := range rows {
+	// Should have per-member Active IP rows, not a single grid-level row.
+	activeIPRows := 0
+	totalActiveIPs := 0
+	for _, r := range rows {
 		if r.Category == calculator.CategoryActiveIPs {
-			activeIPRow = &rows[i]
+			activeIPRows++
+			totalActiveIPs += r.Count
+			// Each Active IP row should have item "Active IPs" (per-member).
+			if r.Item != "Active IPs" {
+				t.Errorf("expected per-member item 'Active IPs'; got %q", r.Item)
+			}
 		}
 	}
 
-	if activeIPRow == nil {
-		t.Fatal("expected an Active IPs FindingRow; got none")
-	}
-
-	// Should be a single all-sources row.
-	if activeIPRow.Item != "NIOS Active IPs (All Sources)" {
-		t.Errorf("expected item 'NIOS Active IPs (All Sources)'; got %q", activeIPRow.Item)
+	if activeIPRows == 0 {
+		t.Fatal("expected Active IPs FindingRows; got none")
 	}
 
 	// Fixture unique IPs: 10.0.0.1, .2, .3 (GM leases) + 10.0.0.20 (dhcp1 lease) +
-	// 10.0.0.50 (fixed) + 10.0.0.51 (host) + 10.0.1.0, 10.0.1.255 (network) +
-	// 10.0.0.100 (discovery unique). 10.0.0.1 from discovery dedupes with lease.
+	// 10.0.0.50 (fixed) + 10.0.0.51 (host) + 10.0.0.0, 10.0.0.255 (network 10.0.0.0/24) +
+	// 10.0.1.0, 10.0.1.255 (network 10.0.1.0/24) + 10.0.0.100 (discovery unique).
+	// 10.0.0.1 from discovery dedupes with lease within GM's memberIPSet.
 	// Non-active leases (expired 10.0.0.21, free 10.0.0.99) do NOT contribute IPs.
-	if activeIPRow.Count != 9 {
-		t.Errorf("expected Active IP count=9 (all sources, deduped); got %d", activeIPRow.Count)
+	if totalActiveIPs != 11 {
+		t.Errorf("expected total Active IPs = 11 (all sources, deduped per-member); got %d", totalActiveIPs)
 	}
 }
 
@@ -319,21 +324,36 @@ func TestNIOS_AllMembersInMetrics(t *testing.T) {
 	}
 }
 
-// TestNIOS_GridLevelDDISeparateFromMembers verifies that DDI objects are grid-level
-// (attributed to GM in FindingRows) and NOT stored in per-member accumulators.
-// This matches the Python reference where all non-lease DDI has member_hostname=None
-// and goes into grid_ddi, not per_member[hostname].ddi_count.
+// TestNIOS_GridLevelDDISeparateFromMembers verifies that DDI objects are attributed
+// to the correct member via memberResolver. Networks with dhcp_member mappings go
+// to the mapped member; DNS zones go to their ns_group member; unresolved DDI falls
+// back to GM.
 func TestNIOS_GridLevelDDISeparateFromMembers(t *testing.T) {
 	rows := runScan(t)
 
-	// All DDI FindingRows should have Source == GM hostname.
-	// No DDI row should have Source == dns1 or dhcp1 (non-GM members never get DDI).
+	// DDI FindingRows should have Source matching the resolved member.
+	// With dhcp_member mappings: 10.0.0.0/24 → GM, 10.0.1.0/24 → dhcp1.
+	// Zones and other DDI without resolution fall back to GM.
+	ddiBySource := make(map[string]int)
 	for _, r := range rows {
 		if r.Category == calculator.CategoryDDIObjects {
-			if r.Source != "gm.test.local" {
-				t.Errorf("DDI row has Source=%q, want 'gm.test.local' (DDI is grid-level); row: %+v", r.Source, r)
-			}
+			ddiBySource[r.Source] += r.Count
 		}
+	}
+
+	// GM should have most DDI (zones, host records, DTC, network 10.0.0.0/24).
+	if gmDDI := ddiBySource["gm.test.local"]; gmDDI < 8 {
+		t.Errorf("GM DDI count = %d, want >= 8 (zones+hosts+DTC+network)", gmDDI)
+	}
+
+	// dhcp1 should have 1 DDI (network 10.0.1.0/24 via dhcp_member mapping).
+	if dhcp1DDI := ddiBySource["dhcp1.test.local"]; dhcp1DDI != 1 {
+		t.Errorf("dhcp1 DDI count = %d, want 1 (network 10.0.1.0/24 via dhcp_member)", dhcp1DDI)
+	}
+
+	// dns1 should have no DDI.
+	if dns1DDI := ddiBySource["dns1.test.local"]; dns1DDI != 0 {
+		t.Errorf("dns1 DDI count = %d, want 0", dns1DDI)
 	}
 }
 
@@ -344,14 +364,17 @@ func TestNIOS_GridLevelDDISeparateFromMembers(t *testing.T) {
 func TestNIOS_NonActiveLeasesCounted(t *testing.T) {
 	rows := runScan(t)
 
-	// Active IPs should be 9 (only active leases + fixed + host + network + discovery).
+	// Sum Active IPs across per-member rows.
+	// Should be 11 (only active leases + fixed + host + 2x network + discovery).
 	// Non-active leases (expired 10.0.0.21, free 10.0.0.99) must NOT appear in IP count.
+	totalActiveIPs := 0
 	for _, r := range rows {
 		if r.Category == calculator.CategoryActiveIPs {
-			if r.Count != 9 {
-				t.Errorf("Active IPs = %d, want 9 (expired/free leases must not contribute IPs)", r.Count)
-			}
+			totalActiveIPs += r.Count
 		}
+	}
+	if totalActiveIPs != 11 {
+		t.Errorf("total Active IPs = %d, want 11 (expired/free leases must not contribute IPs)", totalActiveIPs)
 	}
 }
 
@@ -410,11 +433,12 @@ func TestNIOS_MultiMemberLeaseAttribution(t *testing.T) {
 		metricsByHost[m.MemberID] = m
 	}
 
-	// GM (gm.test.local) should have all grid-level DDI objects.
-	// Fixture DDI: 2 zones + 1 network + 1 DTC LBDN + 5 host records (2+3) = 9.
+	// GM (gm.test.local) should have grid-level DDI + network 10.0.0.0/24.
+	// Fixture DDI: 2 zones + 1 network (10.0.0.0/24→GM) + 1 DTC LBDN + 5 host records (2+3) = 9.
+	// Plus unresolved DDI falls back to GM.
 	gm := metricsByHost["gm.test.local"]
 	if gm.ObjectCount != 9 {
-		t.Errorf("GM ObjectCount = %d, want 9 (all DDI is grid-level, attributed to GM)", gm.ObjectCount)
+		t.Errorf("GM ObjectCount = %d, want 9 (zones+1 network+DTC+hosts)", gm.ObjectCount)
 	}
 
 	// dns1.test.local has no leases and no DDI -> ObjectCount = 0.
@@ -423,9 +447,55 @@ func TestNIOS_MultiMemberLeaseAttribution(t *testing.T) {
 		t.Errorf("dns1 ObjectCount = %d, want 0 (no DDI, no leases)", dns1.ObjectCount)
 	}
 
-	// dhcp1.test.local has no DDI (all DDI is grid-level) -> ObjectCount = 0.
+	// dhcp1.test.local has 1 DDI (network 10.0.1.0/24 via dhcp_member mapping).
 	dhcp1 := metricsByHost["dhcp1.test.local"]
-	if dhcp1.ObjectCount != 0 {
-		t.Errorf("dhcp1 ObjectCount = %d, want 0 (no DDI, leases don't count as DDI)", dhcp1.ObjectCount)
+	if dhcp1.ObjectCount != 1 {
+		t.Errorf("dhcp1 ObjectCount = %d, want 1 (network 10.0.1.0/24 via dhcp_member)", dhcp1.ObjectCount)
+	}
+}
+
+// TestNIOS_PerMemberActiveIPs verifies that Active IP FindingRows are emitted per-member
+// with correct Source hostnames, not as a single grid-level row on GM.
+//
+// Expected per-member attribution:
+//   - gm.test.local (owns 10.0.0.0/24): leases 10.0.0.1,.2,.3 (vnode) + fixed 10.0.0.50
+//     + host 10.0.0.51 + discovery 10.0.0.100 + network IPs 10.0.0.0, 10.0.0.255 = 8 IPs
+//   - dhcp1.test.local (owns 10.0.1.0/24): lease 10.0.0.20 (vnode) + network IPs
+//     10.0.1.0, 10.0.1.255 = 3 IPs
+func TestNIOS_PerMemberActiveIPs(t *testing.T) {
+	rows := runScan(t)
+
+	// Collect Active IP rows by Source.
+	activeBySource := make(map[string]int)
+	for _, r := range rows {
+		if r.Category == calculator.CategoryActiveIPs {
+			activeBySource[r.Source] += r.Count
+			// All per-member rows should use "Active IPs" as item name.
+			if r.Item != "Active IPs" {
+				t.Errorf("expected item 'Active IPs' for source %s; got %q", r.Source, r.Item)
+			}
+		}
+	}
+
+	// Must have at least 2 members with Active IPs (GM + dhcp1).
+	if len(activeBySource) < 2 {
+		t.Fatalf("expected >= 2 members with Active IP rows; got %d: %+v", len(activeBySource), activeBySource)
+	}
+
+	// GM should have 8 IPs (3 leases + fixed + host + discovery + 2 network IPs from 10.0.0.0/24).
+	if gmIPs := activeBySource["gm.test.local"]; gmIPs != 8 {
+		t.Errorf("gm.test.local Active IPs = %d, want 8", gmIPs)
+	}
+
+	// dhcp1 should have 3 IPs (1 lease via vnode + 2 network IPs from 10.0.1.0/24).
+	if dhcp1IPs := activeBySource["dhcp1.test.local"]; dhcp1IPs != 3 {
+		t.Errorf("dhcp1.test.local Active IPs = %d, want 3", dhcp1IPs)
+	}
+
+	// No single "NIOS Active IPs (All Sources)" row should exist.
+	for _, r := range rows {
+		if r.Item == "NIOS Active IPs (All Sources)" {
+			t.Errorf("unexpected grid-level Active IPs row: %+v", r)
+		}
 	}
 }

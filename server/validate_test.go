@@ -492,6 +492,248 @@ func TestValidate_MultiProviderSessionReuse(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Bluecat / EfficientIP / NIOS WAPI prefixed-key tests
+//
+// The frontend sends provider-prefixed keys (bluecat_url, efficientip_url,
+// wapi_url) and snake_case fields (skip_tls, configuration_ids, site_ids).
+// These tests verify storeCredentials reads those prefixed keys correctly.
+// ---------------------------------------------------------------------------
+
+// TestStoreCredentials_BluecatPrefixedKeys: POST bluecat validate with prefixed keys
+// → session.Bluecat has all fields populated correctly.
+func TestStoreCredentials_BluecatPrefixedKeys(t *testing.T) {
+	store := session.NewStore()
+	h := newTestValidateHandler(store)
+	h.BluecatValidator = stubOKValidator([]server.SubscriptionItem{{ID: "bluecat", Name: "BlueCat (API v2)"}})
+
+	rec := postValidate(t, store, h, "bluecat", map[string]interface{}{
+		"authMethod": "credentials",
+		"credentials": map[string]string{
+			"bluecat_url":       "https://bam.example.com",
+			"bluecat_username":  "admin",
+			"bluecat_password":  "secret",
+			"skip_tls":          "true",
+			"configuration_ids": "42,99",
+		},
+	})
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	resp := &http.Response{Header: rec.Header()}
+	var sessionID string
+	for _, c := range resp.Cookies() {
+		if c.Name == "ddi_session" {
+			sessionID = c.Value
+			break
+		}
+	}
+	if sessionID == "" {
+		t.Fatal("expected ddi_session cookie")
+	}
+
+	sess, ok := store.Get(sessionID)
+	if !ok {
+		t.Fatal("session not found in store")
+	}
+	if sess.Bluecat == nil {
+		t.Fatal("expected sess.Bluecat to be set")
+	}
+	if sess.Bluecat.URL != "https://bam.example.com" {
+		t.Errorf("expected URL=%q, got %q", "https://bam.example.com", sess.Bluecat.URL)
+	}
+	if sess.Bluecat.Username != "admin" {
+		t.Errorf("expected Username=%q, got %q", "admin", sess.Bluecat.Username)
+	}
+	if sess.Bluecat.Password != "secret" {
+		t.Errorf("expected Password=%q, got %q", "secret", sess.Bluecat.Password)
+	}
+	if !sess.Bluecat.SkipTLS {
+		t.Error("expected SkipTLS=true")
+	}
+	if len(sess.Bluecat.ConfigurationIDs) != 2 || sess.Bluecat.ConfigurationIDs[0] != "42" || sess.Bluecat.ConfigurationIDs[1] != "99" {
+		t.Errorf("expected ConfigurationIDs=[42,99], got %v", sess.Bluecat.ConfigurationIDs)
+	}
+}
+
+// TestStoreCredentials_EfficientIPPrefixedKeys: POST efficientip validate with prefixed keys
+// → session.EfficientIP has all fields populated correctly.
+func TestStoreCredentials_EfficientIPPrefixedKeys(t *testing.T) {
+	store := session.NewStore()
+	h := newTestValidateHandler(store)
+	h.EfficientIPValidator = stubOKValidator([]server.SubscriptionItem{{ID: "efficientip", Name: "EfficientIP (Basic auth)"}})
+
+	rec := postValidate(t, store, h, "efficientip", map[string]interface{}{
+		"authMethod": "credentials",
+		"credentials": map[string]string{
+			"efficientip_url":      "https://eip.example.com",
+			"efficientip_username": "admin",
+			"efficientip_password": "secret",
+			"skip_tls":             "true",
+			"site_ids":             "10,20",
+		},
+	})
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	resp := &http.Response{Header: rec.Header()}
+	var sessionID string
+	for _, c := range resp.Cookies() {
+		if c.Name == "ddi_session" {
+			sessionID = c.Value
+			break
+		}
+	}
+	if sessionID == "" {
+		t.Fatal("expected ddi_session cookie")
+	}
+
+	sess, ok := store.Get(sessionID)
+	if !ok {
+		t.Fatal("session not found in store")
+	}
+	if sess.EfficientIP == nil {
+		t.Fatal("expected sess.EfficientIP to be set")
+	}
+	if sess.EfficientIP.URL != "https://eip.example.com" {
+		t.Errorf("expected URL=%q, got %q", "https://eip.example.com", sess.EfficientIP.URL)
+	}
+	if sess.EfficientIP.Username != "admin" {
+		t.Errorf("expected Username=%q, got %q", "admin", sess.EfficientIP.Username)
+	}
+	if sess.EfficientIP.Password != "secret" {
+		t.Errorf("expected Password=%q, got %q", "secret", sess.EfficientIP.Password)
+	}
+	if !sess.EfficientIP.SkipTLS {
+		t.Error("expected SkipTLS=true")
+	}
+	if len(sess.EfficientIP.SiteIDs) != 2 || sess.EfficientIP.SiteIDs[0] != "10" || sess.EfficientIP.SiteIDs[1] != "20" {
+		t.Errorf("expected SiteIDs=[10,20], got %v", sess.EfficientIP.SiteIDs)
+	}
+}
+
+// TestStoreCredentials_NiosWAPIPrefixedKeys: POST nios validate with authMethod="wapi"
+// and prefixed keys → session.NiosWAPI has all fields populated correctly.
+func TestStoreCredentials_NiosWAPIPrefixedKeys(t *testing.T) {
+	store := session.NewStore()
+	h := newTestValidateHandler(store)
+	h.NiosWAPIValidator = stubOKValidator([]server.SubscriptionItem{{ID: "nios", Name: "NIOS Grid"}})
+
+	rec := postValidate(t, store, h, "nios", map[string]interface{}{
+		"authMethod": "wapi",
+		"credentials": map[string]string{
+			"wapi_url":      "https://nios.example.com",
+			"wapi_username": "admin",
+			"wapi_password": "secret",
+			"skip_tls":      "true",
+			"wapi_version":  "2.13.7",
+		},
+	})
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	resp := &http.Response{Header: rec.Header()}
+	var sessionID string
+	for _, c := range resp.Cookies() {
+		if c.Name == "ddi_session" {
+			sessionID = c.Value
+			break
+		}
+	}
+	if sessionID == "" {
+		t.Fatal("expected ddi_session cookie")
+	}
+
+	sess, ok := store.Get(sessionID)
+	if !ok {
+		t.Fatal("session not found in store")
+	}
+	if sess.NiosWAPI == nil {
+		t.Fatal("expected sess.NiosWAPI to be set")
+	}
+	if sess.NiosWAPI.URL != "https://nios.example.com" {
+		t.Errorf("expected URL=%q, got %q", "https://nios.example.com", sess.NiosWAPI.URL)
+	}
+	if sess.NiosWAPI.Username != "admin" {
+		t.Errorf("expected Username=%q, got %q", "admin", sess.NiosWAPI.Username)
+	}
+	if sess.NiosWAPI.Password != "secret" {
+		t.Errorf("expected Password=%q, got %q", "secret", sess.NiosWAPI.Password)
+	}
+	if !sess.NiosWAPI.SkipTLS {
+		t.Error("expected SkipTLS=true")
+	}
+	if sess.NiosWAPI.ExplicitVersion != "2.13.7" {
+		t.Errorf("expected ExplicitVersion=%q, got %q", "2.13.7", sess.NiosWAPI.ExplicitVersion)
+	}
+}
+
+// TestValidate_BluecatMissingField: POST bluecat validate with empty prefixed keys
+// → valid=false, error mentions required fields.
+func TestValidate_BluecatMissingField(t *testing.T) {
+	store := session.NewStore()
+	// Use REAL validator so the error path fires.
+	h := server.NewValidateHandler(store)
+	rec := postValidate(t, store, h, "bluecat", map[string]interface{}{
+		"authMethod": "credentials",
+		"credentials": map[string]string{
+			"bluecat_url":      "",
+			"bluecat_username": "",
+			"bluecat_password": "",
+		},
+	})
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp server.ValidateResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Valid {
+		t.Error("expected valid=false for missing bluecat credentials")
+	}
+	if !strings.Contains(resp.Error, "required") {
+		t.Errorf("expected error to mention 'required', got %q", resp.Error)
+	}
+}
+
+// TestValidate_EfficientIPMissingField: POST efficientip validate with empty prefixed keys
+// → valid=false, error mentions required fields.
+func TestValidate_EfficientIPMissingField(t *testing.T) {
+	store := session.NewStore()
+	// Use REAL validator so the error path fires.
+	h := server.NewValidateHandler(store)
+	rec := postValidate(t, store, h, "efficientip", map[string]interface{}{
+		"authMethod": "credentials",
+		"credentials": map[string]string{
+			"efficientip_url":      "",
+			"efficientip_username": "",
+			"efficientip_password": "",
+		},
+	})
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp server.ValidateResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Valid {
+		t.Error("expected valid=false for missing efficientip credentials")
+	}
+	if !strings.Contains(resp.Error, "required") {
+		t.Errorf("expected error to mention 'required', got %q", resp.Error)
+	}
+}
+
 // TestValidate_ADMissingField: missing "host" in AD credentials → 200, valid:false.
 func TestValidate_ADMissingField(t *testing.T) {
 	store := session.NewStore()

@@ -266,7 +266,7 @@ export const PROVIDERS: ProviderOption[] = [
       {
         id: 'backup-upload',
         name: 'Grid Backup Upload',
-        description: 'Upload a NIOS Grid backup file (.tar.gz) exported from the Grid Master. The backup will be parsed locally to extract DDI configuration.',
+        description: 'Upload a NIOS Grid backup file (.tar.gz, .tgz, .bak) or onedb.xml exported from the Grid Master.',
         fields: [],
       },
       {
@@ -468,6 +468,30 @@ export interface FindingRow {
   count: number;
   tokensPerUnit: number;
   managementTokens: number;
+}
+
+// NIOS traditional licensing rates (different from UDDI rates above)
+// NIOS uses more generous ratios since it's on-prem licensing
+export const NIOS_TOKEN_RATES: Record<TokenCategory, number> = {
+  'DDI Object': 50,  // 1 token per 50 DDI Objects
+  'Active IP': 25,   // 1 token per 25 Active IPs
+  'Asset': 13,       // 1 token per 13 Assets
+};
+
+/**
+ * Calculate NIOS licensing tokens for a set of findings.
+ * Uses NIOS-specific ratios (50/25/13) and returns the max across categories
+ * (same max-of-three approach as UDDI token calculation).
+ */
+export function calcNiosTokens(rows: FindingRow[]): number {
+  const ddi = rows.filter(f => f.category === 'DDI Object').reduce((s, f) => s + f.count, 0);
+  const ips = rows.filter(f => f.category === 'Active IP').reduce((s, f) => s + f.count, 0);
+  const assets = rows.filter(f => f.category === 'Asset').reduce((s, f) => s + f.count, 0);
+  return Math.max(
+    Math.ceil(ddi / NIOS_TOKEN_RATES['DDI Object']),
+    Math.ceil(ips / NIOS_TOKEN_RATES['Active IP']),
+    Math.ceil(assets / NIOS_TOKEN_RATES['Asset'])
+  );
 }
 
 // Helper to build a FindingRow with auto-calculated tokens

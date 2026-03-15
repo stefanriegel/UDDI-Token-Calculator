@@ -274,7 +274,7 @@ func storeCredentials(sess *session.Session, provider, authMethod string, creds 
 		}
 	case "bluecat":
 		var configIDs []string
-		if raw := creds["configurationIds"]; raw != "" {
+		if raw := creds["configuration_ids"]; raw != "" {
 			for _, id := range strings.Split(raw, ",") {
 				if id = strings.TrimSpace(id); id != "" {
 					configIDs = append(configIDs, id)
@@ -282,15 +282,15 @@ func storeCredentials(sess *session.Session, provider, authMethod string, creds 
 			}
 		}
 		sess.Bluecat = &session.BluecatCredentials{
-			URL:              creds["url"],
-			Username:         creds["username"],
-			Password:         creds["password"],
-			SkipTLS:          creds["skipTls"] == "true",
+			URL:              creds["bluecat_url"],
+			Username:         creds["bluecat_username"],
+			Password:         creds["bluecat_password"],
+			SkipTLS:          creds["skip_tls"] == "true",
 			ConfigurationIDs: configIDs,
 		}
 	case "efficientip":
 		var siteIDs []string
-		if raw := creds["siteIds"]; raw != "" {
+		if raw := creds["site_ids"]; raw != "" {
 			for _, id := range strings.Split(raw, ",") {
 				if id = strings.TrimSpace(id); id != "" {
 					siteIDs = append(siteIDs, id)
@@ -298,10 +298,10 @@ func storeCredentials(sess *session.Session, provider, authMethod string, creds 
 			}
 		}
 		sess.EfficientIP = &session.EfficientIPCredentials{
-			URL:      creds["url"],
-			Username: creds["username"],
-			Password: creds["password"],
-			SkipTLS:  creds["skipTls"] == "true",
+			URL:      creds["efficientip_url"],
+			Username: creds["efficientip_username"],
+			Password: creds["efficientip_password"],
+			SkipTLS:  creds["skip_tls"] == "true",
 			SiteIDs:  siteIDs,
 		}
 	case "nios":
@@ -309,11 +309,11 @@ func storeCredentials(sess *session.Session, provider, authMethod string, creds 
 		// Backup mode credentials are handled by HandleUploadNiosBackup.
 		if authMethod == "wapi" {
 			sess.NiosWAPI = &session.NiosWAPICredentials{
-				URL:             creds["url"],
-				Username:        creds["username"],
-				Password:        creds["password"],
-				SkipTLS:         creds["skipTls"] == "true",
-				ExplicitVersion: creds["wapiVersion"],
+				URL:             creds["wapi_url"],
+				Username:        creds["wapi_username"],
+				Password:        creds["wapi_password"],
+				SkipTLS:         creds["skip_tls"] == "true",
+				ExplicitVersion: creds["wapi_version"],
 			}
 		}
 	}
@@ -833,14 +833,14 @@ func realADValidator(ctx context.Context, creds map[string]string) ([]Subscripti
 // v2 session auth first, then falling back to v1 legacy auth.
 // Returns a single SubscriptionItem identifying the detected API version.
 func realBluecatValidator(ctx context.Context, creds map[string]string) ([]SubscriptionItem, error) {
-	baseURL := strings.TrimRight(creds["url"], "/")
-	username := creds["username"]
-	password := creds["password"]
+	baseURL := strings.TrimRight(creds["bluecat_url"], "/")
+	username := creds["bluecat_username"]
+	password := creds["bluecat_password"]
 	if baseURL == "" || username == "" || password == "" {
-		return nil, errors.New("url, username, and password are required")
+		return nil, errors.New("bluecat_url, bluecat_username, and bluecat_password are required")
 	}
 
-	skipTLS := creds["skipTls"] == "true"
+	skipTLS := creds["skip_tls"] == "true"
 	client := &http.Client{Timeout: 15 * time.Second}
 	if skipTLS {
 		client.Transport = &http.Transport{
@@ -886,14 +886,14 @@ func realBluecatValidator(ctx context.Context, creds map[string]string) ([]Subsc
 // Tries HTTP Basic auth first, then native X-IPM headers with base64-encoded credentials.
 // Returns a single SubscriptionItem identifying the detected auth mode.
 func realEfficientIPValidator(ctx context.Context, creds map[string]string) ([]SubscriptionItem, error) {
-	baseURL := strings.TrimRight(creds["url"], "/")
-	username := creds["username"]
-	password := creds["password"]
+	baseURL := strings.TrimRight(creds["efficientip_url"], "/")
+	username := creds["efficientip_username"]
+	password := creds["efficientip_password"]
 	if baseURL == "" || username == "" || password == "" {
-		return nil, errors.New("url, username, and password are required")
+		return nil, errors.New("efficientip_url, efficientip_username, and efficientip_password are required")
 	}
 
-	skipTLS := creds["skipTls"] == "true"
+	skipTLS := creds["skip_tls"] == "true"
 	client := &http.Client{Timeout: 15 * time.Second}
 	if skipTLS {
 		client.Transport = &http.Transport{
@@ -941,14 +941,14 @@ func realEfficientIPValidator(ctx context.Context, creds map[string]string) ([]S
 // and fetching the capacity report. Returns Grid Members as SubscriptionItems
 // so the Sources step can display them for member selection (same UX as backup upload).
 func realNiosWAPIValidator(ctx context.Context, creds map[string]string) ([]SubscriptionItem, error) {
-	baseURL := strings.TrimRight(creds["url"], "/")
-	username := creds["username"]
-	password := creds["password"]
+	baseURL := strings.TrimRight(creds["wapi_url"], "/")
+	username := creds["wapi_username"]
+	password := creds["wapi_password"]
 	if baseURL == "" || username == "" || password == "" {
-		return nil, errors.New("url, username, and password are required")
+		return nil, errors.New("wapi_url, wapi_username, and wapi_password are required")
 	}
 
-	skipTLS := creds["skipTls"] == "true"
+	skipTLS := creds["skip_tls"] == "true"
 	client := &http.Client{Timeout: 15 * time.Second}
 	if skipTLS {
 		client.Transport = &http.Transport{
@@ -958,7 +958,7 @@ func realNiosWAPIValidator(ctx context.Context, creds map[string]string) ([]Subs
 
 	// Strip embedded /wapi/vX.Y.Z if present and extract version.
 	wapiVersionRE := regexp.MustCompile(`(?i)/wapi/v(?P<version>\d+(?:\.\d+)+)`)
-	explicitVersion := strings.TrimSpace(creds["wapiVersion"])
+	explicitVersion := strings.TrimSpace(creds["wapi_version"])
 	if strings.HasPrefix(strings.ToLower(explicitVersion), "v") {
 		explicitVersion = explicitVersion[1:]
 	}

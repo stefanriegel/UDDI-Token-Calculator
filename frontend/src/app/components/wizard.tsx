@@ -54,6 +54,7 @@ import {
   MOCK_NIOS_SERVER_METRICS,
   calcServerTokenTier,
   consolidateXaasInstances,
+  calcNiosTokens,
   NIOS_GRID_LOGO,
   INFOBLOX_LOGO,
   PROVIDER_LOGOS,
@@ -244,6 +245,7 @@ export function Wizard() {
   const [niosDragOver, setNiosDragOver] = useState(false);
   // NIOS-X migration planner: which NIOS sources (grid members) to migrate, with per-member form factor
   const [niosMigrationMap, setNiosMigrationMap] = useState<Map<string, ServerFormFactor>>(new Map());
+  const [memberSearchFilter, setMemberSearchFilter] = useState('');
 
   // Backend wiring: NIOS backup token returned from upload, and live server metrics from scan results
   const [backupToken, setBackupToken] = useState<string>('');
@@ -330,6 +332,7 @@ export function Wizard() {
     setNiosUploadedFile(null);
     setNiosDragOver(false);
     setNiosMigrationMap(new Map());
+    setMemberSearchFilter('');
     setBackupToken('');
     setNiosServerMetrics([]);
     setFindingsProviderFilter(new Set());
@@ -714,13 +717,14 @@ export function Wizard() {
     if (selectedProviders.includes('nios') && niosMigrationMap.size > 0) {
       const nf = findings.filter((f) => f.provider === 'nios');
       const nonNios = findings.filter((f) => f.provider !== 'nios').reduce((s, f) => s + f.managementTokens, 0);
-      const allNios = nf.reduce((s, f) => s + f.managementTokens, 0);
+      const allNios = calcNiosTokens(nf);
       const migrating = nf.filter((f) => niosMigrationMap.has(f.source)).reduce((s, f) => s + f.managementTokens, 0);
+      const stayingNios = calcNiosTokens(nf.filter((f) => !niosMigrationMap.has(f.source)));
       summary += `\n\nNIOS-X Migration Planner`;
       summary += `\nScenario,UDDI Tokens,NIOS Licensing Tokens`;
       summary += `\nCurrent (NIOS Only),${nonNios},${allNios}`;
-      summary += `\nHybrid (${niosMigrationMap.size} members migrated),${nonNios + migrating},${allNios - migrating}`;
-      summary += `\nFull Universal DDI,${nonNios + allNios},0`;
+      summary += `\nHybrid (${niosMigrationMap.size} members migrated),${nonNios + migrating},${stayingNios}`;
+      summary += `\nFull Universal DDI,${nonNios + nf.reduce((s, f) => s + f.managementTokens, 0)},0`;
       summary += `\n\nMembers migrated:`;
       niosMigrationMap.forEach((ff, src) => { summary += `\n,${src},${ff === 'nios-xaas' ? 'XaaS' : 'NIOS-X'}`; });
     }
@@ -783,14 +787,15 @@ export function Wizard() {
     if (selectedProviders.includes('nios') && niosMigrationMap.size > 0) {
       const nf = findings.filter((f) => f.provider === 'nios');
       const nonNios = findings.filter((f) => f.provider !== 'nios').reduce((s, f) => s + f.managementTokens, 0);
-      const allNios = nf.reduce((s, f) => s + f.managementTokens, 0);
+      const allNios = calcNiosTokens(nf);
       const migrating = nf.filter((f) => niosMigrationMap.has(f.source)).reduce((s, f) => s + f.managementTokens, 0);
+      const stayingNios = calcNiosTokens(nf.filter((f) => !niosMigrationMap.has(f.source)));
       html += '<br/><h3>NIOS-X Migration Planner</h3>';
       html += '<table border="1" cellpadding="4" cellspacing="0">';
       html += '<tr style="background:#002B49;color:white"><th>Scenario</th><th>UDDI Tokens</th><th>NIOS Licensing</th></tr>';
       html += `<tr><td>Current (NIOS Only)</td><td>${nonNios.toLocaleString()}</td><td>${allNios.toLocaleString()}</td></tr>`;
-      html += `<tr style="background:#FFF3E0"><td>Hybrid (${niosMigrationMap.size} members migrated)</td><td><b>${(nonNios + migrating).toLocaleString()}</b></td><td>${(allNios - migrating).toLocaleString()}</td></tr>`;
-      html += `<tr><td>Full Universal DDI</td><td><b>${(nonNios + allNios).toLocaleString()}</b></td><td>0</td></tr>`;
+      html += `<tr style="background:#FFF3E0"><td>Hybrid (${niosMigrationMap.size} members migrated)</td><td><b>${(nonNios + migrating).toLocaleString()}</b></td><td>${stayingNios.toLocaleString()}</td></tr>`;
+      html += `<tr><td>Full Universal DDI</td><td><b>${(nonNios + nf.reduce((s, f) => s + f.managementTokens, 0)).toLocaleString()}</b></td><td>0</td></tr>`;
       html += '</table>';
       html += '<br/><p><b>Members migrated:</b></p><ul>';
       niosMigrationMap.forEach((ff, src) => { html += `<li>${src} → ${ff === 'nios-xaas' ? 'NIOS-X as a Service' : 'NIOS-X'}</li>`; });
@@ -1022,7 +1027,7 @@ export function Wizard() {
               </h2>
               <p className="text-[13px] text-[var(--muted-foreground)] mb-6">
                 {isNiosOnly && niosMode === 'backup'
-                  ? 'Upload a NIOS Grid backup file (.tar.gz, .tgz, or .bak) exported from the Grid Master. The backup will be parsed locally to extract DDI configuration.'
+                  ? 'Upload a NIOS Grid backup file (.tar.gz, .tgz, .bak) or onedb.xml exported from the Grid Master.'
                   : 'Configure credentials for each selected provider. Credentials are sent only to your local Go backend — never to external servers.'}
               </p>
               <div className="space-y-4">
@@ -1122,7 +1127,7 @@ export function Wizard() {
                                 e.preventDefault();
                                 setNiosDragOver(false);
                                 const file = e.dataTransfer.files?.[0];
-                                if (file && (file.name.endsWith('.tar.gz') || file.name.endsWith('.tgz') || file.name.endsWith('.bak'))) {
+                                if (file && (file.name.endsWith('.tar.gz') || file.name.endsWith('.tgz') || file.name.endsWith('.bak') || file.name.endsWith('.xml'))) {
                                   setNiosUploadedFile(file);
                                 }
                               }}
@@ -1209,7 +1214,7 @@ export function Wizard() {
                                         browse
                                         <input
                                           type="file"
-                                          accept=".tar.gz,.tgz,.bak"
+                                          accept=".tar.gz,.tgz,.bak,.xml"
                                           className="hidden"
                                           onChange={(e) => {
                                             const file = e.target.files?.[0];
@@ -1219,7 +1224,7 @@ export function Wizard() {
                                       </label>
                                     </p>
                                     <p className="text-[11px] text-[var(--muted-foreground)] mt-1">
-                                      Accepts .tar.gz, .tgz, or .bak files exported from NIOS Grid Master
+                                      Accepts .tar.gz, .tgz, .bak, or .xml (onedb.xml) files
                                     </p>
                                   </div>
                                 </div>
@@ -1419,7 +1424,7 @@ export function Wizard() {
                             <button
                               onClick={() => {
                                 if (isNiosBackup) {
-                                  const input = document.querySelector('input[accept=".tar.gz,.tgz,.bak"]') as HTMLInputElement;
+                                  const input = document.querySelector('input[accept=".tar.gz,.tgz,.bak,.xml"]') as HTMLInputElement;
                                   if (input) input.click();
                                 } else {
                                   validateCredential(provId);
@@ -1866,7 +1871,7 @@ export function Wizard() {
           {currentStep === 'results' && (
             <div>
               {/* Total Management Tokens — hero card */}
-              <div className="bg-white rounded-xl border-2 border-[var(--infoblox-orange)]/30 p-5 mb-6">
+              <div id="section-overview" className="bg-white rounded-xl border-2 border-[var(--infoblox-orange)]/30 p-5 mb-6">
                 <div className="flex items-start justify-between mb-4">
                   <div>
                     <div className="text-[13px] text-[var(--muted-foreground)] mb-1">Total Management Tokens</div>
@@ -1891,13 +1896,15 @@ export function Wizard() {
                     const HERO_LIMIT = 10;
                     const visibleSources = showAllHeroSources ? sources : sources.slice(0, HERO_LIMIT);
                     const hiddenCount = sources.length - HERO_LIMIT;
+                    const heroNeedsScroll = showAllHeroSources && sources.length > 15;
                     return (
                       <>
+                        <div className={heroNeedsScroll ? 'max-h-[400px] overflow-y-auto' : ''}>
                         {visibleSources.map((entry) => {
                           const provider = PROVIDERS.find((p) => p.id === entry.provider)!;
                           const pct = totalTokens > 0 ? (entry.tokens / totalTokens) * 100 : 0;
                           return (
-                            <div key={`${entry.provider}-${entry.source}`}>
+                            <div key={`${entry.provider}-${entry.source}`} className="mb-2.5">
                               <div className="flex items-center justify-between mb-1">
                                 <span className="text-[12px] flex items-center gap-1.5" style={{ fontWeight: 500 }}>
                                   <span
@@ -1922,6 +1929,7 @@ export function Wizard() {
                             </div>
                           );
                         })}
+                        </div>
                         {hiddenCount > 0 && (
                           <button
                             type="button"
@@ -1937,6 +1945,29 @@ export function Wizard() {
                   })()}
                 </div>
               </div>
+
+              {/* Section jump navigation — only for NIOS scans */}
+              {selectedProviders.includes('nios') && (
+                <div className="sticky top-0 z-10 bg-white border-b border-[var(--border)] rounded-xl mb-6 px-4 py-2.5 flex items-center gap-2 flex-wrap">
+                  {[
+                    { id: 'section-overview', label: 'Overview' },
+                    { id: 'section-migration-planner', label: 'Migration Planner' },
+                    { id: 'section-server-tokens', label: 'Server Token Calculator' },
+                    { id: 'section-findings', label: 'Detailed Findings' },
+                    { id: 'section-export', label: 'Export' },
+                  ].map((nav) => (
+                    <button
+                      key={nav.id}
+                      type="button"
+                      onClick={() => document.getElementById(nav.id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                      className="text-[12px] px-3 py-1.5 rounded-full border border-[var(--border)] hover:bg-gray-50 hover:border-[var(--infoblox-blue)] transition-colors"
+                      style={{ fontWeight: 500 }}
+                    >
+                      {nav.label}
+                    </button>
+                  ))}
+                </div>
+              )}
 
               {/* Top Consumer Cards — DNS, DHCP, IP */}
               {(() => {
@@ -2135,8 +2166,9 @@ export function Wizard() {
                                 const showAll = showAllCategorySources[cat.key] || false;
                                 const visible = showAll ? sources : sources.slice(0, CAT_LIMIT);
                                 const catHidden = sources.length - CAT_LIMIT;
+                                const needsScroll = showAll && sources.length > 10;
                                 return (
-                                  <>
+                                  <div className={needsScroll ? 'max-h-[300px] overflow-y-auto' : ''}>
                                     {visible.map((entry) => {
                                       const provider = PROVIDERS.find((p) => p.id === entry.provider)!;
                                       const pct = maxSourceTokens > 0 ? (entry.tokens / maxSourceTokens) * 100 : 0;
@@ -2176,7 +2208,7 @@ export function Wizard() {
                                         {showAll ? 'Show less' : `+${catHidden} more`}
                                       </button>
                                     )}
-                                  </>
+                                  </div>
                                 );
                               })()}
                               {sources.length === 0 && (
@@ -2193,8 +2225,613 @@ export function Wizard() {
                 );
               })()}
 
+              {/* NIOS-X Migration Planner — only shown when NIOS is among selected providers */}
+              {selectedProviders.includes('nios') && (() => {
+                // Collect unique NIOS sources (grid members)
+                const niosSources = Array.from(
+                  new Map(
+                    findings
+                      .filter((f) => f.provider === 'nios')
+                      .map((f) => [f.source, f.source])
+                  ).keys()
+                );
+
+                const toggleMigration = (source: string) => {
+                  setNiosMigrationMap((prev) => {
+                    const next = new Map(prev);
+                    if (next.has(source)) next.delete(source); else next.set(source, 'nios-x');
+                    return next;
+                  });
+                };
+
+                const setMemberFormFactor = (source: string, ff: ServerFormFactor) => {
+                  setNiosMigrationMap((prev) => {
+                    const next = new Map(prev);
+                    next.set(source, ff);
+                    return next;
+                  });
+                };
+
+                // Filter sources by search term
+                const filteredSources = memberSearchFilter
+                  ? niosSources.filter(s => s.toLowerCase().includes(memberSearchFilter.toLowerCase()))
+                  : niosSources;
+
+                const toggleAllMigration = () => {
+                  const targets = memberSearchFilter ? filteredSources : niosSources;
+                  const allTargetsMigrated = targets.every(s => niosMigrationMap.has(s));
+                  if (allTargetsMigrated) {
+                    setNiosMigrationMap(prev => {
+                      const next = new Map(prev);
+                      targets.forEach(s => next.delete(s));
+                      return next;
+                    });
+                  } else {
+                    setNiosMigrationMap(prev => {
+                      const next = new Map(prev);
+                      targets.forEach(s => next.set(s, next.get(s) || 'nios-x'));
+                      return next;
+                    });
+                  }
+                };
+
+                // Compute tokens by scenario
+                const niosFindings = findings.filter((f) => f.provider === 'nios');
+                const nonNiosTokens = findings.filter((f) => f.provider !== 'nios').reduce((s, f) => s + f.managementTokens, 0);
+                // NIOS Licensing column uses NIOS ratios (50/25/13), not UDDI ratios
+                const allNiosTokens = calcNiosTokens(niosFindings);
+                // UDDI tokens for all NIOS findings (used in Full Migration scenario)
+                const allNiosUddiTokens = niosFindings.reduce((s, f) => s + f.managementTokens, 0);
+
+                const stayingFindings = niosFindings.filter((f) => !niosMigrationMap.has(f.source));
+                const stayingTokens = calcNiosTokens(stayingFindings);
+                // Migrating tokens use UDDI ratios (they move to UDDI licensing)
+                const migratingTokens = niosFindings
+                  .filter((f) => niosMigrationMap.has(f.source))
+                  .reduce((s, f) => s + f.managementTokens, 0);
+
+                const niosXCount = Array.from(niosMigrationMap.values()).filter(v => v === 'nios-x').length;
+                const xaasCount = Array.from(niosMigrationMap.values()).filter(v => v === 'nios-xaas').length;
+                const hybridDesc = niosMigrationMap.size > 0
+                  ? `${niosMigrationMap.size} of ${niosSources.length} members migrated${niosXCount > 0 && xaasCount > 0 ? ` (${niosXCount} NIOS-X, ${xaasCount} XaaS)` : niosXCount > 0 ? ' to NIOS-X' : ' to XaaS'}. Remaining stay on NIOS licensing.`
+                  : `Select members to migrate. Remaining stay on NIOS licensing.`;
+
+                // Scenarios
+                const scenarioCurrent = { label: 'Current (NIOS Only)', niosTokens: 0, uddiTokens: nonNiosTokens, desc: 'Only cloud/MS sources need UDDI tokens. NIOS stays on traditional licensing.' };
+                const scenarioHybrid = { label: 'Hybrid', niosTokens: stayingTokens, uddiTokens: nonNiosTokens + migratingTokens, desc: hybridDesc };
+                const scenarioFull = { label: 'Full Universal DDI', niosTokens: 0, uddiTokens: nonNiosTokens + allNiosUddiTokens, desc: 'All NIOS members migrated to Universal DDI. Everything on Universal DDI licensing.' };
+
+                return (
+                  <div id="section-migration-planner" className="bg-white rounded-xl border-2 border-[var(--infoblox-blue)]/30 mb-6 overflow-hidden">
+                    <div className="px-4 py-3 border-b border-[var(--border)] bg-blue-50/50 flex items-center gap-2">
+                      <img src={NIOS_GRID_LOGO} alt="NIOS Grid" className="w-5 h-5 rounded" />
+                      <ArrowRightLeft className="w-4 h-4 text-[var(--infoblox-blue)]" />
+                      <h3 className="text-[14px]" style={{ fontWeight: 600 }}>
+                        NIOS-X Migration Planner
+                      </h3>
+                      <span className="ml-auto text-[11px] text-[var(--muted-foreground)]">
+                        Select grid members &amp; target form factor
+                      </span>
+                    </div>
+
+                    {/* Member selector */}
+                    <div className="px-4 py-3 border-b border-[var(--border)]">
+                      {/* Search filter */}
+                      <div className="relative mb-2">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
+                        <input
+                          type="text"
+                          placeholder="Filter members..."
+                          value={memberSearchFilter}
+                          onChange={(e) => setMemberSearchFilter(e.target.value)}
+                          className="w-full pl-8 pr-3 py-2 text-[12px] rounded-lg border border-[var(--border)] focus:outline-none focus:ring-1 focus:ring-[var(--infoblox-blue)] focus:border-[var(--infoblox-blue)]"
+                        />
+                      </div>
+                      <div className="flex items-center gap-2 mb-3">
+                        <button
+                          onClick={toggleAllMigration}
+                          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[12px] border border-[var(--border)] hover:bg-gray-50 transition-colors"
+                          style={{ fontWeight: 500 }}
+                        >
+                          {(() => {
+                            const targets = memberSearchFilter ? filteredSources : niosSources;
+                            const allTargetsMigrated = targets.length > 0 && targets.every(s => niosMigrationMap.has(s));
+                            const someTargetsMigrated = targets.some(s => niosMigrationMap.has(s));
+                            return (
+                              <>
+                                <div className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition-colors ${
+                                  allTargetsMigrated
+                                    ? 'bg-[var(--infoblox-blue)] border-[var(--infoblox-blue)]'
+                                    : someTargetsMigrated
+                                      ? 'bg-[var(--infoblox-blue)]/60 border-[var(--infoblox-blue)]'
+                                      : 'border-gray-300'
+                                }`}>
+                                  {allTargetsMigrated && <Check className="w-2.5 h-2.5 text-white" />}
+                                  {someTargetsMigrated && !allTargetsMigrated && <Minus className="w-2.5 h-2.5 text-white" />}
+                                </div>
+                                {allTargetsMigrated ? 'Deselect All' : 'Migrate All'}
+                              </>
+                            );
+                          })()}
+                        </button>
+                        <span className="text-[11px] text-[var(--muted-foreground)]">
+                          {memberSearchFilter
+                            ? `${filteredSources.length} of ${niosSources.length} members`
+                            : `${niosMigrationMap.size} of ${niosSources.length} members selected`}
+                          {niosMigrationMap.size > 0 && !memberSearchFilter && (() => {
+                            const nx = Array.from(niosMigrationMap.values()).filter(v => v === 'nios-x').length;
+                            const xs = Array.from(niosMigrationMap.values()).filter(v => v === 'nios-xaas').length;
+                            if (nx > 0 && xs > 0) return ` (${nx} NIOS-X, ${xs} XaaS)`;
+                            if (xs > 0) return ` (${xs} XaaS)`;
+                            return ` (${nx} NIOS-X)`;
+                          })()}
+                        </span>
+                      </div>
+                      <div className="max-h-[320px] overflow-y-auto border-t border-b border-gray-100">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 py-1">
+                        {filteredSources.map((source) => {
+                          const isMigrating = niosMigrationMap.has(source);
+                          const memberFF = niosMigrationMap.get(source) || 'nios-x';
+                          const sourceTokens = niosFindings.filter((f) => f.source === source).reduce((s, f) => s + f.managementTokens, 0);
+                          return (
+                            <div
+                              key={source}
+                              className={`flex items-center gap-2.5 px-3 py-2 rounded-lg transition-colors ${
+                                isMigrating
+                                  ? memberFF === 'nios-xaas'
+                                    ? 'bg-purple-50 border border-purple-200'
+                                    : 'bg-blue-50 border border-blue-200'
+                                  : 'border border-[var(--border)] hover:bg-gray-50'
+                              }`}
+                            >
+                              <button
+                                onClick={() => toggleMigration(source)}
+                                className="flex items-center gap-0 shrink-0"
+                              >
+                                <div className={`w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 transition-colors ${
+                                  isMigrating
+                                    ? memberFF === 'nios-xaas'
+                                      ? 'bg-purple-600 border-purple-600'
+                                      : 'bg-[var(--infoblox-blue)] border-[var(--infoblox-blue)]'
+                                    : 'border-gray-300'
+                                }`}>
+                                  {isMigrating && <Check className="w-3 h-3 text-white" />}
+                                </div>
+                              </button>
+                              <div className="flex-1 min-w-0">
+                                <div className="text-[12px] truncate" style={{ fontWeight: 500 }}>{source}</div>
+                                <div className="text-[10px] text-[var(--muted-foreground)]">{sourceTokens.toLocaleString()} tokens</div>
+                              </div>
+                              {isMigrating && (
+                                <div className="flex items-center bg-white rounded-md border border-gray-200 p-0.5 shrink-0">
+                                  <button
+                                    onClick={() => setMemberFormFactor(source, 'nios-x')}
+                                    className={`px-2 py-0.5 rounded text-[9px] transition-all ${
+                                      memberFF === 'nios-x'
+                                        ? 'bg-[var(--infoblox-navy)] text-white shadow-sm'
+                                        : 'text-gray-400 hover:text-gray-600'
+                                    }`}
+                                    style={{ fontWeight: 600 }}
+                                  >
+                                    NIOS-X
+                                  </button>
+                                  <button
+                                    onClick={() => setMemberFormFactor(source, 'nios-xaas')}
+                                    className={`px-2 py-0.5 rounded text-[9px] transition-all ${
+                                      memberFF === 'nios-xaas'
+                                        ? 'bg-purple-600 text-white shadow-sm'
+                                        : 'text-gray-400 hover:text-gray-600'
+                                    }`}
+                                    style={{ fontWeight: 600 }}
+                                  >
+                                    XaaS
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                      </div>
+                    </div>
+
+                    {/* Scenario comparison cards */}
+                    <div className="px-4 py-4">
+                      <h3 className="text-[14px] font-semibold text-[var(--foreground)] mb-3">Management Tokens</h3>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        {[scenarioCurrent, scenarioHybrid, scenarioFull].map((scenario, idx) => {
+                          const isHybrid = idx === 1;
+                          const isFull = idx === 2;
+                          const isActive = isHybrid ? niosMigrationMap.size > 0 && niosMigrationMap.size < niosSources.length : isFull ? niosMigrationMap.size === niosSources.length : niosMigrationMap.size === 0;
+                          return (
+                            <div
+                              key={scenario.label}
+                              className={`rounded-xl border-2 p-4 transition-colors ${
+                                isActive
+                                  ? 'border-[var(--infoblox-orange)] bg-orange-50/30 shadow-sm'
+                                  : 'border-[var(--border)] bg-white'
+                              }`}
+                            >
+                              <div className="flex items-center gap-2 mb-2">
+                                {isActive && <span className="w-2 h-2 rounded-full bg-[var(--infoblox-orange)]" />}
+                                <span className="text-[12px] uppercase tracking-wider text-[var(--muted-foreground)]" style={{ fontWeight: 600 }}>
+                                  {scenario.label}
+                                </span>
+                              </div>
+                              <div className="text-[28px] text-[var(--infoblox-orange)]" style={{ fontWeight: 700 }}>
+                                {(scenario.uddiTokens + scenario.niosTokens).toLocaleString()}
+                              </div>
+                              <div className="text-[11px] text-[var(--muted-foreground)] mb-2">
+                                Universal DDI Tokens
+                              </div>
+                              {scenario.niosTokens > 0 && (
+                                <div className="text-[11px] space-y-0.5 mb-1">
+                                  <div className="text-blue-600">
+                                    {scenario.uddiTokens.toLocaleString()} on NIOS-X / Universal DDI
+                                  </div>
+                                  <div className="text-gray-500">
+                                    {scenario.niosTokens.toLocaleString()} on NIOS Licensing
+                                  </div>
+                                </div>
+                              )}
+                              <p className="text-[11px] text-[var(--muted-foreground)] border-t border-[var(--border)] pt-2 mt-2">
+                                {scenario.desc}
+                              </p>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Server Token Calculator — per-member QPS/LPS/Object sizing */}
+              {selectedProviders.includes('nios') && (() => {
+                // Only show metrics for members selected for migration
+                const migratingMembers = effectiveNiosMetrics.filter((m) =>
+                  niosMigrationMap.has(m.memberName)
+                );
+                const allMembers = effectiveNiosMetrics.filter((m) => {
+                  const niosSources = new Set(
+                    findings.filter((f) => f.provider === 'nios').map((f) => f.source)
+                  );
+                  return niosSources.has(m.memberName);
+                });
+
+                const displayMembers = migratingMembers.length > 0 ? migratingMembers : allMembers;
+
+                // Per-member form factor helper
+                const getMemberFF = (memberName: string): ServerFormFactor =>
+                  niosMigrationMap.get(memberName) || 'nios-x';
+
+                const hasAnyXaas = displayMembers.some((m) => getMemberFF(m.memberName) === 'nios-xaas');
+                const xaasMembers = displayMembers.filter((m) => getMemberFF(m.memberName) === 'nios-xaas');
+                const niosXMembers = displayMembers.filter((m) => getMemberFF(m.memberName) === 'nios-x');
+                const niosXMemberCount = niosXMembers.length;
+                const xaasMemberCount = xaasMembers.length;
+
+                // Consolidate XaaS members into instances (1 instance can replace many NIOS members)
+                const xaasInstances = consolidateXaasInstances(xaasMembers);
+                const totalXaasTokens = xaasInstances.reduce((s, inst) => s + inst.totalTokens, 0);
+
+                // NIOS-X tokens (individual per member)
+                const niosXTokens = niosXMembers.reduce((sum, m) => {
+                  return sum + calcServerTokenTier(m.qps, m.lps, m.objectCount, 'nios-x').serverTokens;
+                }, 0);
+
+                const totalServerTokens = niosXTokens + totalXaasTokens;
+                const totalNiosReplaced = xaasMembers.length; // 1 connection per NIOS member replaced
+
+                const roleColors: Record<string, string> = {
+                  GM: '#002B49',
+                  GMC: '#1a4a6e',
+                  DNS: '#0078d4',
+                  DHCP: '#00a5e5',
+                  'DNS/DHCP': '#005a9e',
+                  IPAM: '#7fba00',
+                  Reporting: '#8b8b8b',
+                };
+
+                const tierColorClass = (name: string) =>
+                  name === 'XL' ? 'bg-red-100 text-red-700' :
+                  name === 'L' ? 'bg-orange-100 text-orange-700' :
+                  name === 'M' ? 'bg-yellow-100 text-yellow-700' :
+                  name === 'S' ? 'bg-green-100 text-green-700' :
+                  name === 'XS' ? 'bg-sky-100 text-sky-700' :
+                  'bg-gray-100 text-gray-700';
+
+                return (
+                  <div id="section-server-tokens" className="bg-white rounded-xl border-2 border-emerald-200 mb-6 overflow-hidden">
+                    <div className="px-4 py-3 border-b border-[var(--border)] bg-emerald-50/50 flex items-center gap-2 flex-wrap">
+                      <img src={NIOS_GRID_LOGO} alt="NIOS Grid" className="w-5 h-5 rounded" />
+                      <h3 className="text-[14px]" style={{ fontWeight: 600 }}>
+                        Server Token Calculator
+                      </h3>
+
+                      <span className="ml-auto text-[11px] text-[var(--muted-foreground)]">
+                        {migratingMembers.length > 0
+                          ? `${migratingMembers.length} member${migratingMembers.length > 1 ? 's' : ''} selected${niosXMemberCount > 0 && xaasMemberCount > 0 ? ` (${niosXMemberCount} NIOS-X, ${xaasMemberCount} XaaS)` : niosXMemberCount > 0 ? ' \u2192 NIOS-X' : ' \u2192 XaaS'}`
+                          : `${allMembers.length} grid member${allMembers.length > 1 ? 's' : ''} detected`}
+                      </span>
+                    </div>
+
+                    {/* Summary hero */}
+                    <div className="px-4 py-4 border-b border-[var(--border)] bg-gradient-to-r from-emerald-50/80 to-white">
+                      <div className={`grid ${hasAnyXaas ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-1 sm:grid-cols-2'} gap-4`}>
+                        <div>
+                          <div className="text-[11px] uppercase tracking-wider text-[var(--muted-foreground)] mb-1" style={{ fontWeight: 600 }}>
+                            Allocated Server Tokens
+                          </div>
+                          <div className="text-[28px] text-emerald-700" style={{ fontWeight: 700 }}>
+                            {totalServerTokens.toLocaleString()}
+                          </div>
+                          <div className="text-[10px] text-[var(--muted-foreground)]">
+                            {niosXMemberCount > 0 && `${niosXTokens.toLocaleString()} NIOS-X`}
+                            {niosXMemberCount > 0 && xaasMemberCount > 0 && ' + '}
+                            {xaasMemberCount > 0 && `${totalXaasTokens.toLocaleString()} XaaS`}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-[11px] uppercase tracking-wider text-[var(--muted-foreground)] mb-1" style={{ fontWeight: 600 }}>
+                            NIOS Members
+                          </div>
+                          <div className="text-[22px] text-[var(--foreground)]" style={{ fontWeight: 600 }}>
+                            {displayMembers.length}
+                          </div>
+                          <div className="text-[10px] text-[var(--muted-foreground)]">
+                            {niosXMemberCount > 0 && `${niosXMemberCount} \u2192 NIOS-X`}
+                            {niosXMemberCount > 0 && xaasMembers.length > 0 && ' \u00b7 '}
+                            {xaasMembers.length > 0 && `${xaasMembers.length} \u2192 XaaS`}
+                          </div>
+                        </div>
+                        {hasAnyXaas && ([
+                            <div key="xaas-inst-summary">
+                              <div className="text-[11px] uppercase tracking-wider text-[var(--muted-foreground)] mb-1" style={{ fontWeight: 600 }}>
+                                XaaS Instances
+                              </div>
+                              <div className="text-[22px] text-purple-700" style={{ fontWeight: 600 }}>
+                                {xaasInstances.length}
+                              </div>
+                              <div className="text-[10px] text-[var(--muted-foreground)]">
+                                replacing {totalNiosReplaced} NIOS member{totalNiosReplaced > 1 ? 's' : ''}
+                              </div>
+                            </div>,
+                            <div key="xaas-consol-ratio">
+                              <div className="text-[11px] uppercase tracking-wider text-[var(--muted-foreground)] mb-1" style={{ fontWeight: 600 }}>
+                                Consolidation Ratio
+                              </div>
+                              <div className="text-[22px] text-purple-700" style={{ fontWeight: 600 }}>
+                                {totalNiosReplaced}:{xaasInstances.length}
+                              </div>
+                              <div className="text-[10px] text-[var(--muted-foreground)]">
+                                {totalNiosReplaced} NIOS \u2192 {xaasInstances.length} XaaS instance{xaasInstances.length > 1 ? 's' : ''}
+                              </div>
+                            </div>
+                        ])}
+                      </div>
+                      {hasAnyXaas && (
+                        <div className="mt-3 flex flex-col gap-1.5">
+                          <div className="flex items-start gap-1.5 text-[10px] text-purple-700 bg-purple-50 rounded-lg px-3 py-1.5 border border-purple-200">
+                            <Info className="w-3 h-3 mt-0.5 shrink-0" />
+                            <span>
+                              <b>{xaasMembers.length} NIOS member{xaasMembers.length > 1 ? 's' : ''}</b> consolidated into <b>{xaasInstances.length} XaaS instance{xaasInstances.length > 1 ? 's' : ''}</b>.
+                              {' '}Each XaaS instance uses aggregate QPS/LPS/Objects to determine the T-shirt size.
+                              {' '}1 connection = 1 NIOS member replaced.
+                            </span>
+                          </div>
+                          {xaasInstances.some(inst => inst.extraConnections > 0) && (
+                            <div className="flex items-start gap-1.5 text-[10px] text-amber-700 bg-amber-50 rounded-lg px-3 py-1.5 border border-amber-200">
+                              <Info className="w-3 h-3 mt-0.5 shrink-0" />
+                              <span>
+                                Some instances need extra connections beyond the included tier limit (+{XAAS_EXTRA_CONNECTION_COST} tokens each, up to 400 extra per instance).
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Per-member table */}
+                    <div className="overflow-x-auto max-h-[500px] overflow-y-auto">
+                      <table className="w-full text-[12px]">
+                        <thead className="sticky top-0 z-10">
+                          <tr className="border-b border-[var(--border)] bg-gray-50">
+                            <th className="text-left px-4 py-2.5" style={{ fontWeight: 600 }}>Grid Member</th>
+                            <th className="text-center px-3 py-2.5" style={{ fontWeight: 600 }}>Role</th>
+                            <th className="text-center px-3 py-2.5" style={{ fontWeight: 600 }}>Target</th>
+                            <th className="text-right px-3 py-2.5" style={{ fontWeight: 600 }}>
+                              <span className="flex items-center justify-end gap-1">
+                                <Activity className="w-3 h-3" /> QPS
+                              </span>
+                            </th>
+                            <th className="text-right px-3 py-2.5" style={{ fontWeight: 600 }}>
+                              <span className="flex items-center justify-end gap-1">
+                                <Gauge className="w-3 h-3" /> LPS
+                              </span>
+                            </th>
+                            <th className="text-right px-3 py-2.5" style={{ fontWeight: 600 }}>Objects</th>
+                            <th className="text-center px-3 py-2.5" style={{ fontWeight: 600 }}>Size</th>
+                            <th className="text-center px-3 py-2.5" style={{ fontWeight: 600 }}>
+                              <span className="text-emerald-700">Allocated Tokens</span>
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {/* NIOS-X members — individual rows */}
+                          {niosXMembers.map((member) => {
+                            const tier = calcServerTokenTier(member.qps, member.lps, member.objectCount, 'nios-x');
+                            return (
+                              <tr key={member.memberId} className="border-b border-[var(--border)] hover:bg-gray-50/50 transition-colors">
+                                <td className="px-4 py-2.5">
+                                  <div className="truncate max-w-[260px]" style={{ fontWeight: 500 }}>{member.memberName}</div>
+                                </td>
+                                <td className="text-center px-3 py-2.5">
+                                  <span
+                                    className="inline-block px-2 py-0.5 rounded text-[10px] text-white"
+                                    style={{ fontWeight: 600, backgroundColor: roleColors[member.role] || '#666' }}
+                                  >
+                                    {member.role}
+                                  </span>
+                                </td>
+                                <td className="text-center px-3 py-2.5">
+                                  <span className="inline-block px-2 py-0.5 rounded text-[10px] bg-blue-100 text-blue-700" style={{ fontWeight: 600 }}>
+                                    NIOS-X
+                                  </span>
+                                </td>
+                                <td className="text-right px-3 py-2.5 tabular-nums">
+                                  {member.qps > 0 ? member.qps.toLocaleString() : <span className="text-gray-300">&mdash;</span>}
+                                </td>
+                                <td className="text-right px-3 py-2.5 tabular-nums">
+                                  {member.lps > 0 ? member.lps.toLocaleString() : <span className="text-gray-300">&mdash;</span>}
+                                </td>
+                                <td className="text-right px-3 py-2.5 tabular-nums">
+                                  {member.objectCount > 0 ? member.objectCount.toLocaleString() : <span className="text-gray-300">&mdash;</span>}
+                                </td>
+                                <td className="text-center px-3 py-2.5">
+                                  <span className={`inline-block px-2 py-0.5 rounded text-[10px] ${tierColorClass(tier.name)}`} style={{ fontWeight: 600 }}>
+                                    {tier.name}
+                                  </span>
+                                </td>
+                                <td className="text-center px-3 py-2.5">
+                                  <span className="inline-flex items-center justify-center min-w-[36px] h-7 px-1.5 rounded-full bg-emerald-100 text-emerald-700 text-[12px]" style={{ fontWeight: 700 }}>
+                                    {tier.serverTokens.toLocaleString()}
+                                  </span>
+                                </td>
+                              </tr>
+                            );
+                          })}
+
+                        </tbody>
+                          {/* XaaS consolidated instances */}
+                          {xaasInstances.map((inst) => (
+                            <tbody key={`xaas-inst-${inst.index}`}>
+                              {/* Instance header row */}
+                              <tr className="bg-purple-50 border-b border-purple-200">
+                                <td className="px-4 py-2 text-[11px] text-purple-800" style={{ fontWeight: 700 }} colSpan={8}>
+                                  <div className="flex items-center gap-2">
+                                    <span className="inline-flex items-center gap-1.5">
+                                      <span className="inline-block w-2.5 h-2.5 rounded-full bg-purple-500" />
+                                      XaaS Instance {xaasInstances.length > 1 ? inst.index + 1 : ''}
+                                    </span>
+                                    <span className="text-purple-500" style={{ fontWeight: 400 }}>—</span>
+                                    <span className="text-purple-600" style={{ fontWeight: 500 }}>
+                                      replaces {inst.connectionsUsed} NIOS member{inst.connectionsUsed > 1 ? 's' : ''}
+                                    </span>
+                                    <span className="ml-auto flex items-center gap-2">
+                                      <span className={`inline-block px-2 py-0.5 rounded text-[10px] ${tierColorClass(inst.tier.name)}`} style={{ fontWeight: 600 }}>
+                                        {inst.tier.name}
+                                      </span>
+                                      <span className="inline-flex items-center justify-center min-w-[36px] h-6 px-1.5 rounded-full bg-purple-200 text-purple-800 text-[11px]" style={{ fontWeight: 700 }}>
+                                        {inst.totalTokens.toLocaleString()}
+                                      </span>
+                                    </span>
+                                  </div>
+                                </td>
+                              </tr>
+                              {/* Individual member rows within this instance */}
+                              {inst.members.map((member) => (
+                                <tr key={member.memberId} className="border-b border-purple-100 hover:bg-purple-50/30 transition-colors">
+                                  <td className="pl-8 pr-4 py-2">
+                                    <div className="truncate max-w-[240px] text-[11px] text-purple-700" style={{ fontWeight: 500 }}>{member.memberName}</div>
+                                  </td>
+                                  <td className="text-center px-3 py-2">
+                                    <span
+                                      className="inline-block px-2 py-0.5 rounded text-[10px] text-white"
+                                      style={{ fontWeight: 600, backgroundColor: roleColors[member.role] || '#666' }}
+                                    >
+                                      {member.role}
+                                    </span>
+                                  </td>
+                                  <td className="text-center px-3 py-2">
+                                    <span className="inline-block px-2 py-0.5 rounded text-[9px] bg-purple-100 text-purple-600" style={{ fontWeight: 500 }}>
+                                      1 conn
+                                    </span>
+                                  </td>
+                                  <td className="text-right px-3 py-2 tabular-nums text-[11px] text-purple-600">
+                                    {member.qps > 0 ? member.qps.toLocaleString() : <span className="text-gray-300">&mdash;</span>}
+                                  </td>
+                                  <td className="text-right px-3 py-2 tabular-nums text-[11px] text-purple-600">
+                                    {member.lps > 0 ? member.lps.toLocaleString() : <span className="text-gray-300">&mdash;</span>}
+                                  </td>
+                                  <td className="text-right px-3 py-2 tabular-nums text-[11px] text-purple-600">
+                                    {member.objectCount > 0 ? member.objectCount.toLocaleString() : <span className="text-gray-300">&mdash;</span>}
+                                  </td>
+                                  <td className="text-center px-3 py-2" colSpan={2}>
+                                    <span className="text-[10px] text-gray-400">(consolidated)</span>
+                                  </td>
+                                </tr>
+                              ))}
+                              {/* Consolidated aggregate row */}
+                              <tr className="border-b border-purple-300 bg-purple-50/80">
+                                <td className="pl-8 pr-4 py-2 text-[11px] text-purple-800" style={{ fontWeight: 600 }}>
+                                  Aggregate ({inst.connectionsUsed} connection{inst.connectionsUsed > 1 ? 's' : ''} used / {inst.tier.maxConnections} included)
+                                  {inst.extraConnections > 0 && (
+                                    <span className="text-amber-600 ml-1">+{inst.extraConnections} extra</span>
+                                  )}
+                                </td>
+                                <td className="text-center px-3 py-2">
+                                  <span className="inline-block px-2 py-0.5 rounded text-[10px] bg-purple-100 text-purple-700" style={{ fontWeight: 600 }}>
+                                    XaaS
+                                  </span>
+                                </td>
+                                <td className="text-center px-3 py-2 text-[10px] text-purple-700" style={{ fontWeight: 600 }}>
+                                  {inst.connectionsUsed} conn
+                                </td>
+                                <td className="text-right px-3 py-2 tabular-nums text-purple-800" style={{ fontWeight: 600 }}>
+                                  {inst.totalQps > 0 ? inst.totalQps.toLocaleString() : <span className="text-gray-300">&mdash;</span>}
+                                </td>
+                                <td className="text-right px-3 py-2 tabular-nums text-purple-800" style={{ fontWeight: 600 }}>
+                                  {inst.totalLps > 0 ? inst.totalLps.toLocaleString() : <span className="text-gray-300">&mdash;</span>}
+                                </td>
+                                <td className="text-right px-3 py-2 tabular-nums text-purple-800" style={{ fontWeight: 600 }}>
+                                  {inst.totalObjects > 0 ? inst.totalObjects.toLocaleString() : <span className="text-gray-300">&mdash;</span>}
+                                </td>
+                                <td className="text-center px-3 py-2">
+                                  <span className={`inline-block px-2 py-0.5 rounded text-[10px] ${tierColorClass(inst.tier.name)}`} style={{ fontWeight: 600 }}>
+                                    {inst.tier.name}
+                                  </span>
+                                </td>
+                                <td className="text-center px-3 py-2">
+                                  <span className="inline-flex items-center justify-center min-w-[36px] h-7 px-1.5 rounded-full bg-purple-200 text-purple-800 text-[12px]" style={{ fontWeight: 700 }}>
+                                    {inst.totalTokens.toLocaleString()}
+                                  </span>
+                                  {inst.extraConnectionTokens > 0 && (
+                                    <div className="text-[9px] text-amber-600 mt-0.5">
+                                      incl. {inst.extraConnectionTokens.toLocaleString()} extra conn
+                                    </div>
+                                  )}
+                                </td>
+                              </tr>
+                            </tbody>
+                          ))}
+                        <tfoot className="sticky bottom-0 z-10">
+                          <tr className="bg-emerald-50">
+                            <td className="px-4 py-2.5 text-[12px]" style={{ fontWeight: 700 }} colSpan={7}>
+                              Total Allocated Server Tokens
+                              {hasAnyXaas && (
+                                <span className="text-[10px] text-[var(--muted-foreground)] ml-2" style={{ fontWeight: 400 }}>
+                                  ({niosXMemberCount > 0 ? `${niosXMemberCount} NIOS-X` : ''}{niosXMemberCount > 0 && xaasInstances.length > 0 ? ' + ' : ''}{xaasInstances.length > 0 ? `${xaasInstances.length} XaaS instance${xaasInstances.length > 1 ? 's' : ''} replacing ${totalNiosReplaced} members` : ''})
+                                </span>
+                              )}
+                            </td>
+                            <td className="text-center px-3 py-2.5">
+                              <span className="inline-flex items-center justify-center min-w-[40px] h-8 px-2 rounded-full bg-emerald-600 text-white text-[14px]" style={{ fontWeight: 700 }}>
+                                {totalServerTokens.toLocaleString()}
+                              </span>
+                            </td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+
+
+                  </div>
+                );
+              })()}
+
               {/* Findings table */}
-              <div className="bg-white rounded-xl border border-[var(--border)] mb-6 overflow-hidden">
+              <div id="section-findings" className="bg-white rounded-xl border border-[var(--border)] mb-6 overflow-hidden">
                 <div className="px-4 py-3 border-b border-[var(--border)] bg-gray-50/50 flex items-center justify-between">
                   <h3 className="text-[14px]" style={{ fontWeight: 600 }}>
                     Detailed Findings
@@ -2409,565 +3046,8 @@ export function Wizard() {
                 </div>
               </div>
 
-              {/* NIOS-X Migration Planner — only shown when NIOS is among selected providers */}
-              {selectedProviders.includes('nios') && (() => {
-                // Collect unique NIOS sources (grid members)
-                const niosSources = Array.from(
-                  new Map(
-                    findings
-                      .filter((f) => f.provider === 'nios')
-                      .map((f) => [f.source, f.source])
-                  ).keys()
-                );
-
-                const toggleMigration = (source: string) => {
-                  setNiosMigrationMap((prev) => {
-                    const next = new Map(prev);
-                    if (next.has(source)) next.delete(source); else next.set(source, 'nios-x');
-                    return next;
-                  });
-                };
-
-                const setMemberFormFactor = (source: string, ff: ServerFormFactor) => {
-                  setNiosMigrationMap((prev) => {
-                    const next = new Map(prev);
-                    next.set(source, ff);
-                    return next;
-                  });
-                };
-
-                const toggleAllMigration = () => {
-                  if (niosMigrationMap.size === niosSources.length) {
-                    setNiosMigrationMap(new Map());
-                  } else {
-                    const next = new Map<string, ServerFormFactor>();
-                    niosSources.forEach(s => next.set(s, niosMigrationMap.get(s) || 'nios-x'));
-                    setNiosMigrationMap(next);
-                  }
-                };
-
-                // Compute tokens by scenario
-                const niosFindings = findings.filter((f) => f.provider === 'nios');
-                const nonNiosTokens = findings.filter((f) => f.provider !== 'nios').reduce((s, f) => s + f.managementTokens, 0);
-                const allNiosTokens = niosFindings.reduce((s, f) => s + f.managementTokens, 0);
-
-                const migratingTokens = niosFindings
-                  .filter((f) => niosMigrationMap.has(f.source))
-                  .reduce((s, f) => s + f.managementTokens, 0);
-                const stayingTokens = allNiosTokens - migratingTokens;
-
-                const niosXCount = Array.from(niosMigrationMap.values()).filter(v => v === 'nios-x').length;
-                const xaasCount = Array.from(niosMigrationMap.values()).filter(v => v === 'nios-xaas').length;
-                const hybridDesc = niosMigrationMap.size > 0
-                  ? `${niosMigrationMap.size} of ${niosSources.length} members migrated${niosXCount > 0 && xaasCount > 0 ? ` (${niosXCount} NIOS-X, ${xaasCount} XaaS)` : niosXCount > 0 ? ' to NIOS-X' : ' to XaaS'}. Remaining stay on NIOS licensing.`
-                  : `Select members to migrate. Remaining stay on NIOS licensing.`;
-
-                // Scenarios
-                const scenarioCurrent = { label: 'Current (NIOS Only)', niosTokens: 0, uddiTokens: nonNiosTokens, desc: 'Only cloud/MS sources need UDDI tokens. NIOS stays on traditional licensing.' };
-                const scenarioHybrid = { label: 'Hybrid', niosTokens: stayingTokens, uddiTokens: nonNiosTokens + migratingTokens, desc: hybridDesc };
-                const scenarioFull = { label: 'Full Universal DDI', niosTokens: 0, uddiTokens: nonNiosTokens + allNiosTokens, desc: 'All NIOS members migrated to Universal DDI. Everything on Universal DDI licensing.' };
-
-                return (
-                  <div className="bg-white rounded-xl border-2 border-[var(--infoblox-blue)]/30 mb-6 overflow-hidden">
-                    <div className="px-4 py-3 border-b border-[var(--border)] bg-blue-50/50 flex items-center gap-2">
-                      <img src={NIOS_GRID_LOGO} alt="NIOS Grid" className="w-5 h-5 rounded" />
-                      <ArrowRightLeft className="w-4 h-4 text-[var(--infoblox-blue)]" />
-                      <h3 className="text-[14px]" style={{ fontWeight: 600 }}>
-                        NIOS-X Migration Planner
-                      </h3>
-                      <span className="ml-auto text-[11px] text-[var(--muted-foreground)]">
-                        Select grid members &amp; target form factor
-                      </span>
-                    </div>
-
-                    {/* Member selector */}
-                    <div className="px-4 py-3 border-b border-[var(--border)]">
-                      <div className="flex items-center gap-2 mb-3">
-                        <button
-                          onClick={toggleAllMigration}
-                          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[12px] border border-[var(--border)] hover:bg-gray-50 transition-colors"
-                          style={{ fontWeight: 500 }}
-                        >
-                          <div className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition-colors ${
-                            niosMigrationMap.size === niosSources.length
-                              ? 'bg-[var(--infoblox-blue)] border-[var(--infoblox-blue)]'
-                              : niosMigrationMap.size > 0
-                                ? 'bg-[var(--infoblox-blue)]/60 border-[var(--infoblox-blue)]'
-                                : 'border-gray-300'
-                          }`}>
-                            {niosMigrationMap.size === niosSources.length && <Check className="w-2.5 h-2.5 text-white" />}
-                            {niosMigrationMap.size > 0 && niosMigrationMap.size < niosSources.length && <Minus className="w-2.5 h-2.5 text-white" />}
-                          </div>
-                          {niosMigrationMap.size === niosSources.length ? 'Deselect All' : 'Migrate All'}
-                        </button>
-                        <span className="text-[11px] text-[var(--muted-foreground)]">
-                          {niosMigrationMap.size} of {niosSources.length} members selected
-                          {niosMigrationMap.size > 0 && (() => {
-                            const nx = Array.from(niosMigrationMap.values()).filter(v => v === 'nios-x').length;
-                            const xs = Array.from(niosMigrationMap.values()).filter(v => v === 'nios-xaas').length;
-                            if (nx > 0 && xs > 0) return ` (${nx} NIOS-X, ${xs} XaaS)`;
-                            if (xs > 0) return ` (${xs} XaaS)`;
-                            return ` (${nx} NIOS-X)`;
-                          })()}
-                        </span>
-                      </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-                        {niosSources.map((source) => {
-                          const isMigrating = niosMigrationMap.has(source);
-                          const memberFF = niosMigrationMap.get(source) || 'nios-x';
-                          const sourceTokens = niosFindings.filter((f) => f.source === source).reduce((s, f) => s + f.managementTokens, 0);
-                          return (
-                            <div
-                              key={source}
-                              className={`flex items-center gap-2.5 px-3 py-2 rounded-lg transition-colors ${
-                                isMigrating
-                                  ? memberFF === 'nios-xaas'
-                                    ? 'bg-purple-50 border border-purple-200'
-                                    : 'bg-blue-50 border border-blue-200'
-                                  : 'border border-[var(--border)] hover:bg-gray-50'
-                              }`}
-                            >
-                              <button
-                                onClick={() => toggleMigration(source)}
-                                className="flex items-center gap-0 shrink-0"
-                              >
-                                <div className={`w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 transition-colors ${
-                                  isMigrating
-                                    ? memberFF === 'nios-xaas'
-                                      ? 'bg-purple-600 border-purple-600'
-                                      : 'bg-[var(--infoblox-blue)] border-[var(--infoblox-blue)]'
-                                    : 'border-gray-300'
-                                }`}>
-                                  {isMigrating && <Check className="w-3 h-3 text-white" />}
-                                </div>
-                              </button>
-                              <div className="flex-1 min-w-0">
-                                <div className="text-[12px] truncate" style={{ fontWeight: 500 }}>{source}</div>
-                                <div className="text-[10px] text-[var(--muted-foreground)]">{sourceTokens.toLocaleString()} tokens</div>
-                              </div>
-                              {isMigrating && (
-                                <div className="flex items-center bg-white rounded-md border border-gray-200 p-0.5 shrink-0">
-                                  <button
-                                    onClick={() => setMemberFormFactor(source, 'nios-x')}
-                                    className={`px-2 py-0.5 rounded text-[9px] transition-all ${
-                                      memberFF === 'nios-x'
-                                        ? 'bg-[var(--infoblox-navy)] text-white shadow-sm'
-                                        : 'text-gray-400 hover:text-gray-600'
-                                    }`}
-                                    style={{ fontWeight: 600 }}
-                                  >
-                                    NIOS-X
-                                  </button>
-                                  <button
-                                    onClick={() => setMemberFormFactor(source, 'nios-xaas')}
-                                    className={`px-2 py-0.5 rounded text-[9px] transition-all ${
-                                      memberFF === 'nios-xaas'
-                                        ? 'bg-purple-600 text-white shadow-sm'
-                                        : 'text-gray-400 hover:text-gray-600'
-                                    }`}
-                                    style={{ fontWeight: 600 }}
-                                  >
-                                    XaaS
-                                  </button>
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-
-                    {/* Scenario comparison cards */}
-                    <div className="px-4 py-4">
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                        {[scenarioCurrent, scenarioHybrid, scenarioFull].map((scenario, idx) => {
-                          const isHybrid = idx === 1;
-                          const isFull = idx === 2;
-                          const isActive = isHybrid ? niosMigrationMap.size > 0 && niosMigrationMap.size < niosSources.length : isFull ? niosMigrationMap.size === niosSources.length : niosMigrationMap.size === 0;
-                          return (
-                            <div
-                              key={scenario.label}
-                              className={`rounded-xl border-2 p-4 transition-colors ${
-                                isActive
-                                  ? 'border-[var(--infoblox-orange)] bg-orange-50/30 shadow-sm'
-                                  : 'border-[var(--border)] bg-white'
-                              }`}
-                            >
-                              <div className="flex items-center gap-2 mb-2">
-                                {isActive && <span className="w-2 h-2 rounded-full bg-[var(--infoblox-orange)]" />}
-                                <span className="text-[12px] uppercase tracking-wider text-[var(--muted-foreground)]" style={{ fontWeight: 600 }}>
-                                  {scenario.label}
-                                </span>
-                              </div>
-                              <div className="text-[28px] text-[var(--infoblox-orange)]" style={{ fontWeight: 700 }}>
-                                {scenario.uddiTokens.toLocaleString()}
-                              </div>
-                              <div className="text-[11px] text-[var(--muted-foreground)] mb-2">
-                                Universal DDI Tokens
-                              </div>
-                              {scenario.niosTokens > 0 && (
-                                <div className="text-[11px] text-gray-500 mb-1">
-                                  + {scenario.niosTokens.toLocaleString()} on NIOS licensing
-                                </div>
-                              )}
-                              <p className="text-[11px] text-[var(--muted-foreground)] border-t border-[var(--border)] pt-2 mt-2">
-                                {scenario.desc}
-                              </p>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })()}
-
-              {/* Server Token Calculator — per-member QPS/LPS/Object sizing */}
-              {selectedProviders.includes('nios') && (() => {
-                // Only show metrics for members selected for migration
-                const migratingMembers = effectiveNiosMetrics.filter((m) =>
-                  niosMigrationMap.has(m.memberName)
-                );
-                const allMembers = effectiveNiosMetrics.filter((m) => {
-                  const niosSources = new Set(
-                    findings.filter((f) => f.provider === 'nios').map((f) => f.source)
-                  );
-                  return niosSources.has(m.memberName);
-                });
-
-                const displayMembers = migratingMembers.length > 0 ? migratingMembers : allMembers;
-
-                // Per-member form factor helper
-                const getMemberFF = (memberName: string): ServerFormFactor =>
-                  niosMigrationMap.get(memberName) || 'nios-x';
-
-                const hasAnyXaas = displayMembers.some((m) => getMemberFF(m.memberName) === 'nios-xaas');
-                const xaasMembers = displayMembers.filter((m) => getMemberFF(m.memberName) === 'nios-xaas');
-                const niosXMembers = displayMembers.filter((m) => getMemberFF(m.memberName) === 'nios-x');
-                const niosXMemberCount = niosXMembers.length;
-                const xaasMemberCount = xaasMembers.length;
-
-                // Consolidate XaaS members into instances (1 instance can replace many NIOS members)
-                const xaasInstances = consolidateXaasInstances(xaasMembers);
-                const totalXaasTokens = xaasInstances.reduce((s, inst) => s + inst.totalTokens, 0);
-
-                // NIOS-X tokens (individual per member)
-                const niosXTokens = niosXMembers.reduce((sum, m) => {
-                  return sum + calcServerTokenTier(m.qps, m.lps, m.objectCount, 'nios-x').serverTokens;
-                }, 0);
-
-                const totalServerTokens = niosXTokens + totalXaasTokens;
-                const totalNiosReplaced = xaasMembers.length; // 1 connection per NIOS member replaced
-
-                const roleColors: Record<string, string> = {
-                  GM: '#002B49',
-                  GMC: '#1a4a6e',
-                  DNS: '#0078d4',
-                  DHCP: '#00a5e5',
-                  'DNS/DHCP': '#005a9e',
-                  IPAM: '#7fba00',
-                  Reporting: '#8b8b8b',
-                };
-
-                const tierColorClass = (name: string) =>
-                  name === 'XL' ? 'bg-red-100 text-red-700' :
-                  name === 'L' ? 'bg-orange-100 text-orange-700' :
-                  name === 'M' ? 'bg-yellow-100 text-yellow-700' :
-                  name === 'S' ? 'bg-green-100 text-green-700' :
-                  name === 'XS' ? 'bg-sky-100 text-sky-700' :
-                  'bg-gray-100 text-gray-700';
-
-                return (
-                  <div className="bg-white rounded-xl border-2 border-emerald-200 mb-6 overflow-hidden">
-                    <div className="px-4 py-3 border-b border-[var(--border)] bg-emerald-50/50 flex items-center gap-2 flex-wrap">
-                      <img src={NIOS_GRID_LOGO} alt="NIOS Grid" className="w-5 h-5 rounded" />
-                      <h3 className="text-[14px]" style={{ fontWeight: 600 }}>
-                        Server Token Calculator
-                      </h3>
-
-                      <span className="ml-auto text-[11px] text-[var(--muted-foreground)]">
-                        {migratingMembers.length > 0
-                          ? `${migratingMembers.length} member${migratingMembers.length > 1 ? 's' : ''} selected${niosXMemberCount > 0 && xaasMemberCount > 0 ? ` (${niosXMemberCount} NIOS-X, ${xaasMemberCount} XaaS)` : niosXMemberCount > 0 ? ' \u2192 NIOS-X' : ' \u2192 XaaS'}`
-                          : `${allMembers.length} grid member${allMembers.length > 1 ? 's' : ''} detected`}
-                      </span>
-                    </div>
-
-                    {/* Summary hero */}
-                    <div className="px-4 py-4 border-b border-[var(--border)] bg-gradient-to-r from-emerald-50/80 to-white">
-                      <div className={`grid ${hasAnyXaas ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-1 sm:grid-cols-2'} gap-4`}>
-                        <div>
-                          <div className="text-[11px] uppercase tracking-wider text-[var(--muted-foreground)] mb-1" style={{ fontWeight: 600 }}>
-                            Allocated Server Tokens
-                          </div>
-                          <div className="text-[28px] text-emerald-700" style={{ fontWeight: 700 }}>
-                            {totalServerTokens.toLocaleString()}
-                          </div>
-                          <div className="text-[10px] text-[var(--muted-foreground)]">
-                            {niosXMemberCount > 0 && `${niosXTokens.toLocaleString()} NIOS-X`}
-                            {niosXMemberCount > 0 && xaasMemberCount > 0 && ' + '}
-                            {xaasMemberCount > 0 && `${totalXaasTokens.toLocaleString()} XaaS`}
-                          </div>
-                        </div>
-                        <div>
-                          <div className="text-[11px] uppercase tracking-wider text-[var(--muted-foreground)] mb-1" style={{ fontWeight: 600 }}>
-                            NIOS Members
-                          </div>
-                          <div className="text-[22px] text-[var(--foreground)]" style={{ fontWeight: 600 }}>
-                            {displayMembers.length}
-                          </div>
-                          <div className="text-[10px] text-[var(--muted-foreground)]">
-                            {niosXMemberCount > 0 && `${niosXMemberCount} \u2192 NIOS-X`}
-                            {niosXMemberCount > 0 && xaasMembers.length > 0 && ' \u00b7 '}
-                            {xaasMembers.length > 0 && `${xaasMembers.length} \u2192 XaaS`}
-                          </div>
-                        </div>
-                        {hasAnyXaas && ([
-                            <div key="xaas-inst-summary">
-                              <div className="text-[11px] uppercase tracking-wider text-[var(--muted-foreground)] mb-1" style={{ fontWeight: 600 }}>
-                                XaaS Instances
-                              </div>
-                              <div className="text-[22px] text-purple-700" style={{ fontWeight: 600 }}>
-                                {xaasInstances.length}
-                              </div>
-                              <div className="text-[10px] text-[var(--muted-foreground)]">
-                                replacing {totalNiosReplaced} NIOS member{totalNiosReplaced > 1 ? 's' : ''}
-                              </div>
-                            </div>,
-                            <div key="xaas-consol-ratio">
-                              <div className="text-[11px] uppercase tracking-wider text-[var(--muted-foreground)] mb-1" style={{ fontWeight: 600 }}>
-                                Consolidation Ratio
-                              </div>
-                              <div className="text-[22px] text-purple-700" style={{ fontWeight: 600 }}>
-                                {totalNiosReplaced}:{xaasInstances.length}
-                              </div>
-                              <div className="text-[10px] text-[var(--muted-foreground)]">
-                                {totalNiosReplaced} NIOS \u2192 {xaasInstances.length} XaaS instance{xaasInstances.length > 1 ? 's' : ''}
-                              </div>
-                            </div>
-                        ])}
-                      </div>
-                      {hasAnyXaas && (
-                        <div className="mt-3 flex flex-col gap-1.5">
-                          <div className="flex items-start gap-1.5 text-[10px] text-purple-700 bg-purple-50 rounded-lg px-3 py-1.5 border border-purple-200">
-                            <Info className="w-3 h-3 mt-0.5 shrink-0" />
-                            <span>
-                              <b>{xaasMembers.length} NIOS member{xaasMembers.length > 1 ? 's' : ''}</b> consolidated into <b>{xaasInstances.length} XaaS instance{xaasInstances.length > 1 ? 's' : ''}</b>.
-                              {' '}Each XaaS instance uses aggregate QPS/LPS/Objects to determine the T-shirt size.
-                              {' '}1 connection = 1 NIOS member replaced.
-                            </span>
-                          </div>
-                          {xaasInstances.some(inst => inst.extraConnections > 0) && (
-                            <div className="flex items-start gap-1.5 text-[10px] text-amber-700 bg-amber-50 rounded-lg px-3 py-1.5 border border-amber-200">
-                              <Info className="w-3 h-3 mt-0.5 shrink-0" />
-                              <span>
-                                Some instances need extra connections beyond the included tier limit (+{XAAS_EXTRA_CONNECTION_COST} tokens each, up to 400 extra per instance).
-                              </span>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Per-member table */}
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-[12px]">
-                        <thead>
-                          <tr className="border-b border-[var(--border)] bg-gray-50/80">
-                            <th className="text-left px-4 py-2.5" style={{ fontWeight: 600 }}>Grid Member</th>
-                            <th className="text-center px-3 py-2.5" style={{ fontWeight: 600 }}>Role</th>
-                            <th className="text-center px-3 py-2.5" style={{ fontWeight: 600 }}>Target</th>
-                            <th className="text-right px-3 py-2.5" style={{ fontWeight: 600 }}>
-                              <span className="flex items-center justify-end gap-1">
-                                <Activity className="w-3 h-3" /> QPS
-                              </span>
-                            </th>
-                            <th className="text-right px-3 py-2.5" style={{ fontWeight: 600 }}>
-                              <span className="flex items-center justify-end gap-1">
-                                <Gauge className="w-3 h-3" /> LPS
-                              </span>
-                            </th>
-                            <th className="text-right px-3 py-2.5" style={{ fontWeight: 600 }}>Objects</th>
-                            <th className="text-center px-3 py-2.5" style={{ fontWeight: 600 }}>Size</th>
-                            <th className="text-center px-3 py-2.5" style={{ fontWeight: 600 }}>
-                              <span className="text-emerald-700">Allocated Tokens</span>
-                            </th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {/* NIOS-X members — individual rows */}
-                          {niosXMembers.map((member) => {
-                            const tier = calcServerTokenTier(member.qps, member.lps, member.objectCount, 'nios-x');
-                            return (
-                              <tr key={member.memberId} className="border-b border-[var(--border)] hover:bg-gray-50/50 transition-colors">
-                                <td className="px-4 py-2.5">
-                                  <div className="truncate max-w-[260px]" style={{ fontWeight: 500 }}>{member.memberName}</div>
-                                </td>
-                                <td className="text-center px-3 py-2.5">
-                                  <span
-                                    className="inline-block px-2 py-0.5 rounded text-[10px] text-white"
-                                    style={{ fontWeight: 600, backgroundColor: roleColors[member.role] || '#666' }}
-                                  >
-                                    {member.role}
-                                  </span>
-                                </td>
-                                <td className="text-center px-3 py-2.5">
-                                  <span className="inline-block px-2 py-0.5 rounded text-[10px] bg-blue-100 text-blue-700" style={{ fontWeight: 600 }}>
-                                    NIOS-X
-                                  </span>
-                                </td>
-                                <td className="text-right px-3 py-2.5 tabular-nums">
-                                  {member.qps > 0 ? member.qps.toLocaleString() : <span className="text-gray-300">&mdash;</span>}
-                                </td>
-                                <td className="text-right px-3 py-2.5 tabular-nums">
-                                  {member.lps > 0 ? member.lps.toLocaleString() : <span className="text-gray-300">&mdash;</span>}
-                                </td>
-                                <td className="text-right px-3 py-2.5 tabular-nums">
-                                  {member.objectCount > 0 ? member.objectCount.toLocaleString() : <span className="text-gray-300">&mdash;</span>}
-                                </td>
-                                <td className="text-center px-3 py-2.5">
-                                  <span className={`inline-block px-2 py-0.5 rounded text-[10px] ${tierColorClass(tier.name)}`} style={{ fontWeight: 600 }}>
-                                    {tier.name}
-                                  </span>
-                                </td>
-                                <td className="text-center px-3 py-2.5">
-                                  <span className="inline-flex items-center justify-center min-w-[36px] h-7 px-1.5 rounded-full bg-emerald-100 text-emerald-700 text-[12px]" style={{ fontWeight: 700 }}>
-                                    {tier.serverTokens.toLocaleString()}
-                                  </span>
-                                </td>
-                              </tr>
-                            );
-                          })}
-
-                        </tbody>
-                          {/* XaaS consolidated instances */}
-                          {xaasInstances.map((inst) => (
-                            <tbody key={`xaas-inst-${inst.index}`}>
-                              {/* Instance header row */}
-                              <tr className="bg-purple-50/60 border-b border-purple-200">
-                                <td className="px-4 py-2 text-[11px] text-purple-800" style={{ fontWeight: 700 }} colSpan={8}>
-                                  <div className="flex items-center gap-2">
-                                    <span className="inline-flex items-center gap-1.5">
-                                      <span className="inline-block w-2.5 h-2.5 rounded-full bg-purple-500" />
-                                      XaaS Instance {xaasInstances.length > 1 ? inst.index + 1 : ''}
-                                    </span>
-                                    <span className="text-purple-500" style={{ fontWeight: 400 }}>—</span>
-                                    <span className="text-purple-600" style={{ fontWeight: 500 }}>
-                                      replaces {inst.connectionsUsed} NIOS member{inst.connectionsUsed > 1 ? 's' : ''}
-                                    </span>
-                                    <span className="ml-auto flex items-center gap-2">
-                                      <span className={`inline-block px-2 py-0.5 rounded text-[10px] ${tierColorClass(inst.tier.name)}`} style={{ fontWeight: 600 }}>
-                                        {inst.tier.name}
-                                      </span>
-                                      <span className="inline-flex items-center justify-center min-w-[36px] h-6 px-1.5 rounded-full bg-purple-200 text-purple-800 text-[11px]" style={{ fontWeight: 700 }}>
-                                        {inst.totalTokens.toLocaleString()}
-                                      </span>
-                                    </span>
-                                  </div>
-                                </td>
-                              </tr>
-                              {/* Individual member rows within this instance */}
-                              {inst.members.map((member) => (
-                                <tr key={member.memberId} className="border-b border-purple-100 hover:bg-purple-50/30 transition-colors">
-                                  <td className="pl-8 pr-4 py-2">
-                                    <div className="truncate max-w-[240px] text-[11px] text-purple-700" style={{ fontWeight: 500 }}>{member.memberName}</div>
-                                  </td>
-                                  <td className="text-center px-3 py-2">
-                                    <span
-                                      className="inline-block px-2 py-0.5 rounded text-[10px] text-white"
-                                      style={{ fontWeight: 600, backgroundColor: roleColors[member.role] || '#666' }}
-                                    >
-                                      {member.role}
-                                    </span>
-                                  </td>
-                                  <td className="text-center px-3 py-2">
-                                    <span className="inline-block px-2 py-0.5 rounded text-[9px] bg-purple-100 text-purple-600" style={{ fontWeight: 500 }}>
-                                      1 conn
-                                    </span>
-                                  </td>
-                                  <td className="text-right px-3 py-2 tabular-nums text-[11px] text-purple-600">
-                                    {member.qps > 0 ? member.qps.toLocaleString() : <span className="text-gray-300">&mdash;</span>}
-                                  </td>
-                                  <td className="text-right px-3 py-2 tabular-nums text-[11px] text-purple-600">
-                                    {member.lps > 0 ? member.lps.toLocaleString() : <span className="text-gray-300">&mdash;</span>}
-                                  </td>
-                                  <td className="text-right px-3 py-2 tabular-nums text-[11px] text-purple-600">
-                                    {member.objectCount > 0 ? member.objectCount.toLocaleString() : <span className="text-gray-300">&mdash;</span>}
-                                  </td>
-                                  <td className="text-center px-3 py-2" colSpan={2}>
-                                    <span className="text-[10px] text-gray-400">(consolidated)</span>
-                                  </td>
-                                </tr>
-                              ))}
-                              {/* Consolidated aggregate row */}
-                              <tr className="border-b border-purple-300 bg-purple-50/80">
-                                <td className="pl-8 pr-4 py-2 text-[11px] text-purple-800" style={{ fontWeight: 600 }}>
-                                  Aggregate ({inst.connectionsUsed} connection{inst.connectionsUsed > 1 ? 's' : ''} used / {inst.tier.maxConnections} included)
-                                  {inst.extraConnections > 0 && (
-                                    <span className="text-amber-600 ml-1">+{inst.extraConnections} extra</span>
-                                  )}
-                                </td>
-                                <td className="text-center px-3 py-2">
-                                  <span className="inline-block px-2 py-0.5 rounded text-[10px] bg-purple-100 text-purple-700" style={{ fontWeight: 600 }}>
-                                    XaaS
-                                  </span>
-                                </td>
-                                <td className="text-center px-3 py-2 text-[10px] text-purple-700" style={{ fontWeight: 600 }}>
-                                  {inst.connectionsUsed} conn
-                                </td>
-                                <td className="text-right px-3 py-2 tabular-nums text-purple-800" style={{ fontWeight: 600 }}>
-                                  {inst.totalQps > 0 ? inst.totalQps.toLocaleString() : <span className="text-gray-300">&mdash;</span>}
-                                </td>
-                                <td className="text-right px-3 py-2 tabular-nums text-purple-800" style={{ fontWeight: 600 }}>
-                                  {inst.totalLps > 0 ? inst.totalLps.toLocaleString() : <span className="text-gray-300">&mdash;</span>}
-                                </td>
-                                <td className="text-right px-3 py-2 tabular-nums text-purple-800" style={{ fontWeight: 600 }}>
-                                  {inst.totalObjects > 0 ? inst.totalObjects.toLocaleString() : <span className="text-gray-300">&mdash;</span>}
-                                </td>
-                                <td className="text-center px-3 py-2">
-                                  <span className={`inline-block px-2 py-0.5 rounded text-[10px] ${tierColorClass(inst.tier.name)}`} style={{ fontWeight: 600 }}>
-                                    {inst.tier.name}
-                                  </span>
-                                </td>
-                                <td className="text-center px-3 py-2">
-                                  <span className="inline-flex items-center justify-center min-w-[36px] h-7 px-1.5 rounded-full bg-purple-200 text-purple-800 text-[12px]" style={{ fontWeight: 700 }}>
-                                    {inst.totalTokens.toLocaleString()}
-                                  </span>
-                                  {inst.extraConnectionTokens > 0 && (
-                                    <div className="text-[9px] text-amber-600 mt-0.5">
-                                      incl. {inst.extraConnectionTokens.toLocaleString()} extra conn
-                                    </div>
-                                  )}
-                                </td>
-                              </tr>
-                            </tbody>
-                          ))}
-                        <tfoot>
-                          <tr className="bg-emerald-50/80">
-                            <td className="px-4 py-2.5 text-[12px]" style={{ fontWeight: 700 }} colSpan={7}>
-                              Total Allocated Server Tokens
-                              {hasAnyXaas && (
-                                <span className="text-[10px] text-[var(--muted-foreground)] ml-2" style={{ fontWeight: 400 }}>
-                                  ({niosXMemberCount > 0 ? `${niosXMemberCount} NIOS-X` : ''}{niosXMemberCount > 0 && xaasInstances.length > 0 ? ' + ' : ''}{xaasInstances.length > 0 ? `${xaasInstances.length} XaaS instance${xaasInstances.length > 1 ? 's' : ''} replacing ${totalNiosReplaced} members` : ''})
-                                </span>
-                              )}
-                            </td>
-                            <td className="text-center px-3 py-2.5">
-                              <span className="inline-flex items-center justify-center min-w-[40px] h-8 px-2 rounded-full bg-emerald-600 text-white text-[14px]" style={{ fontWeight: 700 }}>
-                                {totalServerTokens.toLocaleString()}
-                              </span>
-                            </td>
-                          </tr>
-                        </tfoot>
-                      </table>
-                    </div>
-
-
-                  </div>
-                );
-              })()}
-
               {/* Export buttons */}
-              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+              <div id="section-export" className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
                 <button
                   onClick={exportCSV}
                   className="flex items-center justify-center gap-2 px-5 py-3 bg-[var(--infoblox-navy)] text-white rounded-xl hover:bg-[var(--infoblox-navy)]/90 transition-colors"

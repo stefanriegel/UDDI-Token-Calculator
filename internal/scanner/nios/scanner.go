@@ -1,5 +1,8 @@
 // Package nios implements the NIOS backup scanner for Phase 10.
-// scanner.go replaces the Phase 9 stub with a real two-pass streaming XML parser.
+// scanner.go implements a three-pass streaming XML parser:
+//   Pass 1: build vnodeMap (vnode_id → hostname) and find Grid Master
+//   Pass 1.5: build memberResolver (zone → member, network → member) from ns_group + dhcp_member
+//   Pass 2: count DDI objects with per-member attribution via resolver
 package nios
 
 import (
@@ -44,11 +47,12 @@ func (s *Scanner) GetNiosServerMetricsJSON() []byte {
 	return data
 }
 
-// Scan implements scanner.Scanner. It performs a two-pass streaming parse of the
+// Scan implements scanner.Scanner. It performs a three-pass streaming parse of the
 // NIOS backup archive referenced by req.Credentials["backup_path"].
 //
 // Pass 1: builds vnode_id → hostname map and identifies the Grid Master.
-// Pass 2: counts DDI objects, active lease IPs, and managed assets per member.
+// Pass 1.5: builds zone → member and network → member resolver maps.
+// Pass 2: counts DDI objects with per-member attribution via resolver.
 //
 // The temp file at backup_path is deleted via defer after the scan completes.
 func (s *Scanner) Scan(_ context.Context, req scanner.ScanRequest, publish func(scanner.Event)) ([]calculator.FindingRow, error) {
@@ -75,7 +79,7 @@ func (s *Scanner) Scan(_ context.Context, req scanner.ScanRequest, publish func(
 	}
 
 	// ---- Pass 1: build vnodeMap (virtual_oid → hostname) and find GM ----
-	vnodeMap := make(map[string]string) // vnode_id → hostname
+	vnodeMap := make(map[string]string)            // vnode_id → hostname
 	memberProps := make(map[string]map[string]string) // hostname → props
 	gmHostname := ""
 
@@ -103,14 +107,14 @@ func (s *Scanner) Scan(_ context.Context, req scanner.ScanRequest, publish func(
 			cloned[k] = v
 		}
 		memberProps[hostname] = cloned
-		if props["is_grid_master"] == "true" {
+		if props["is_master"] == "true" || props["is_grid_master"] == "true" {
 			gmHostname = hostname
 		}
 	}); err != nil {
 		return nil, fmt.Errorf("nios: pass 1 failed: %w", err)
 	}
 
-	// gmHostname fallback: if is_grid_master was not found in any member,
+	// gmHostname fallback: if is_master was not found in any member,
 	// use the first member hostname from vnodeMap.
 	if gmHostname == "" && len(vnodeMap) > 0 {
 		for _, h := range vnodeMap {
@@ -125,6 +129,9 @@ func (s *Scanner) Scan(_ context.Context, req scanner.ScanRequest, publish func(
 		Resource: "members",
 		Count:    len(vnodeMap),
 	})
+
+	// ---- Pass 1.5: build member resolver (zone → member, network → member) ----
+	resolver := buildMemberResolver(backupPath, vnodeMap)
 
 	// ---- Pass 2: collect all parsedObjects and count ----
 	var objects []parsedObject
@@ -152,7 +159,7 @@ func (s *Scanner) Scan(_ context.Context, req scanner.ScanRequest, publish func(
 		return nil, fmt.Errorf("nios: pass 2 failed: %w", err)
 	}
 
-	result := countObjects(objects, vnodeMap, gmHostname)
+	result := countObjects(objects, vnodeMap, gmHostname, resolver)
 
 	publish(scanner.Event{
 		Type:     "resource_progress",
@@ -171,19 +178,16 @@ func (s *Scanner) Scan(_ context.Context, req scanner.ScanRequest, publish func(
 	// ---- Build FindingRows ----
 	var rows []calculator.FindingRow
 
-	// Emit per-family DDI rows with human-readable names (grid-level, attributed to GM).
-	// All DDI objects are grid-level in the current NIOS model (only LEASE is member-scoped,
-	// and LEASE is not a DDI family). familyCounts contains DDI-adjusted values (HOST_OBJECT
-	// uses +2/+3 expansion, matching Python per_family_ddi).
-	if result.gridDDI > 0 {
-		for family, count := range result.familyCounts {
+	// Emit per-member DDI rows: each member gets rows for the DDI families attributed to it.
+	for hostname, familyMap := range result.memberDDI {
+		for family, count := range familyMap {
 			if count == 0 {
 				continue
 			}
 			displayName := familyDisplayName(family)
 			rows = append(rows, calculator.FindingRow{
 				Provider:         "nios",
-				Source:           gmHostname,
+				Source:           hostname,
 				Category:         calculator.CategoryDDIObjects,
 				Item:             displayName,
 				Count:            count,
@@ -193,44 +197,39 @@ func (s *Scanner) Scan(_ context.Context, req scanner.ScanRequest, publish func(
 		}
 	}
 
-	// Per-member DDI: emit rows for any member that has DDI objects attributed to it.
-	// In the current NIOS model, per-member DDI is always 0 (only LEASE is member-scoped
-	// and LEASE is not a DDI family), but this handles future member-scoped DDI families.
-	for hostname, acc := range result.memberAccs {
-		if acc.ddiCount > 0 {
-			rows = append(rows, calculator.FindingRow{
-				Provider:         "nios",
-				Source:           hostname,
-				Category:         calculator.CategoryDDIObjects,
-				Item:             "DDI Objects (Total)",
-				Count:            acc.ddiCount,
-				TokensPerUnit:    calculator.TokensPerDDIObject,
-				ManagementTokens: ceilDiv(acc.ddiCount, calculator.TokensPerDDIObject),
-			})
+	// Emit rows for unresolved DDI objects (attributed to GM as fallback).
+	for family, count := range result.unresolvedDDI {
+		if count == 0 {
+			continue
 		}
-	}
-
-	// Grid-level Active IPs — count ALL unique IPs across all sources:
-	// leases, fixed addresses, host addresses, network reservations, and discovery data.
-	// Uses globalIPSet which deduplicates across all sources to avoid double-counting.
-	if len(result.globalIPSet) > 0 {
+		displayName := familyDisplayName(family)
 		rows = append(rows, calculator.FindingRow{
 			Provider:         "nios",
 			Source:           gmHostname,
-			Category:         calculator.CategoryActiveIPs,
-			Item:             "NIOS Active IPs (All Sources)",
-			Count:            len(result.globalIPSet),
-			TokensPerUnit:    calculator.TokensPerActiveIP,
-			ManagementTokens: ceilDiv(len(result.globalIPSet), calculator.TokensPerActiveIP),
+			Category:         calculator.CategoryDDIObjects,
+			Item:             displayName,
+			Count:            count,
+			TokensPerUnit:    calculator.TokensPerDDIObject,
+			ManagementTokens: ceilDiv(count, calculator.TokensPerDDIObject),
 		})
 	}
 
-	// Per-member lease IPs (informational — global row already covers token calc).
-	// The dedup test expects total Active IP count <= 3 (fixture has 3 unique leases).
-	// We emit only the global row to avoid double-counting in the sum.
-
-	// NIOS Grid Members are NOT counted as managed assets.
-	// They are part of the NIOS grid licensing, not Universal DDI managed assets.
+	// Per-member Active IPs — each member gets a row for IPs in subnets it owns.
+	// Leases are attributed via vnode_id; fixed/host/discovery via CIDR containment;
+	// network IPs via network→member mapping. Deduplication is per-member (memberIPSet).
+	for hostname, acc := range result.memberAccs {
+		if len(acc.memberIPSet) > 0 {
+			rows = append(rows, calculator.FindingRow{
+				Provider:         "nios",
+				Source:           hostname,
+				Category:         calculator.CategoryActiveIPs,
+				Item:             "Active IPs",
+				Count:            len(acc.memberIPSet),
+				TokensPerUnit:    calculator.TokensPerActiveIP,
+				ManagementTokens: ceilDiv(len(acc.memberIPSet), calculator.TokensPerActiveIP),
+			})
+		}
+	}
 
 	// ---- Apply selectedMembers filter ----
 	// If selectedMembers is non-empty, only emit rows for hostnames in the set.
@@ -257,15 +256,95 @@ func (s *Scanner) Scan(_ context.Context, req scanner.ScanRequest, publish func(
 	return rows, nil
 }
 
+// buildMemberResolver creates the memberResolver by scanning the backup for
+// ns_group, ns_group_grid_primary, and dhcp_member objects.
+//
+// Zone → member resolution chain:
+//   zone.assigned_ns_group → ns_group.group_name → ns_group_grid_primary.grid_member (oid) → vnodeMap → hostname
+//
+// Network → member resolution:
+//   dhcp_member.network → dhcp_member.member (oid) → vnodeMap → hostname
+func buildMemberResolver(backupPath string, vnodeMap map[string]string) *memberResolver {
+	// Collect ns_group_grid_primary: ns_group name → member oid (use first/primary)
+	nsGroupPrimary := make(map[string]string) // ns_group name → member oid
+	// Collect dhcp_member: network key → member oid (use first)
+	dhcpMembers := make(map[string]string) // network key → member oid
+	// Collect zone: zone ref → assigned_ns_group
+	zoneNSGroup := make(map[string]string) // zone unique key → ns_group name
+
+	_ = streamOnedbXML(backupPath, func(props map[string]string) {
+		xmlType := props["__type"]
+		switch xmlType {
+		case ".com.infoblox.dns.ns_group_grid_primary":
+			// grid_member is an oid string referencing vnodeMap.
+			nsGroup := props["ns_group"]
+			memberOID := props["grid_member"]
+			if nsGroup != "" && memberOID != "" {
+				// Keep first (primary) member per ns_group.
+				if _, exists := nsGroupPrimary[nsGroup]; !exists {
+					nsGroupPrimary[nsGroup] = memberOID
+				}
+			}
+		case ".com.infoblox.dns.dhcp_member":
+			network := props["network"]
+			memberOID := props["member"]
+			if network != "" && memberOID != "" {
+				// Keep first member per network.
+				if _, exists := dhcpMembers[network]; !exists {
+					dhcpMembers[network] = memberOID
+				}
+			}
+		case ".com.infoblox.dns.zone":
+			// Zone objects have a unique "zone" property (e.g. "._default.com.example")
+			// and "assigned_ns_group" naming the ns_group.
+			zoneRef := props["zone"]
+			nsGroup := props["assigned_ns_group"]
+			if zoneRef != "" && nsGroup != "" {
+				zoneNSGroup[zoneRef] = nsGroup
+			}
+		}
+	})
+
+	// Build zoneMemberMap: zone ref → hostname
+	zoneMemberMap := make(map[string]string, len(zoneNSGroup))
+	for zoneRef, nsGroup := range zoneNSGroup {
+		if memberOID, ok := nsGroupPrimary[nsGroup]; ok {
+			if hostname, ok := vnodeMap[memberOID]; ok {
+				zoneMemberMap[zoneRef] = hostname
+			}
+		}
+	}
+
+	// Build networkMemberMap: network key → hostname
+	networkMemberMap := make(map[string]string, len(dhcpMembers))
+	for network, memberOID := range dhcpMembers {
+		if hostname, ok := vnodeMap[memberOID]; ok {
+			networkMemberMap[network] = hostname
+		}
+	}
+
+	return &memberResolver{
+		zoneMemberMap:    zoneMemberMap,
+		networkMemberMap: networkMemberMap,
+		cidrEntries:      buildCIDREntries(networkMemberMap),
+	}
+}
+
 // buildMetrics constructs NiosServerMetric entries for each member in vnodeMap.
-// ObjectCount for GM includes grid-level DDI (since all DDI is grid-level in current NIOS model).
-// ObjectCount for non-GM members includes their per-member DDI (currently 0) plus lease count.
+// ObjectCount uses member-attributed DDI from countResult.memberDDI.
+// Unresolved DDI is added to the Grid Master's count.
 func buildMetrics(
 	vnodeMap map[string]string,
 	memberProps map[string]map[string]string,
 	result countResult,
 	gmHostname string,
 ) []NiosServerMetric {
+	// Sum unresolved DDI for GM attribution.
+	unresolvedTotal := 0
+	for _, count := range result.unresolvedDDI {
+		unresolvedTotal += count
+	}
+
 	metrics := make([]NiosServerMetric, 0, len(vnodeMap))
 	for _, hostname := range vnodeMap {
 		props := memberProps[hostname]
@@ -275,9 +354,9 @@ func buildMetrics(
 		if acc, ok := result.memberAccs[hostname]; ok {
 			objectCount = acc.ddiCount
 		}
-		// GM gets grid-level DDI (all DDI is grid-level in current NIOS model).
+		// GM gets unresolved DDI (objects not attributed to any specific member).
 		if hostname == gmHostname {
-			objectCount += result.gridDDI
+			objectCount += unresolvedTotal
 		}
 
 		metrics = append(metrics, NiosServerMetric{
@@ -330,17 +409,9 @@ func familyDisplayName(family string) string {
 	return "Other DDI Objects"
 }
 
-// ceilDiv computes ceiling(n / d). Returns 0 if n is 0.
-func ceilDiv(n, d int) int {
-	if n == 0 {
-		return 0
-	}
-	return (n + d - 1) / d
-}
-
 // streamOnedbXML opens the gzip+tar backup at path, finds onedb.xml, and calls
 // onObject for each OBJECT element's collected PROPERTY map.
-// It handles the file open/close lifecycle internally for two-pass streaming.
+// It handles the file open/close lifecycle internally for multi-pass streaming.
 func streamOnedbXML(path string, onObject func(props map[string]string)) error {
 	f, err := os.Open(path)
 	if err != nil {

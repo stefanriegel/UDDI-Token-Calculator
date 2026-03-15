@@ -33,7 +33,7 @@ type ScanProviderSpec struct {
 }
 
 // ScanStartResponse is returned immediately by POST /api/v1/scan.
-// The scanId equals the sessionId — callers use it for /events and /results.
+// The scanId equals the sessionId — callers use it for /status and /results.
 type ScanStartResponse struct {
 	ScanID string `json:"scanId"`
 }
