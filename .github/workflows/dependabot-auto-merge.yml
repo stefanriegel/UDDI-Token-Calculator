@@ -11,14 +11,19 @@ jobs:
     if: github.actor == 'dependabot[bot]'
     runs-on: ubuntu-latest
     steps:
-      - name: Approve PR
-        run: gh pr review "$PR_URL" --approve
-        env:
-          PR_URL: ${{ github.event.pull_request.html_url }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Fetch Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Enable auto-merge
-        run: gh pr merge "$PR_URL" --auto --squash
+      # Auto-merge patch and minor updates only.
+      # Major version bumps require manual review.
+      - name: Approve and auto-merge
+        if: steps.metadata.outputs.update-type != 'version-update:semver-major'
+        run: |
+          gh pr review "$PR_URL" --approve -b "Auto-approved: Dependabot ${{ steps.metadata.outputs.update-type }}"
+          gh pr merge "$PR_URL" --auto --squash
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
