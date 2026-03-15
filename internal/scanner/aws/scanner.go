@@ -10,6 +10,7 @@ import (
 	awssdk "github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/sso"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/infoblox/uddi-go-token-calculator/internal/calculator"
@@ -51,10 +52,13 @@ func (s *Scanner) Scan(ctx context.Context, req scanner.ScanRequest, publish fun
 		return nil, fmt.Errorf("aws: get account id: %w", err)
 	}
 
+	// Resolve a human-friendly account name (alias or fallback).
+	accountName := getAccountName(ctx, baseCfg, accountID)
+
 	var findings []calculator.FindingRow
 
 	// Route53 is a global service — scan once with the bootstrap region config.
-	r53Findings := scanRoute53(ctx, baseCfg, accountID, publish)
+	r53Findings := scanRoute53(ctx, baseCfg, accountName, publish)
 	findings = append(findings, r53Findings...)
 
 	// Enumerate enabled regions and scan each in parallel (with semaphore).
@@ -63,7 +67,7 @@ func (s *Scanner) Scan(ctx context.Context, req scanner.ScanRequest, publish fun
 		return findings, fmt.Errorf("aws: list regions: %w", err)
 	}
 
-	regionalFindings := scanAllRegions(ctx, baseCfg, regions, accountID, publish)
+	regionalFindings := scanAllRegions(ctx, baseCfg, regions, accountName, publish)
 	findings = append(findings, regionalFindings...)
 
 	return findings, nil
@@ -208,4 +212,19 @@ func getAccountID(ctx context.Context, cfg awssdk.Config) (string, error) {
 		return "unknown", nil
 	}
 	return *out.Account, nil
+}
+
+// getAccountName resolves a human-friendly name for an AWS account.
+// It calls iam:ListAccountAliases and returns the first alias if one exists.
+// On any error or empty alias list, falls back to "AWS Account {accountID}".
+// This matches the validate endpoint pattern which returns "AWS Account " + account.
+func getAccountName(ctx context.Context, cfg awssdk.Config, accountID string) string {
+	client := iam.NewFromConfig(cfg)
+	out, err := client.ListAccountAliases(ctx, &iam.ListAccountAliasesInput{
+		MaxItems: awssdk.Int32(1),
+	})
+	if err == nil && len(out.AccountAliases) > 0 && out.AccountAliases[0] != "" {
+		return out.AccountAliases[0]
+	}
+	return "AWS Account " + accountID
 }

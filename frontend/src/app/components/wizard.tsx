@@ -1,14 +1,11 @@
-import { useState, useMemo, useRef, useEffect, useCallback, Fragment } from 'react';
+import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import {
-  Shield,
   CheckCircle2,
   Circle,
   ChevronRight,
   ChevronLeft,
   ChevronDown,
   ChevronUp,
-  Cloud,
-  Server,
   Eye,
   EyeOff,
   Loader2,
@@ -25,41 +22,47 @@ import {
   ArrowUpDown,
   ArrowUp,
   ArrowDown,
-  Plus,
-  Trash2,
+  Upload,
+  ArrowRightLeft,
   Activity,
   Gauge,
-  ArrowRightLeft,
+  Heart,
+  Github,
+  X,
+  Plus,
 } from 'lucide-react';
-import { useBackendConnection, useScanPolling } from './use-backend';
+import { useBackendConnection } from './use-backend';
 import {
   validateCredentials as apiValidate,
+  uploadNiosBackup as apiUploadNios,
   startScan as apiStartScan,
+  getScanStatus as apiGetScanStatus,
   getScanResults as apiGetScanResults,
   getSessionId,
   cloneSession,
-  uploadNiosBackup,
-  type ScanResultsResponse,
-  type NiosGridMember,
-  type NiosServerMetricAPI,
+  type ScanStatusResponse,
 } from './api-client';
-import {
-  calcServerTokenTier,
-  consolidateXaasInstances,
-  XAAS_EXTRA_CONNECTION_COST,
-  MOCK_NIOS_SERVER_METRICS,
-  type NiosServerMetrics,
-  type ServerFormFactor,
-  type ConsolidatedXaasInstance,
-} from './nios-calc';
 import {
   PROVIDERS,
   MOCK_SUBSCRIPTIONS,
   generateMockFindings,
   TOKEN_RATES,
+  MOCK_NIOS_SERVER_METRICS,
+  calcServerTokenTier,
+  consolidateXaasInstances,
+  NIOS_GRID_LOGO,
+  INFOBLOX_LOGO,
+  PROVIDER_LOGOS,
+  XAAS_EXTRA_CONNECTION_COST,
+  BACKEND_PROVIDER_ID,
+  toFrontendProvider,
+  toFrontendCategory,
   type ProviderType,
   type FindingRow,
   type TokenCategory,
+  type NiosServerMetrics,
+  type ServerFormFactor,
+  type ConsolidatedXaasInstance,
 } from './mock-data';
 
 type Step = 'providers' | 'credentials' | 'sources' | 'scanning' | 'results';
@@ -74,6 +77,86 @@ const STEPS: { id: Step; label: string }[] = [
   { id: 'results', label: 'Results & Export' },
 ];
 
+/** Inline component: add/remove list for server addresses (replaces comma-separated text input). */
+function ServerListInput({
+  servers,
+  onChange,
+  placeholder,
+}: {
+  servers: string[];
+  onChange: (servers: string[]) => void;
+  placeholder: string;
+}) {
+  const [draft, setDraft] = useState('');
+
+  const addServer = () => {
+    const trimmed = draft.trim();
+    if (!trimmed) return;
+    // Split on commas in case user pastes a comma-separated list
+    const newEntries = trimmed.split(',').map((s) => s.trim()).filter(Boolean);
+    const unique = newEntries.filter((s) => !servers.includes(s));
+    if (unique.length > 0) {
+      onChange([...servers, ...unique]);
+    }
+    setDraft('');
+  };
+
+  const removeServer = (index: number) => {
+    onChange(servers.filter((_, i) => i !== index));
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      addServer();
+    }
+  };
+
+  return (
+    <div className="space-y-2">
+      <div className="flex gap-2">
+        <input
+          type="text"
+          placeholder={placeholder}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={handleKeyDown}
+          className="flex-1 px-3 py-2 bg-[var(--input-background)] border border-[var(--border)] rounded-lg text-[13px] focus:outline-none focus:ring-2 focus:ring-[var(--infoblox-blue)]/30 focus:border-[var(--infoblox-blue)]"
+        />
+        <button
+          type="button"
+          onClick={addServer}
+          disabled={!draft.trim()}
+          className="flex items-center gap-1 px-3 py-2 bg-[var(--infoblox-blue)] text-white text-[13px] font-medium rounded-lg hover:bg-[var(--infoblox-blue)]/90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+        >
+          <Plus className="w-3.5 h-3.5" />
+          Add
+        </button>
+      </div>
+      {servers.length > 0 && (
+        <ul className="space-y-1">
+          {servers.map((server, i) => (
+            <li
+              key={`${server}-${i}`}
+              className="flex items-center justify-between px-3 py-1.5 bg-[var(--input-background)] border border-[var(--border)] rounded-lg text-[13px]"
+            >
+              <span className="truncate">{server}</span>
+              <button
+                type="button"
+                onClick={() => removeServer(i)}
+                className="ml-2 flex-shrink-0 text-[var(--muted-foreground)] hover:text-red-500 transition-colors"
+                aria-label={`Remove ${server}`}
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 export function Wizard() {
   const backend = useBackendConnection();
   const [currentStep, setCurrentStep] = useState<Step>('providers');
@@ -81,18 +164,19 @@ export function Wizard() {
 
   // State
   const [selectedProviders, setSelectedProviders] = useState<ProviderType[]>([]);
+  const isNiosOnly = selectedProviders.length === 1 && selectedProviders[0] === 'nios';
   const [credentials, setCredentials] = useState<Record<ProviderType, Record<string, string>>>({
     aws: {},
     azure: {},
     gcp: {},
-    ad: {},
+    microsoft: {},
     nios: {},
   });
   const [credentialStatus, setCredentialStatus] = useState<Record<ProviderType, 'idle' | 'validating' | 'valid' | 'error'>>({
     aws: 'idle',
     azure: 'idle',
     gcp: 'idle',
-    ad: 'idle',
+    microsoft: 'idle',
     nios: 'idle',
   });
   const [subscriptions, setSubscriptions] = useState<
@@ -101,94 +185,64 @@ export function Wizard() {
     aws: [],
     azure: [],
     gcp: [],
-    ad: [],
+    microsoft: [],
     nios: [],
   });
   const [scanProgress, setScanProgress] = useState(0);
   const [providerScanProgress, setProviderScanProgress] = useState<Record<ProviderType, number>>({
-    aws: 0, azure: 0, gcp: 0, ad: 0, nios: 0,
+    aws: 0, azure: 0, gcp: 0, microsoft: 0, nios: 0,
   });
   const [findings, setFindings] = useState<FindingRow[]>([]);
-  const [scanResults, setScanResults] = useState<ScanResultsResponse | null>(null);
-  const [providerErrors, setProviderErrors] = useState<{ provider: string; resource: string; message: string }[]>([]);
   const [credentialError, setCredentialError] = useState<Record<ProviderType, string>>({
-    aws: '', azure: '', gcp: '', ad: '', nios: '',
+    aws: '', azure: '', gcp: '', microsoft: '', nios: '',
   });
   const [scanError, setScanError] = useState<string>('');
-  const [scanId, setScanId] = useState<string>('');
   const scanIntervalsRef = useRef<ReturnType<typeof setInterval>[]>([]);
   const [showSecrets, setShowSecrets] = useState<Record<string, boolean>>({});
   const [selectedAuthMethod, setSelectedAuthMethod] = useState<Record<ProviderType, string>>({
-    aws: 'access-key',
-    azure: 'service-principal',
-    gcp: 'service-account',
-    ad: 'ntlm',
+    aws: 'sso',
+    azure: 'browser-sso',
+    gcp: 'browser-oauth',
+    microsoft: 'kerberos',
     nios: 'backup-upload',
   });
-  // AD-specific: dynamic list of Domain Controller hostnames
-  const [adServers, setAdServers] = useState<string[]>(['']);
-
-  const addDCServer = () => setAdServers(prev => [...prev, '']);
-  const removeDCServer = (index: number) => setAdServers(prev => prev.filter((_, i) => i !== index));
-  const updateDCServer = (index: number, value: string) =>
-    setAdServers(prev => prev.map((s, i) => i === index ? value : s));
-
-  const handleNiosFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setNiosUploadStatus('uploading');
-    setNiosUploadError('');
-    setNiosMembers([]);
-    setNiosSelectedMembers(new Set());
-    setCredentialStatus((prev) => ({ ...prev, nios: 'validating' }));
-    try {
-      const resp = await uploadNiosBackup(file);
-      if (!resp.valid) {
-        setNiosUploadStatus('error');
-        setNiosUploadError(resp.error ?? 'Upload failed');
-        setCredentialStatus((prev) => ({ ...prev, nios: 'error' }));
-        return;
-      }
-      setNiosMembers(resp.members);
-      setNiosSelectedMembers(new Set(resp.members.map((m) => m.hostname)));
-      setNiosUploadStatus('done');
-      setCredentialStatus((prev) => ({ ...prev, nios: 'valid' }));
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Upload failed';
-      setNiosUploadStatus('error');
-      setNiosUploadError(msg);
-      setCredentialStatus((prev) => ({ ...prev, nios: 'error' }));
-    }
-  }, []);
-
   const [sourceSearch, setSourceSearch] = useState<Record<ProviderType, string>>({
-    aws: '', azure: '', gcp: '', ad: '', nios: '',
+    aws: '', azure: '', gcp: '', microsoft: '', nios: '',
   });
+  // Top consumer expandable cards
+  const [topDnsExpanded, setTopDnsExpanded] = useState(false);
+  const [topDhcpExpanded, setTopDhcpExpanded] = useState(false);
+  const [topIpExpanded, setTopIpExpanded] = useState(false);
+  const [showAllHeroSources, setShowAllHeroSources] = useState(false);
+  const [showAllCategorySources, setShowAllCategorySources] = useState<Record<string, boolean>>({});
+
   // Findings table filters & sorting
   const [findingsProviderFilter, setFindingsProviderFilter] = useState<Set<ProviderType>>(new Set());
   const [findingsCategoryFilter, setFindingsCategoryFilter] = useState<Set<TokenCategory>>(new Set());
   const [findingsSort, setFindingsSort] = useState<{ col: SortColumn; dir: SortDir } | null>(null);
-  // Expandable rows: set of group keys that are currently expanded
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
 
   // Selection mode: 'include' = checked items will be scanned; 'exclude' = checked items will be SKIPPED
   const [selectionMode, setSelectionMode] = useState<Record<ProviderType, 'include' | 'exclude'>>({
-    aws: 'include', azure: 'include', gcp: 'include', ad: 'include', nios: 'include',
+    aws: 'include', azure: 'include', gcp: 'include', microsoft: 'include', nios: 'include',
   });
 
   // NIOS-specific state
-  const [niosMembers, setNiosMembers] = useState<NiosGridMember[]>([]);
-  const [niosSelectedMembers, setNiosSelectedMembers] = useState<Set<string>>(new Set());
-  const [niosUploadStatus, setNiosUploadStatus] = useState<'idle' | 'uploading' | 'done' | 'error'>('idle');
-  const [niosUploadError, setNiosUploadError] = useState<string>('');
-
-  // Top Consumer Cards — expand/collapse
-  const [topDnsExpanded, setTopDnsExpanded] = useState(false);
-  const [topDhcpExpanded, setTopDhcpExpanded] = useState(false);
-  const [topIpExpanded, setTopIpExpanded] = useState(false);
-
-  // Migration Planner — per-member form factor selection
+  const [niosUploadedFile, setNiosUploadedFile] = useState<File | null>(null);
+  const [niosDragOver, setNiosDragOver] = useState(false);
+  // NIOS-X migration planner: which NIOS sources (grid members) to migrate, with per-member form factor
   const [niosMigrationMap, setNiosMigrationMap] = useState<Map<string, ServerFormFactor>>(new Map());
+
+  // Backend wiring: NIOS backup token returned from upload, and live server metrics from scan results
+  const [backupToken, setBackupToken] = useState<string>('');
+  const [niosServerMetrics, setNiosServerMetrics] = useState<NiosServerMetrics[]>([]);
+
+  // Use live metrics when available from real scan, fall back to mock data in demo mode
+  const effectiveNiosMetrics = niosServerMetrics.length > 0 ? niosServerMetrics : MOCK_NIOS_SERVER_METRICS;
+
+  // Helper: render provider icon (uses real cloud logos for all providers)
+  const ProviderIconEl = ({ id, className }: { id: ProviderType; className?: string; color?: string }) => {
+    return <img src={PROVIDER_LOGOS[id]} alt={PROVIDERS.find(p => p.id === id)?.name || id} className={`${className || 'w-5 h-5'} rounded object-contain`} />;
+  };
 
   // Compute effective selection (what actually gets scanned) based on mode
   const getEffectiveSelected = useCallback((provId: ProviderType): Set<string> => {
@@ -212,13 +266,7 @@ export function Wizard() {
       case 'providers':
         return selectedProviders.length > 0;
       case 'credentials':
-        return selectedProviders.every((p) => {
-          if (p === 'nios') {
-            // NIOS is "validated" after a successful upload with at least one member selected
-            return credentialStatus['nios'] === 'valid' && niosSelectedMembers.size > 0;
-          }
-          return credentialStatus[p] === 'valid';
-        });
+        return selectedProviders.every((p) => credentialStatus[p] === 'valid');
       case 'sources':
         return selectedProviders.some((p) =>
           getEffectiveSelectedCount(p) > 0
@@ -255,60 +303,24 @@ export function Wizard() {
     clearScanIntervals();
     setCurrentStep('providers');
     setSelectedProviders([]);
-    setCredentials({ aws: {}, azure: {}, gcp: {}, ad: {}, nios: {} });
-    setCredentialStatus({ aws: 'idle', azure: 'idle', gcp: 'idle', ad: 'idle', nios: 'idle' });
-    setSubscriptions({ aws: [], azure: [], gcp: [], ad: [], nios: [] });
+    setCredentials({ aws: {}, azure: {}, gcp: {}, microsoft: {}, nios: {} });
+    setCredentialStatus({ aws: 'idle', azure: 'idle', gcp: 'idle', microsoft: 'idle', nios: 'idle' });
+    setSubscriptions({ aws: [], azure: [], gcp: [], microsoft: [], nios: [] });
     setScanProgress(0);
-    setProviderScanProgress({ aws: 0, azure: 0, gcp: 0, ad: 0, nios: 0 });
+    setProviderScanProgress({ aws: 0, azure: 0, gcp: 0, microsoft: 0, nios: 0 });
     setFindings([]);
-    setScanResults(null);
-    setProviderErrors([]);
-    setCredentialError({ aws: '', azure: '', gcp: '', ad: '', nios: '' });
+    setCredentialError({ aws: '', azure: '', gcp: '', microsoft: '', nios: '' });
     setScanError('');
-    setScanId('');
-    setAdServers(['']);
-    setSourceSearch({ aws: '', azure: '', gcp: '', ad: '', nios: '' });
-    setSelectionMode({ aws: 'include', azure: 'include', gcp: 'include', ad: 'include', nios: 'include' });
-    setFindingsProviderFilter(new Set());
-    setFindingsCategoryFilter(new Set());
-    setFindingsSort(null);
-    setNiosMembers([]);
-    setNiosSelectedMembers(new Set());
-    setNiosUploadStatus('idle');
-    setNiosUploadError('');
-    setTopDnsExpanded(false);
-    setTopDhcpExpanded(false);
-    setTopIpExpanded(false);
+    setSourceSearch({ aws: '', azure: '', gcp: '', microsoft: '', nios: '' });
+    setSelectionMode({ aws: 'include', azure: 'include', gcp: 'include', microsoft: 'include', nios: 'include' });
+    setNiosUploadedFile(null);
+    setNiosDragOver(false);
     setNiosMigrationMap(new Map());
-  };
-
-  // Re-scan with same credentials — clones the session server-side so SSO/OAuth
-  // providers do not trigger a second browser popup. Falls back to full restart
-  // if the old session has expired or cannot be found.
-  const rescan = async () => {
-    clearScanIntervals();
-    try {
-      await cloneSession(); // sets new ddi_session cookie server-side
-    } catch {
-      // Session expired or server unreachable — fall back to full restart.
-      restart();
-      return;
-    }
-    // Reset only scan-phase state; preserve providers, credentials, authMethods,
-    // adServers, subscriptions, and credentialStatus (all still 'valid').
-    setScanProgress(0);
-    setProviderScanProgress({ aws: 0, azure: 0, gcp: 0, ad: 0, nios: 0 });
-    setFindings([]);
-    setScanResults(null);
-    setProviderErrors([]);
-    setScanError('');
-    setScanId('');
+    setBackupToken('');
+    setNiosServerMetrics([]);
     setFindingsProviderFilter(new Set());
     setFindingsCategoryFilter(new Set());
     setFindingsSort(null);
-    setExpandedGroups(new Set());
-    // Return to sources step — subscriptions are already populated and selected.
-    setCurrentStep('sources');
   };
 
   // Provider toggle
@@ -338,69 +350,59 @@ export function Wizard() {
       return;
     }
 
-    // Real API call
+    // Real API call — NIOS uses file upload, others use JSON credentials
     try {
-      const authMethod = selectedAuthMethod[providerId];
-      const creds = credentials[providerId] || {};
-
-      // Client-side field validation — guard against React state not capturing input values
-      // (e.g. browser autocomplete that bypasses onChange, or rapid clicking before state commits).
-      // This prevents confusing backend-generated error messages when fields appear visually
-      // filled but React's controlled-input state hasn't updated (common with browser autocomplete).
-      // Non-secret, non-optional required fields must be non-empty before the API call is made.
-      const providerDef = PROVIDERS.find((p) => p.id === providerId);
-      const currentAuth = providerDef?.authMethods.find((m) => m.id === authMethod) ?? providerDef?.authMethods[0];
-      // Keys that have backend defaults or are semantically optional (despite not having
-      // "(optional)" in the label). These are skipped in the client-side required check.
-      const OPTIONAL_KEYS = new Set(['region', 'ssoRegion', 'sourceProfile', 'externalId', 'useSSL']);
-      const missingRequired = (currentAuth?.fields ?? []).filter(
-        (f) =>
-          !f.secret &&
-          !OPTIONAL_KEYS.has(f.key) &&
-          !f.label.toLowerCase().includes('(optional)') &&
-          !creds[f.key]?.trim()
-      );
-      if (missingRequired.length > 0) {
-        const labels = missingRequired.map((f) => f.label).join(' and ');
-        setCredentialStatus((prev) => ({ ...prev, [providerId]: 'error' }));
-        setCredentialError((prev) => ({
-          ...prev,
-          [providerId]: `${labels} ${missingRequired.length === 1 ? 'is' : 'are'} required`,
-        }));
-        return;
-      }
-
-      // For AD provider: require at least one non-empty DC hostname
-      if (providerId === 'ad' && adServers.every(s => !s.trim())) {
-        setCredentialStatus((prev) => ({ ...prev, [providerId]: 'error' }));
-        setCredentialError((prev) => ({ ...prev, [providerId]: 'At least one Domain Controller address is required' }));
-        return;
-      }
-
-      // For AD, merge the servers list as a comma-separated credential field
-      const mergedCreds = providerId === 'ad'
-        ? { ...creds, servers: adServers.filter(s => s.trim() !== '').join(',') }
-        : creds;
-
-      const result = await apiValidate(providerId, authMethod, mergedCreds);
-      if (result.valid) {
-        setCredentialStatus((prev) => ({ ...prev, [providerId]: 'valid' }));
-        setSubscriptions((prev) => ({
-          ...prev,
-          [providerId]: result.subscriptions.map((s) => ({ ...s, selected: false })),
-        }));
+      if (providerId === 'nios' && niosUploadedFile) {
+        const result = await apiUploadNios(niosUploadedFile);
+        if (result.valid) {
+          setCredentialStatus((prev) => ({ ...prev, nios: 'valid' }));
+          // Store backupToken for later scan request
+          if (result.backupToken) setBackupToken(result.backupToken);
+          // Convert NiosGridMember[] to subscription items
+          setSubscriptions((prev) => ({
+            ...prev,
+            nios: result.members.map((m, i) => ({
+              id: `nios-${i}`,
+              name: `${m.hostname} (${m.role})`,
+              selected: true,
+            })),
+          }));
+        } else {
+          setCredentialStatus((prev) => ({ ...prev, nios: 'error' }));
+          setCredentialError((prev) => ({ ...prev, nios: result.error || 'Failed to parse backup' }));
+        }
       } else {
-        setCredentialStatus((prev) => ({ ...prev, [providerId]: 'error' }));
-        setCredentialError((prev) => ({ ...prev, [providerId]: result.error || 'Validation failed' }));
+        // Map frontend provider ID to backend ID for the API call
+        const backendId = BACKEND_PROVIDER_ID[providerId];
+        const authMethod = selectedAuthMethod[providerId];
+        const creds = credentials[providerId] || {};
+        const result = await apiValidate(backendId, authMethod, creds);
+        if (result.valid) {
+          setCredentialStatus((prev) => ({ ...prev, [providerId]: 'valid' }));
+          setSubscriptions((prev) => ({
+            ...prev,
+            [providerId]: result.subscriptions.map((s) => ({ ...s, selected: false })),
+          }));
+        } else {
+          setCredentialStatus((prev) => ({ ...prev, [providerId]: 'error' }));
+          setCredentialError((prev) => ({ ...prev, [providerId]: result.error || 'Validation failed' }));
+        }
       }
     } catch (err: any) {
       setCredentialStatus((prev) => ({ ...prev, [providerId]: 'error' }));
       setCredentialError((prev) => ({
         ...prev,
-        [providerId]: err?.message || 'Connection error — is the backend running?',
+        [providerId]: err?.message || 'Connection error -- is the backend running?',
       }));
     }
-  }, [backend.isDemo, selectedAuthMethod, credentials, adServers]);
+  }, [backend.isDemo, selectedAuthMethod, credentials, niosUploadedFile]);
+
+  // Auto-parse NIOS backup when file is selected/dropped
+  useEffect(() => {
+    if (niosUploadedFile && credentialStatus.nios !== 'validating' && credentialStatus.nios !== 'valid') {
+      validateCredential('nios');
+    }
+  }, [niosUploadedFile]);
 
   // Toggle subscription selection
   const toggleSubscription = (providerId: ProviderType, subId: string) => {
@@ -422,51 +424,12 @@ export function Wizard() {
     return () => clearScanIntervals();
   }, [clearScanIntervals]);
 
-  // Polling scan listener — replaces SSE; polls GET /api/v1/scan/{scanId}/status every 1.5s
-  useScanPolling(scanId, {
-    onStatus: (status) => {
-      setScanProgress(status.progress);
-      // Map per-provider progress from polling response
-      status.providers.forEach((p) => {
-        setProviderScanProgress((prev) => ({
-          ...prev,
-          [p.provider as ProviderType]: p.progress,
-        }));
-      });
-    },
-    onComplete: () => {
-      setScanProgress(100);
-      // Fetch final results once scan is complete
-      apiGetScanResults(scanId).then((results) => {
-        setScanResults(results);
-        setProviderErrors(results.errors ?? []);
-        const mapped: FindingRow[] = results.findings.map((f) => ({
-          provider: f.provider as ProviderType,
-          source: f.source,
-          region: f.region ?? '',
-          category: f.category as import('./mock-data').TokenCategory,
-          item: f.item,
-          count: f.count,
-          tokensPerUnit: f.tokensPerUnit,
-          managementTokens: f.managementTokens,
-        }));
-        setFindings(mapped);
-      }).catch((err: unknown) => {
-        const msg = err instanceof Error ? err.message : 'Failed to load results';
-        setScanError(msg);
-      });
-    },
-    onError: (msg) => {
-      setScanError(msg);
-    },
-  });
-
   // Start scan — uses real API when connected, mock when in demo mode
   const startScan = useCallback(() => {
     clearScanIntervals();
     setScanProgress(0);
     setScanError('');
-    const initProgress: Record<ProviderType, number> = { aws: 0, azure: 0, gcp: 0, ad: 0, nios: 0 };
+    const initProgress: Record<ProviderType, number> = { aws: 0, azure: 0, gcp: 0, microsoft: 0, nios: 0 };
     setProviderScanProgress(initProgress);
     setFindings([]);
 
@@ -513,36 +476,87 @@ export function Wizard() {
       return;
     }
 
-    // Real API: start scan then stream events via SSE
+    // Real API: start scan then poll status
     (async () => {
       try {
         const sessionId = getSessionId();
         const scanReq = {
           sessionId,
-          providers: selectedProviders.map((provId) => ({
-            provider: provId,
-            subscriptions: provId === 'nios'
-              ? Array.from(niosSelectedMembers)
-              : Array.from(getEffectiveSelected(provId)),
-            selectionMode: provId === 'nios' ? 'include' : selectionMode[provId],
-          })),
+          providers: selectedProviders.map((provId) => {
+            const backendId = BACKEND_PROVIDER_ID[provId];
+            const entry: {
+              provider: string;
+              subscriptions: string[];
+              selectionMode: 'include' | 'exclude';
+              backupToken?: string;
+              selectedMembers?: string[];
+            } = {
+              provider: backendId,
+              subscriptions: Array.from(getEffectiveSelected(provId)),
+              selectionMode: selectionMode[provId],
+            };
+            // NIOS-specific fields
+            if (provId === 'nios') {
+              entry.backupToken = backupToken;
+              // Extract hostnames from subscription names (format: "hostname (role)")
+              entry.selectedMembers = (subscriptions.nios || [])
+                .filter((s) => s.selected)
+                .map((s) => s.name.replace(/\s*\(.*\)$/, ''));
+            }
+            return entry;
+          }),
         };
-        const { scanId: newScanId } = await apiStartScan(scanReq);
-        setScanId(newScanId);
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : 'Failed to start scan';
-        setScanError(msg);
+        const { scanId } = await apiStartScan(scanReq);
+
+        // Poll scan status
+        const pollInterval = setInterval(async () => {
+          try {
+            const status: ScanStatusResponse = await apiGetScanStatus(scanId);
+            setScanProgress(status.progress);
+            status.providers.forEach((ps) => {
+              setProviderScanProgress((prev) => ({
+                ...prev,
+                [toFrontendProvider(ps.provider)]: ps.progress,
+              }));
+            });
+
+            if (status.status === 'complete') {
+              clearInterval(pollInterval);
+              const results = await apiGetScanResults(scanId);
+              const mapped: FindingRow[] = results.findings.map((f) => ({
+                provider: toFrontendProvider(f.provider),
+                source: f.source,
+                category: toFrontendCategory(f.category),
+                item: f.item,
+                count: f.count,
+                tokensPerUnit: f.tokensPerUnit,
+                managementTokens: f.managementTokens,
+              }));
+              setFindings(mapped);
+              setScanProgress(100);
+              // Store NIOS server metrics from live scan results
+              if (results.niosServerMetrics && results.niosServerMetrics.length > 0) {
+                setNiosServerMetrics(results.niosServerMetrics.map((m) => ({
+                  memberId: m.memberId,
+                  memberName: m.memberName,
+                  role: m.role as NiosServerMetrics['role'],
+                  qps: m.qps,
+                  lps: m.lps,
+                  objectCount: m.objectCount,
+                })));
+              }
+            }
+          } catch {
+            clearInterval(pollInterval);
+            setScanError('Lost connection to backend during scan.');
+          }
+        }, 1500);
+        scanIntervalsRef.current.push(pollInterval);
+      } catch (err: any) {
+        setScanError(err?.message || 'Failed to start scan');
       }
     })();
-  }, [backend.isDemo, selectedProviders, selectionMode, clearScanIntervals, getEffectiveSelected, niosSelectedMembers]);
-
-  // Derive niosServerMetrics: demo mode uses mock data; live mode uses API results
-  const niosServerMetrics = useMemo<NiosServerMetrics[]>(() => {
-    const raw: NiosServerMetricAPI[] = backend.isDemo
-      ? (MOCK_NIOS_SERVER_METRICS as unknown as NiosServerMetricAPI[])
-      : (scanResults?.niosServerMetrics ?? []);
-    return raw as unknown as NiosServerMetrics[];
-  }, [backend.isDemo, scanResults]);
+  }, [backend.isDemo, selectedProviders, selectedAuthMethod, credentials, selectionMode, clearScanIntervals, getEffectiveSelected, backupToken, subscriptions]);
 
   // Export
   const totalTokens = useMemo(
@@ -552,18 +566,14 @@ export function Wizard() {
 
   // Category subtotals for summary
   const categoryTotals = useMemo(() => {
-    const totals: Record<import('./mock-data').TokenCategory, number> = {
-      'DDI Objects': 0,
-      'Active IPs': 0,
-      'Managed Assets': 0,
-    };
+    const totals = { 'DDI Object': 0, 'Active IP': 0, 'Asset': 0 };
     findings.forEach((f) => {
       totals[f.category] += f.managementTokens;
     });
     return totals;
   }, [findings]);
 
-  // Filtered + sorted findings (flat) — used for token totals and CSV/XLS exports
+  // Filtered + sorted findings for the table
   const filteredSortedFindings = useMemo(() => {
     let rows = findings;
     // Filter by provider
@@ -600,58 +610,6 @@ export function Wizard() {
     return rows;
   }, [findings, findingsProviderFilter, findingsCategoryFilter, findingsSort]);
 
-  // Grouped findings for the table: each group aggregates rows by (provider, source, item, category)
-  // Sub-rows show per-region breakdown
-  type GroupedFinding = {
-    key: string;
-    provider: import('./mock-data').ProviderType;
-    source: string;
-    category: import('./mock-data').TokenCategory;
-    item: string;
-    totalCount: number;
-    totalTokens: number;
-    tokensPerUnit: number;
-    subRows: { region: string; count: number; tokens: number }[];
-    multiRegion: boolean;
-  };
-
-  const groupedFindings = useMemo((): GroupedFinding[] => {
-    const map = new Map<string, GroupedFinding>();
-    filteredSortedFindings.forEach((f) => {
-      const key = `${f.provider}|${f.source}|${f.item}|${f.category}`;
-      const existing = map.get(key);
-      if (existing) {
-        existing.totalCount += f.count;
-        existing.totalTokens += f.managementTokens;
-        const regionLabel = f.region || 'global';
-        const sub = existing.subRows.find((r) => r.region === regionLabel);
-        if (sub) {
-          sub.count += f.count;
-          sub.tokens += f.managementTokens;
-        } else {
-          existing.subRows.push({ region: regionLabel, count: f.count, tokens: f.managementTokens });
-        }
-      } else {
-        map.set(key, {
-          key,
-          provider: f.provider,
-          source: f.source,
-          category: f.category,
-          item: f.item,
-          totalCount: f.count,
-          totalTokens: f.managementTokens,
-          tokensPerUnit: f.tokensPerUnit,
-          subRows: [{ region: f.region || 'global', count: f.count, tokens: f.managementTokens }],
-          multiRegion: false,
-        });
-      }
-    });
-    // Determine multiRegion flag
-    const groups = Array.from(map.values());
-    groups.forEach((g) => { g.multiRegion = g.subRows.length > 1; });
-    return groups;
-  }, [filteredSortedFindings]);
-
   const filteredTokenTotal = useMemo(
     () => filteredSortedFindings.reduce((sum, f) => sum + f.managementTokens, 0),
     [filteredSortedFindings]
@@ -683,38 +641,137 @@ export function Wizard() {
     });
   };
 
-  const toggleGroupExpand = (key: string) => {
-    setExpandedGroups((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key); else next.add(key);
-      return next;
-    });
-  };
-
   const exportCSV = () => {
-    const header = 'Provider,Source,Region,Token Category,Item,Count,Tokens/Unit,Management Tokens';
+    const header = 'Provider,Source,Token Category,Item,Count,Tokens/Unit,Management Tokens';
     const rows = findings.map(
       (f) =>
-        `${PROVIDERS.find((p) => p.id === f.provider)?.name},${f.source},${f.region || 'global'},${f.category},${f.item},${f.count},${f.tokensPerUnit},${f.managementTokens}`
+        `${PROVIDERS.find((p) => p.id === f.provider)?.name},${f.source},${f.category},${f.item},${f.count},${f.tokensPerUnit},${f.managementTokens}`
     );
-    const summary = `\n\nTotal Management Tokens,,,,,,${totalTokens}`;
+    let summary = `\n\nTotal Management Tokens,,,,,,${totalTokens}`;
+    if (selectedProviders.includes('nios') && niosMigrationMap.size > 0) {
+      const nf = findings.filter((f) => f.provider === 'nios');
+      const nonNios = findings.filter((f) => f.provider !== 'nios').reduce((s, f) => s + f.managementTokens, 0);
+      const allNios = nf.reduce((s, f) => s + f.managementTokens, 0);
+      const migrating = nf.filter((f) => niosMigrationMap.has(f.source)).reduce((s, f) => s + f.managementTokens, 0);
+      summary += `\n\nNIOS-X Migration Planner`;
+      summary += `\nScenario,UDDI Tokens,NIOS Licensing Tokens`;
+      summary += `\nCurrent (NIOS Only),${nonNios},${allNios}`;
+      summary += `\nHybrid (${niosMigrationMap.size} members migrated),${nonNios + migrating},${allNios - migrating}`;
+      summary += `\nFull Universal DDI,${nonNios + allNios},0`;
+      summary += `\n\nMembers migrated:`;
+      niosMigrationMap.forEach((ff, src) => { summary += `\n,${src},${ff === 'nios-xaas' ? 'XaaS' : 'NIOS-X'}`; });
+    }
+    if (selectedProviders.includes('nios')) {
+      const niosSources = new Set(findings.filter((f) => f.provider === 'nios').map((f) => f.source));
+      const metricsToExport = niosMigrationMap.size > 0
+        ? effectiveNiosMetrics.filter((m) => niosMigrationMap.has(m.memberName))
+        : effectiveNiosMetrics.filter((m) => niosSources.has(m.memberName));
+      if (metricsToExport.length > 0) {
+        const niosXMetrics = metricsToExport.filter((m) => (niosMigrationMap.get(m.memberName) || 'nios-x') === 'nios-x');
+        const xaasMetrics = metricsToExport.filter((m) => niosMigrationMap.get(m.memberName) === 'nios-xaas');
+        const xaasInst = consolidateXaasInstances(xaasMetrics);
+        const hasAnyXaas = xaasMetrics.length > 0;
+        summary += `\n\nServer Token Calculator`;
+        summary += `\nGrid Member,Role,Form Factor,QPS (Peak),LPS (Peak),Objects,Connections,Server Size,Allocated Tokens`;
+        // NIOS-X individual members
+        niosXMetrics.forEach((m) => {
+          const tier = calcServerTokenTier(m.qps, m.lps, m.objectCount, 'nios-x');
+          summary += `\n${m.memberName},${m.role},NIOS-X,${m.qps},${m.lps},${m.objectCount},—,${tier.name},${tier.serverTokens}`;
+        });
+        // XaaS consolidated instances
+        xaasInst.forEach((inst) => {
+          summary += `\n--- XaaS Instance ${xaasInst.length > 1 ? inst.index + 1 : ''} (replaces ${inst.connectionsUsed} NIOS members) ---`;
+          inst.members.forEach((m) => {
+            summary += `\n  ${m.memberName},${m.role},XaaS (1 conn),${m.qps},${m.lps},${m.objectCount},,,(consolidated)`;
+          });
+          summary += `\n  AGGREGATE,,XaaS,${inst.totalQps},${inst.totalLps},${inst.totalObjects},${inst.connectionsUsed}/${inst.tier.maxConnections} conn,${inst.tier.name},${inst.totalTokens}`;
+          if (inst.extraConnections > 0) {
+            summary += ` (incl. ${inst.extraConnectionTokens} extra connection tokens)`;
+          }
+        });
+        const niosXTokens = niosXMetrics.reduce((s, m) => s + calcServerTokenTier(m.qps, m.lps, m.objectCount, 'nios-x').serverTokens, 0);
+        const xaasTokens = xaasInst.reduce((s, inst) => s + inst.totalTokens, 0);
+        const totalST = niosXTokens + xaasTokens;
+        summary += `\nTotal Allocated Server Tokens,,,,,,,,${totalST}`;
+        if (hasAnyXaas) {
+          summary += `\nConsolidation: ${xaasMetrics.length} NIOS members → ${xaasInst.length} XaaS instance${xaasInst.length > 1 ? 's' : ''} (${xaasMetrics.length}:${xaasInst.length} ratio)`;
+        }
+      }
+    }
     const csv = [header, ...rows].join('\n') + summary;
     downloadFile(csv, 'ddi-token-assessment.csv', 'text/csv');
   };
 
-  const exportExcel = async () => {
-    if (!scanId) return;
-    const resp = await fetch(`/api/v1/scan/${scanId}/export`);
-    if (!resp.ok) return;
-    const blob = await resp.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'ddi-token-assessment.xlsx';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+  // Shared helper for export functions: get the right metrics source
+  const getExportMetrics = () => effectiveNiosMetrics;
+
+  const exportExcel = () => {
+    // Generate a simple HTML table that Excel can open
+    let html = '<html><head><meta charset="UTF-8"></head><body>';
+    html += '<h2>Infoblox Universal DDI - Management Token Assessment</h2>';
+    html += `<p>Generated: ${new Date().toLocaleString()}</p>`;
+    html += '<table border="1" cellpadding="4" cellspacing="0">';
+    html += '<tr style="background:#002B49;color:white"><th>Provider</th><th>Source</th><th>Token Category</th><th>Item</th><th>Count</th><th>Tokens/Unit</th><th>Management Tokens</th></tr>';
+    findings.forEach((f) => {
+      html += `<tr><td>${PROVIDERS.find((p) => p.id === f.provider)?.name}</td><td>${f.source}</td><td>${f.category}</td><td>${f.item}</td><td>${f.count}</td><td>${f.tokensPerUnit}</td><td>${f.managementTokens}</td></tr>`;
+    });
+    html += `<tr style="background:#f5f5f5;font-weight:bold"><td colspan="6">Total Management Tokens</td><td>${totalTokens.toLocaleString()}</td></tr>`;
+    html += '</table>';
+    if (selectedProviders.includes('nios') && niosMigrationMap.size > 0) {
+      const nf = findings.filter((f) => f.provider === 'nios');
+      const nonNios = findings.filter((f) => f.provider !== 'nios').reduce((s, f) => s + f.managementTokens, 0);
+      const allNios = nf.reduce((s, f) => s + f.managementTokens, 0);
+      const migrating = nf.filter((f) => niosMigrationMap.has(f.source)).reduce((s, f) => s + f.managementTokens, 0);
+      html += '<br/><h3>NIOS-X Migration Planner</h3>';
+      html += '<table border="1" cellpadding="4" cellspacing="0">';
+      html += '<tr style="background:#002B49;color:white"><th>Scenario</th><th>UDDI Tokens</th><th>NIOS Licensing</th></tr>';
+      html += `<tr><td>Current (NIOS Only)</td><td>${nonNios.toLocaleString()}</td><td>${allNios.toLocaleString()}</td></tr>`;
+      html += `<tr style="background:#FFF3E0"><td>Hybrid (${niosMigrationMap.size} members migrated)</td><td><b>${(nonNios + migrating).toLocaleString()}</b></td><td>${(allNios - migrating).toLocaleString()}</td></tr>`;
+      html += `<tr><td>Full Universal DDI</td><td><b>${(nonNios + allNios).toLocaleString()}</b></td><td>0</td></tr>`;
+      html += '</table>';
+      html += '<br/><p><b>Members migrated:</b></p><ul>';
+      niosMigrationMap.forEach((ff, src) => { html += `<li>${src} → ${ff === 'nios-xaas' ? 'NIOS-X as a Service' : 'NIOS-X'}</li>`; });
+      html += '</ul>';
+    }
+    if (selectedProviders.includes('nios')) {
+      const niosSources = new Set(findings.filter((f) => f.provider === 'nios').map((f) => f.source));
+      const metricsToExport = niosMigrationMap.size > 0
+        ? effectiveNiosMetrics.filter((m) => niosMigrationMap.has(m.memberName))
+        : effectiveNiosMetrics.filter((m) => niosSources.has(m.memberName));
+      if (metricsToExport.length > 0) {
+        const niosXMetrics = metricsToExport.filter((m) => (niosMigrationMap.get(m.memberName) || 'nios-x') === 'nios-x');
+        const xaasMetrics = metricsToExport.filter((m) => niosMigrationMap.get(m.memberName) === 'nios-xaas');
+        const xaasInst = consolidateXaasInstances(xaasMetrics);
+        const hasAnyXaas = xaasMetrics.length > 0;
+        html += `<br/><h3>Server Token Calculator</h3>`;
+        html += '<table border="1" cellpadding="4" cellspacing="0">';
+        html += `<tr style="background:#065f46;color:white"><th>Grid Member</th><th>Role</th><th>Form Factor</th><th>QPS (Peak)</th><th>LPS (Peak)</th><th>Objects</th><th>Size</th><th>Allocated Tokens</th></tr>`;
+        // NIOS-X individual members
+        niosXMetrics.forEach((m) => {
+          const tier = calcServerTokenTier(m.qps, m.lps, m.objectCount, 'nios-x');
+          html += `<tr><td>${m.memberName}</td><td>${m.role}</td><td>NIOS-X</td><td>${m.qps.toLocaleString()}</td><td>${m.lps.toLocaleString()}</td><td>${m.objectCount.toLocaleString()}</td><td>${tier.name}</td><td style="text-align:center;font-weight:bold">${tier.serverTokens.toLocaleString()}</td></tr>`;
+        });
+        // XaaS consolidated instances
+        xaasInst.forEach((inst) => {
+          html += `<tr style="background:#f3e8ff"><td colspan="8" style="font-weight:bold;color:#6b21a8">XaaS Instance${xaasInst.length > 1 ? ' ' + (inst.index + 1) : ''} — replaces ${inst.connectionsUsed} NIOS member${inst.connectionsUsed > 1 ? 's' : ''}</td></tr>`;
+          inst.members.forEach((m) => {
+            html += `<tr style="background:#faf5ff"><td style="padding-left:20px">${m.memberName}</td><td>${m.role}</td><td style="color:#7c3aed">1 conn</td><td style="color:#7c3aed">${m.qps.toLocaleString()}</td><td style="color:#7c3aed">${m.lps.toLocaleString()}</td><td style="color:#7c3aed">${m.objectCount.toLocaleString()}</td><td colspan="2" style="text-align:center;color:#999">(consolidated)</td></tr>`;
+          });
+          html += `<tr style="background:#ede9fe"><td style="padding-left:20px;font-weight:600">Aggregate (${inst.connectionsUsed}/${inst.tier.maxConnections} connections${inst.extraConnections > 0 ? ', +' + inst.extraConnections + ' extra' : ''})</td><td style="font-weight:600">XaaS</td><td style="font-weight:600">${inst.connectionsUsed} conn</td><td style="font-weight:600">${inst.totalQps.toLocaleString()}</td><td style="font-weight:600">${inst.totalLps.toLocaleString()}</td><td style="font-weight:600">${inst.totalObjects.toLocaleString()}</td><td style="font-weight:600">${inst.tier.name}</td><td style="text-align:center;font-weight:bold;color:#6b21a8">${inst.totalTokens.toLocaleString()}${inst.extraConnectionTokens > 0 ? ' (incl. ' + inst.extraConnectionTokens.toLocaleString() + ' extra conn)' : ''}</td></tr>`;
+        });
+        const niosXTokens = niosXMetrics.reduce((s, m) => s + calcServerTokenTier(m.qps, m.lps, m.objectCount, 'nios-x').serverTokens, 0);
+        const xaasTokens = xaasInst.reduce((s, inst) => s + inst.totalTokens, 0);
+        const totalST = niosXTokens + xaasTokens;
+        html += `<tr style="background:#ecfdf5;font-weight:bold"><td colspan="7">Total Allocated Server Tokens</td><td style="text-align:center">${totalST.toLocaleString()}</td></tr>`;
+        html += '</table>';
+        if (hasAnyXaas) {
+          html += `<p><b>Consolidation:</b> ${xaasMetrics.length} NIOS member${xaasMetrics.length > 1 ? 's' : ''} \u2192 ${xaasInst.length} XaaS instance${xaasInst.length > 1 ? 's' : ''} (${xaasMetrics.length}:${xaasInst.length} ratio). Each connection replaces 1 NIOS member or branch office appliance.</p>`;
+          html += '<p><i>Note: Up to 400 additional connections can be added per XaaS instance at 100 tokens each.</i></p>';
+        }
+      }
+    }
+    html += '</body></html>';
+    downloadFile(html, 'ddi-token-assessment.xls', 'application/vnd.ms-excel');
   };
 
   const downloadFile = (content: string, filename: string, type: string) => {
@@ -731,23 +788,17 @@ export function Wizard() {
     <div className="min-h-screen bg-[var(--background)] flex flex-col">
       {/* Header */}
       <header className="bg-[var(--infoblox-navy)] text-white">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            {/* Inline Infoblox logo — no external URL dependency */}
-            <div className="w-8 h-8 rounded bg-white/10 flex items-center justify-center shrink-0">
-              <svg viewBox="0 0 32 32" className="w-5 h-5" fill="none">
-                <rect x="2" y="2" width="28" height="28" rx="4" fill="#F37021" />
-                <rect x="7" y="7" width="7" height="7" rx="1" fill="white" />
-                <rect x="18" y="7" width="7" height="7" rx="1" fill="white" opacity="0.7" />
-                <rect x="7" y="18" width="7" height="7" rx="1" fill="white" opacity="0.7" />
-                <rect x="18" y="18" width="7" height="7" rx="1" fill="white" opacity="0.4" />
-              </svg>
-            </div>
-            <div>
-              <div className="text-[15px] tracking-wide" style={{ fontWeight: 600 }}>
-                INFOBLOX
-              </div>
-              <div className="text-[11px] text-white/60 tracking-wider uppercase">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            {/* Infoblox logo */}
+            <img
+              src={INFOBLOX_LOGO}
+              alt="Infoblox"
+              className="h-7 sm:h-8 shrink-0 object-contain"
+            />
+            <div className="h-6 w-px bg-white/25 hidden sm:block" />
+            <div className="hidden sm:block">
+              <div className="text-[12px] text-white/70 tracking-wider uppercase">
                 Universal DDI Token Assessment
               </div>
             </div>
@@ -789,7 +840,7 @@ export function Wizard() {
 
       {/* Stepper */}
       <div className="bg-white border-b border-[var(--border)]">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 py-4">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-4">
           <div className="flex items-center justify-between">
             {STEPS.map((step, i) => {
               const isCompleted = i < currentIndex;
@@ -824,7 +875,7 @@ export function Wizard() {
                       }`}
                       style={{ fontWeight: isCurrent ? 600 : 400 }}
                     >
-                      {step.label}
+                      {step.id === 'credentials' && isNiosOnly ? 'Upload Backup' : step.label}
                     </span>
                   </div>
                   {i < STEPS.length - 1 && (
@@ -843,7 +894,7 @@ export function Wizard() {
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 py-6">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6">
           {/* Step 1: Select Providers */}
           {currentStep === 'providers' && (
             <div>
@@ -856,7 +907,6 @@ export function Wizard() {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {PROVIDERS.map((provider) => {
                   const selected = selectedProviders.includes(provider.id);
-                  const Icon = provider.id === 'ad' ? Server : Cloud;
                   return (
                     <button
                       key={provider.id}
@@ -872,7 +922,7 @@ export function Wizard() {
                           className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0"
                           style={{ backgroundColor: `${provider.color}15` }}
                         >
-                          <Icon className="w-5 h-5" style={{ color: provider.color }} />
+                          <ProviderIconEl id={provider.id} className="w-5 h-5" color={provider.color} />
                         </div>
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">
@@ -905,122 +955,20 @@ export function Wizard() {
           {currentStep === 'credentials' && (
             <div>
               <h2 className="text-[18px] mb-1" style={{ fontWeight: 600 }}>
-                Choose authentication method
+                {isNiosOnly ? 'Upload NIOS Grid Backup' : 'Choose authentication method'}
               </h2>
               <p className="text-[13px] text-[var(--muted-foreground)] mb-6">
-                Configure credentials for each selected provider. Credentials are sent only to your local Go backend — never to external servers.
+                {isNiosOnly
+                  ? 'Upload a NIOS Grid backup file (.tar.gz, .tgz, or .bak) exported from the Grid Master. The backup will be parsed locally to extract DDI configuration.'
+                  : 'Configure credentials for each selected provider. Credentials are sent only to your local Go backend — never to external servers.'}
               </p>
               <div className="space-y-4">
                 {selectedProviders.map((provId) => {
                   const provider = PROVIDERS.find((p) => p.id === provId)!;
                   const status = credentialStatus[provId];
-                  const Icon = provId === 'ad' ? Server : Cloud;
-
-                  // NIOS: render file upload instead of credential form
-                  if (provider.isFileUpload) {
-                    return (
-                      <div key={provId} className="border border-[var(--border)] rounded-xl p-4">
-                        <div className="flex items-center gap-3 mb-4">
-                          <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ backgroundColor: '#00A1FF15' }}>
-                            <Server className="w-4 h-4" style={{ color: '#00A1FF' }} />
-                          </div>
-                          <div>
-                            <h3 className="text-[14px]" style={{ fontWeight: 600 }}>NIOS Grid Backup</h3>
-                            <p className="text-[12px] text-[var(--muted-foreground)]">Upload a .tar.gz, .tgz, or .bak backup file</p>
-                          </div>
-                        </div>
-
-                        {/* File dropzone */}
-                        <label className={`flex flex-col items-center justify-center w-full h-28 border-2 border-dashed rounded-lg cursor-pointer transition-colors ${
-                          niosUploadStatus === 'done' ? 'border-green-400 bg-green-50/50' :
-                          niosUploadStatus === 'error' ? 'border-red-300 bg-red-50/50' :
-                          'border-[var(--border)] hover:border-gray-400 bg-gray-50/50'
-                        }`}>
-                          <input
-                            type="file"
-                            accept=".tar.gz,.tgz,.bak"
-                            className="hidden"
-                            onChange={handleNiosFileChange}
-                            disabled={niosUploadStatus === 'uploading'}
-                          />
-                          {niosUploadStatus === 'idle' && (
-                            <>
-                              <Download className="w-6 h-6 text-gray-400 mb-1" />
-                              <p className="text-[13px] text-[var(--muted-foreground)]">Click to select backup file</p>
-                              <p className="text-[11px] text-gray-400 mt-0.5">.tar.gz, .tgz, or .bak — max 500 MB</p>
-                            </>
-                          )}
-                          {niosUploadStatus === 'uploading' && (
-                            <><Loader2 className="w-6 h-6 text-blue-500 animate-spin mb-1" /><p className="text-[13px] text-blue-600">Parsing backup...</p></>
-                          )}
-                          {niosUploadStatus === 'done' && (
-                            <><CheckCircle2 className="w-6 h-6 text-green-500 mb-1" /><p className="text-[13px] text-green-700" style={{ fontWeight: 500 }}>Upload successful — {niosMembers.length} Grid Member{niosMembers.length !== 1 ? 's' : ''} found</p></>
-                          )}
-                          {niosUploadStatus === 'error' && (
-                            <><AlertCircle className="w-5 h-5 text-red-500 mb-1" /><p className="text-[13px] text-red-700">{niosUploadError || 'Upload failed'}</p></>
-                          )}
-                        </label>
-
-                        {/* Member checkbox list */}
-                        {niosMembers.length > 0 && (
-                          <div className="mt-4">
-                            <div className="flex items-center justify-between mb-2">
-                              <span className="text-[13px]" style={{ fontWeight: 500 }}>Grid Members</span>
-                              <button
-                                className="text-[12px] text-blue-600 hover:text-blue-800"
-                                onClick={() => {
-                                  if (niosSelectedMembers.size === niosMembers.length) {
-                                    setNiosSelectedMembers(new Set());
-                                  } else {
-                                    setNiosSelectedMembers(new Set(niosMembers.map((m) => m.hostname)));
-                                  }
-                                }}
-                              >
-                                {niosSelectedMembers.size === niosMembers.length ? 'Deselect All' : 'Select All'}
-                              </button>
-                            </div>
-                            <div className="space-y-1 max-h-40 overflow-y-auto">
-                              {niosMembers.map((member) => {
-                                const checked = niosSelectedMembers.has(member.hostname);
-                                return (
-                                  <label key={member.hostname} className="flex items-center gap-2 py-1 cursor-pointer">
-                                    <input
-                                      type="checkbox"
-                                      checked={checked}
-                                      onChange={() => {
-                                        setNiosSelectedMembers((prev) => {
-                                          const next = new Set(prev);
-                                          if (next.has(member.hostname)) next.delete(member.hostname);
-                                          else next.add(member.hostname);
-                                          return next;
-                                        });
-                                      }}
-                                      className="w-4 h-4 accent-[var(--infoblox-orange)]"
-                                    />
-                                    <span className="text-[13px] flex-1">{member.hostname}</span>
-                                    <span className={`text-[11px] px-2 py-0.5 rounded-full ${
-                                      member.role === 'Master' ? 'bg-blue-100 text-blue-700' :
-                                      member.role === 'Candidate' ? 'bg-purple-100 text-purple-700' :
-                                      'bg-gray-100 text-gray-600'
-                                    }`}>{member.role}</span>
-                                  </label>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  }
-
                   const currentAuthId = selectedAuthMethod[provId];
                   const currentAuth = provider.authMethods.find((m) => m.id === currentAuthId) || provider.authMethods[0];
                   const hasFields = currentAuth.fields.length > 0;
-                  // Browser-flow auth methods open a system browser and poll for a token.
-                  // AWS SSO: OIDC device authorization flow (up to 2 min).
-                  // Azure browser-sso: InteractiveBrowserCredential (opens localhost redirect).
-                  const BROWSER_FLOW_METHODS = new Set(['sso', 'browser-sso', 'browser-oauth']);
-                  const isBrowserFlow = BROWSER_FLOW_METHODS.has(currentAuthId);
 
                   return (
                     <div
@@ -1033,7 +981,7 @@ export function Wizard() {
                           className="w-8 h-8 rounded-lg flex items-center justify-center"
                           style={{ backgroundColor: `${provider.color}15` }}
                         >
-                          <Icon className="w-4 h-4" style={{ color: provider.color }} />
+                          <ProviderIconEl id={provId} className="w-4 h-4" color={provider.color} />
                         </div>
                         <span className="text-[14px]" style={{ fontWeight: 600 }}>
                           {provider.fullName}
@@ -1058,41 +1006,24 @@ export function Wizard() {
                         <div className="flex flex-wrap gap-1.5">
                           {provider.authMethods.map((method) => {
                             const isSelected = currentAuthId === method.id;
-                            // Methods not yet implemented in the Go backend are disabled
-                            const COMING_SOON: Record<ProviderType, string[]> = {
-                              aws: ['profile', 'assume-role'],
-                              azure: ['device-code', 'certificate', 'az-cli'],
-                              gcp: [],
-                              ad: [],
-                              nios: [],
-                            };
-                            const isComingSoon = COMING_SOON[provId]?.includes(method.id) ?? false;
                             return (
                               <button
                                 key={method.id}
-                                disabled={isComingSoon}
                                 onClick={() => {
-                                  if (isComingSoon) return;
                                   setSelectedAuthMethod((prev) => ({ ...prev, [provId]: method.id }));
                                   // Reset status when switching auth method
                                   if (status === 'valid' || status === 'error') {
                                     setCredentialStatus((prev) => ({ ...prev, [provId]: 'idle' }));
                                   }
                                 }}
-                                title={isComingSoon ? 'Coming soon' : undefined}
                                 className={`px-3 py-1.5 rounded-lg text-[12px] transition-all border ${
-                                  isComingSoon
-                                    ? 'opacity-40 cursor-not-allowed bg-white text-[var(--muted-foreground)] border-[var(--border)]'
-                                    : isSelected
-                                      ? 'bg-[var(--infoblox-navy)] text-white border-[var(--infoblox-navy)]'
-                                      : 'bg-white text-[var(--foreground)] border-[var(--border)] hover:border-gray-400'
+                                  isSelected
+                                    ? 'bg-[var(--infoblox-navy)] text-white border-[var(--infoblox-navy)]'
+                                    : 'bg-white text-[var(--foreground)] border-[var(--border)] hover:border-gray-400'
                                 }`}
-                                style={{ fontWeight: isSelected && !isComingSoon ? 600 : 400 }}
+                                style={{ fontWeight: isSelected ? 600 : 400 }}
                               >
                                 {method.name}
-                                {isComingSoon && (
-                                  <span className="ml-1 text-[10px] opacity-70">(Coming soon)</span>
-                                )}
                               </button>
                             );
                           })}
@@ -1108,7 +1039,121 @@ export function Wizard() {
                           </p>
                         </div>
 
-                        {hasFields ? (
+                        {/* NIOS file upload dropzone */}
+                        {provider.isFileUpload ? (
+                          <div>
+                            <div
+                              onDragOver={(e) => { e.preventDefault(); setNiosDragOver(true); }}
+                              onDragLeave={() => setNiosDragOver(false)}
+                              onDrop={(e) => {
+                                e.preventDefault();
+                                setNiosDragOver(false);
+                                const file = e.dataTransfer.files?.[0];
+                                if (file && (file.name.endsWith('.tar.gz') || file.name.endsWith('.tgz') || file.name.endsWith('.bak'))) {
+                                  setNiosUploadedFile(file);
+                                }
+                              }}
+                              className={`relative border-2 border-dashed rounded-xl p-8 text-center transition-colors ${
+                                niosDragOver
+                                  ? 'border-[var(--infoblox-orange)] bg-orange-50/50'
+                                  : status === 'validating'
+                                    ? 'border-[var(--infoblox-orange)] bg-orange-50/30'
+                                    : status === 'valid'
+                                      ? 'border-green-400 bg-green-50/50'
+                                      : status === 'error'
+                                        ? 'border-red-400 bg-red-50/50'
+                                        : niosUploadedFile
+                                          ? 'border-[var(--infoblox-orange)] bg-orange-50/30'
+                                          : 'border-gray-300 hover:border-gray-400'
+                              }`}
+                            >
+                              {status === 'validating' && niosUploadedFile ? (
+                                <div className="flex flex-col items-center gap-2">
+                                  <div className="w-10 h-10 rounded-full bg-orange-100 flex items-center justify-center">
+                                    <Loader2 className="w-5 h-5 text-[var(--infoblox-orange)] animate-spin" />
+                                  </div>
+                                  <div>
+                                    <p className="text-[13px]" style={{ fontWeight: 600 }}>Parsing {niosUploadedFile.name}...</p>
+                                    <p className="text-[11px] text-[var(--muted-foreground)]">
+                                      Extracting Grid Members and DDI configuration
+                                    </p>
+                                  </div>
+                                </div>
+                              ) : status === 'valid' && niosUploadedFile ? (
+                                <div className="flex flex-col items-center gap-2">
+                                  <div className="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center">
+                                    <CheckCircle2 className="w-5 h-5 text-green-600" />
+                                  </div>
+                                  <div>
+                                    <p className="text-[13px]" style={{ fontWeight: 600 }}>{niosUploadedFile.name}</p>
+                                    <p className="text-[11px] text-[var(--muted-foreground)]">
+                                      {(niosUploadedFile.size / 1024 / 1024).toFixed(1)} MB — {subscriptions.nios.length} Grid Member{subscriptions.nios.length !== 1 ? 's' : ''} found
+                                    </p>
+                                  </div>
+                                  <button
+                                    onClick={() => {
+                                      setNiosUploadedFile(null);
+                                      setCredentialStatus((prev) => ({ ...prev, nios: 'idle' }));
+                                      setSubscriptions((prev) => ({ ...prev, nios: [] }));
+                                    }}
+                                    className="text-[12px] text-red-500 hover:text-red-700 underline"
+                                  >
+                                    Remove file
+                                  </button>
+                                </div>
+                              ) : status === 'error' && niosUploadedFile ? (
+                                <div className="flex flex-col items-center gap-2">
+                                  <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center">
+                                    <AlertCircle className="w-5 h-5 text-red-500" />
+                                  </div>
+                                  <div>
+                                    <p className="text-[13px]" style={{ fontWeight: 600 }}>{niosUploadedFile.name}</p>
+                                    <p className="text-[11px] text-red-600">
+                                      {credentialError.nios || 'Failed to parse backup'}
+                                    </p>
+                                  </div>
+                                  <button
+                                    onClick={() => {
+                                      setNiosUploadedFile(null);
+                                      setCredentialStatus((prev) => ({ ...prev, nios: 'idle' }));
+                                      setCredentialError((prev) => ({ ...prev, nios: '' }));
+                                      setSubscriptions((prev) => ({ ...prev, nios: [] }));
+                                    }}
+                                    className="text-[12px] text-[var(--infoblox-orange)] hover:underline"
+                                  >
+                                    Try a different file
+                                  </button>
+                                </div>
+                              ) : (
+                                <div className="flex flex-col items-center gap-2">
+                                  <div className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center">
+                                    <Upload className="w-5 h-5 text-gray-400" />
+                                  </div>
+                                  <div>
+                                    <p className="text-[13px]" style={{ fontWeight: 500 }}>
+                                      Drop your NIOS backup here, or{' '}
+                                      <label className="text-[var(--infoblox-orange)] hover:underline cursor-pointer">
+                                        browse
+                                        <input
+                                          type="file"
+                                          accept=".tar.gz,.tgz,.bak"
+                                          className="hidden"
+                                          onChange={(e) => {
+                                            const file = e.target.files?.[0];
+                                            if (file) setNiosUploadedFile(file);
+                                          }}
+                                        />
+                                      </label>
+                                    </p>
+                                    <p className="text-[11px] text-[var(--muted-foreground)] mt-1">
+                                      Accepts .tar.gz, .tgz, or .bak files exported from NIOS Grid Master
+                                    </p>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        ) : hasFields ? (
                           <div className="space-y-3">
                             {currentAuth.fields.map((field) => {
                               const fieldKey = `${provId}-${currentAuthId}-${field.key}`;
@@ -1120,7 +1165,21 @@ export function Wizard() {
                                     {field.label}
                                   </label>
                                   <div className="relative">
-                                    {field.multiline ? (
+                                    {field.serverList ? (
+                                      <ServerListInput
+                                        servers={(credentials[provId]?.[field.key] || '').split(',').map((s: string) => s.trim()).filter(Boolean)}
+                                        onChange={(list) =>
+                                          setCredentials((prev) => ({
+                                            ...prev,
+                                            [provId]: {
+                                              ...prev[provId],
+                                              [field.key]: list.join(', '),
+                                            },
+                                          }))
+                                        }
+                                        placeholder={field.placeholder}
+                                      />
+                                    ) : field.multiline ? (
                                       <textarea
                                         placeholder={field.placeholder}
                                         value={credentials[provId]?.[field.key] || ''}
@@ -1153,7 +1212,7 @@ export function Wizard() {
                                         className="w-full px-3 py-2 bg-[var(--input-background)] border border-[var(--border)] rounded-lg text-[13px] focus:outline-none focus:ring-2 focus:ring-[var(--infoblox-blue)]/30 focus:border-[var(--infoblox-blue)]"
                                       />
                                     )}
-                                    {isSecret && !field.multiline && (
+                                    {isSecret && !field.multiline && !field.serverList && (
                                       <button
                                         type="button"
                                         onClick={() =>
@@ -1184,75 +1243,21 @@ export function Wizard() {
                         ) : (
                           <div className="py-2 px-3 bg-green-50 rounded-lg border border-green-100 mb-3">
                             <p className="text-[12px] text-green-700">
-                              No credentials needed — the scanner will use your local gcloud application-default credentials. Click Validate to verify access.
+                              No credentials needed — the scanner will use your existing session. Click the button below to verify access.
                             </p>
                           </div>
                         )}
 
-                        {/* Dynamic Domain Controller list — shown only for AD provider */}
-                        {provId === 'ad' && (
-                          <div className="space-y-2 mt-3">
-                            <label className="block text-[12px] text-[var(--muted-foreground)]" style={{ fontWeight: 500 }}>
-                              Domain Controllers
-                            </label>
-                            {adServers.map((server, idx) => (
-                              <div key={idx} className="flex items-center gap-2">
-                                <input
-                                  type="text"
-                                  value={server}
-                                  onChange={e => updateDCServer(idx, e.target.value)}
-                                  placeholder="dc01.corp.local or 10.0.1.50"
-                                  className="flex-1 px-3 py-2 text-[13px] border border-[var(--border)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--infoblox-navy)] focus:border-transparent"
-                                />
-                                {adServers.length > 1 && (
-                                  <button
-                                    type="button"
-                                    onClick={() => removeDCServer(idx)}
-                                    className="p-2 text-[var(--muted-foreground)] hover:text-red-500 transition-colors"
-                                    title="Remove"
-                                  >
-                                    <Trash2 className="w-4 h-4" />
-                                  </button>
-                                )}
-                              </div>
-                            ))}
-                            <button
-                              type="button"
-                              onClick={addDCServer}
-                              className="flex items-center gap-1.5 text-[12px] text-[var(--infoblox-navy)] hover:underline mt-1"
-                            >
-                              <Plus className="w-3.5 h-3.5" /> Add Domain Controller
-                            </button>
-                            <p className="text-[11px] text-[var(--muted-foreground)] mt-1">
-                              Same username and password will be used for all domain controllers.
-                            </p>
-                          </div>
-                        )}
-
-                        {isBrowserFlow && status === 'validating' && (
-                          <div className="mt-3 flex items-start gap-2 p-3 bg-amber-50 rounded-lg border border-amber-200">
-                            <Globe className="w-3.5 h-3.5 text-amber-600 mt-0.5 shrink-0" />
-                            <div>
-                              <p className="text-[12px] font-medium text-amber-800">
-                                {currentAuthId === 'sso'
-                                  ? 'Browser opened — complete AWS SSO login to continue'
-                                  : currentAuthId === 'browser-oauth'
-                                    ? 'Browser opened — complete Google login to continue'
-                                    : 'Browser opened — complete Entra ID login to continue'}
-                              </p>
-                              <p className="text-[11px] text-amber-700 mt-0.5">
-                                {currentAuthId === 'sso'
-                                  ? 'Approve the request in the browser. Waiting up to 2 minutes for confirmation.'
-                                  : currentAuthId === 'browser-oauth'
-                                    ? 'Sign in with your Google Workspace account in the browser window that just opened.'
-                                    : 'Sign in with your Microsoft account in the browser window that just opened.'}
-                              </p>
-                            </div>
-                          </div>
-                        )}
-
+                        {/* Button below dropzone/fields — for file-upload it opens file picker, for others it validates */}
                         <button
-                          onClick={() => validateCredential(provId)}
+                          onClick={() => {
+                            if (provider.isFileUpload) {
+                              const input = document.querySelector('input[accept=".tar.gz,.tgz,.bak"]') as HTMLInputElement;
+                              if (input) input.click();
+                            } else {
+                              validateCredential(provId);
+                            }
+                          }}
                           disabled={status === 'validating' || status === 'valid'}
                           className={`mt-3 px-4 py-2 rounded-lg text-[13px] transition-colors flex items-center gap-2 ${
                             status === 'valid'
@@ -1269,15 +1274,18 @@ export function Wizard() {
                           {status === 'valid' && <CheckCircle2 className="w-3.5 h-3.5" />}
                           {status === 'error' && <AlertCircle className="w-3.5 h-3.5" />}
                           {status === 'validating'
-                            ? (isBrowserFlow ? 'Waiting for browser...' : 'Validating...')
+                            ? (provider.isFileUpload ? 'Parsing Backup...' : (hasFields ? 'Validating...' : 'Authenticating...'))
                             : status === 'valid'
                               ? 'Verified'
                               : status === 'error'
                                 ? 'Retry'
-                                : (isBrowserFlow ? 'Authenticate via Browser' : 'Validate')}
-                          {status === 'idle' && isBrowserFlow && <Globe className="w-3.5 h-3.5" />}
+                                : provider.isFileUpload
+                                  ? 'Grid Backup Upload'
+                                  : (hasFields ? 'Validate & Connect' : 'Authenticate via Browser')}
+                          {status === 'idle' && !hasFields && !provider.isFileUpload && <Globe className="w-3.5 h-3.5" />}
+                          {status === 'idle' && provider.isFileUpload && <Upload className="w-3.5 h-3.5" />}
                         </button>
-                        {status === 'error' && credentialError[provId] && (
+                        {status === 'error' && credentialError[provId] && !provider.isFileUpload && (
                           <div className="mt-2 flex items-start gap-2 p-2.5 bg-red-50 rounded-lg border border-red-100">
                             <AlertCircle className="w-3.5 h-3.5 text-red-500 mt-0.5 shrink-0" />
                             <p className="text-[12px] text-red-700">{credentialError[provId]}</p>
@@ -1304,7 +1312,6 @@ export function Wizard() {
                 {selectedProviders.map((provId) => {
                   const provider = PROVIDERS.find((p) => p.id === provId)!;
                   const subs = subscriptions[provId] || [];
-                  const Icon = provId === 'ad' ? Server : Cloud;
                   const mode = selectionMode[provId];
                   const isExcludeMode = mode === 'exclude';
                   // In include mode: checked = will scan. In exclude mode: checked = will SKIP.
@@ -1370,7 +1377,7 @@ export function Wizard() {
                           className="w-8 h-8 rounded-lg flex items-center justify-center"
                           style={{ backgroundColor: `${provider.color}15` }}
                         >
-                          <Icon className="w-4 h-4" style={{ color: provider.color }} />
+                          <ProviderIconEl id={provId} className="w-4 h-4" color={provider.color} />
                         </div>
                         <span className="text-[14px]" style={{ fontWeight: 600 }}>
                           {provider.name} {provider.subscriptionLabel}
@@ -1575,8 +1582,8 @@ export function Wizard() {
                           </span>
                           <span style={{ fontWeight: 500 }}>
                             {isExcludeMode && checkedCount > 0
-                              ? <>{effectiveCount} will be scanned <span className="text-red-500">({checkedCount} excluded)</span></>
-                              : <>{effectiveCount} selected for scan</>
+                              ? <span>{effectiveCount} will be scanned <span className="text-red-500">({checkedCount} excluded)</span></span>
+                              : <span>{effectiveCount} selected for scan</span>
                             }
                           </span>
                         </div>
@@ -1593,7 +1600,7 @@ export function Wizard() {
             <div className="flex flex-col items-center justify-center py-12">
               <div className="w-full max-w-md">
                 {scanProgress < 100 ? (
-                  <>
+                  <div>
                     <div className="flex items-center justify-center mb-6">
                       <div className="relative">
                         <div className="w-20 h-20 rounded-full border-4 border-gray-200" />
@@ -1666,7 +1673,7 @@ export function Wizard() {
                         </div>
                       </div>
                     )}
-                  </>
+                  </div>
                 ) : (
                   <div className="text-center">
                     <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-green-100 flex items-center justify-center">
@@ -1712,49 +1719,76 @@ export function Wizard() {
                       sourceMap.get(key)!.tokens += f.managementTokens;
                     });
                     const sources = Array.from(sourceMap.values()).sort((a, b) => b.tokens - a.tokens);
-                    return sources.map((entry) => {
-                      const provider = PROVIDERS.find((p) => p.id === entry.provider)!;
-                      const pct = totalTokens > 0 ? (entry.tokens / totalTokens) * 100 : 0;
-                      return (
-                        <div key={`${entry.provider}-${entry.source}`}>
-                          <div className="flex items-center justify-between mb-1">
-                            <span className="text-[12px] flex items-center gap-1.5" style={{ fontWeight: 500 }}>
-                              <span
-                                className="inline-block w-2 h-2 rounded-full shrink-0"
-                                style={{ backgroundColor: provider.color }}
-                              />
-                              {entry.source}
-                              <span className="text-[11px] text-[var(--muted-foreground)]" style={{ fontWeight: 400 }}>
-                                {provider.name}
-                              </span>
-                            </span>
-                            <span className="text-[12px] tabular-nums text-[var(--muted-foreground)]">
-                              {entry.tokens.toLocaleString()} <span className="text-[11px]">({Math.round(pct)}%)</span>
-                            </span>
-                          </div>
-                          <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                            <div
-                              className="h-full rounded-full transition-all"
-                              style={{ width: `${pct}%`, backgroundColor: provider.color }}
-                            />
-                          </div>
-                        </div>
-                      );
-                    });
+                    const HERO_LIMIT = 10;
+                    const visibleSources = showAllHeroSources ? sources : sources.slice(0, HERO_LIMIT);
+                    const hiddenCount = sources.length - HERO_LIMIT;
+                    return (
+                      <>
+                        {visibleSources.map((entry) => {
+                          const provider = PROVIDERS.find((p) => p.id === entry.provider)!;
+                          const pct = totalTokens > 0 ? (entry.tokens / totalTokens) * 100 : 0;
+                          return (
+                            <div key={`${entry.provider}-${entry.source}`}>
+                              <div className="flex items-center justify-between mb-1">
+                                <span className="text-[12px] flex items-center gap-1.5" style={{ fontWeight: 500 }}>
+                                  <span
+                                    className="inline-block w-2 h-2 rounded-full shrink-0"
+                                    style={{ backgroundColor: provider.color }}
+                                  />
+                                  {entry.source}
+                                  <span className="text-[11px] text-[var(--muted-foreground)]" style={{ fontWeight: 400 }}>
+                                    {provider.name}
+                                  </span>
+                                </span>
+                                <span className="text-[12px] tabular-nums text-[var(--muted-foreground)]">
+                                  {entry.tokens.toLocaleString()} <span className="text-[11px]">({Math.round(pct)}%)</span>
+                                </span>
+                              </div>
+                              <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                                <div
+                                  className="h-full rounded-full transition-all"
+                                  style={{ width: `${pct}%`, backgroundColor: provider.color }}
+                                />
+                              </div>
+                            </div>
+                          );
+                        })}
+                        {hiddenCount > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => setShowAllHeroSources((v) => !v)}
+                            className="text-[12px] text-[var(--infoblox-blue)] hover:underline mt-1"
+                            style={{ fontWeight: 500 }}
+                          >
+                            {showAllHeroSources ? 'Show less' : `Show ${hiddenCount} more sources...`}
+                          </button>
+                        )}
+                      </>
+                    );
                   })()}
                 </div>
               </div>
 
-              {/* Top Consumer Cards (FE-03) */}
+              {/* Top Consumer Cards — DNS, DHCP, IP */}
               {(() => {
-                const consumerCards = [
+                const consumerCards: {
+                  key: string;
+                  label: string;
+                  filter: (f: typeof findings[0]) => boolean;
+                  expanded: boolean;
+                  toggle: () => void;
+                  icon: typeof Globe;
+                  iconBg: string;
+                  iconColor: string;
+                  barColor: string;
+                }[] = [
                   {
                     key: 'dns',
                     label: 'Top 5 DNS Consumers',
-                    filter: (f: FindingRow) => /dns|zone/i.test(f.item) && !/unsupported/i.test(f.item),
+                    filter: (f) => /dns|zone/i.test(f.item) && !/unsupported/i.test(f.item),
                     expanded: topDnsExpanded,
                     toggle: () => setTopDnsExpanded((v) => !v),
-                    Icon: Globe,
+                    icon: Globe,
                     iconBg: 'bg-blue-50',
                     iconColor: 'text-blue-600',
                     barColor: 'bg-blue-500',
@@ -1762,10 +1796,10 @@ export function Wizard() {
                   {
                     key: 'dhcp',
                     label: 'Top 5 DHCP Consumers',
-                    filter: (f: FindingRow) => /dhcp|scope|lease|range|reservation/i.test(f.item) && !/unsupported/i.test(f.item),
+                    filter: (f) => /dhcp|scope|lease|range|reservation/i.test(f.item) && !/unsupported/i.test(f.item),
                     expanded: topDhcpExpanded,
                     toggle: () => setTopDhcpExpanded((v) => !v),
-                    Icon: Activity,
+                    icon: Activity,
                     iconBg: 'bg-purple-50',
                     iconColor: 'text-purple-600',
                     barColor: 'bg-purple-500',
@@ -1773,294 +1807,104 @@ export function Wizard() {
                   {
                     key: 'ip',
                     label: 'Top 5 IP / Network Consumers',
-                    filter: (f: FindingRow) => /ip|subnet|network|cidr|address|vnet|vpc/i.test(f.item) && !/dhcp|dns|unsupported/i.test(f.item),
+                    filter: (f) => /ip|subnet|network|cidr|address|vnet|vpc/i.test(f.item) && !/dhcp|dns|unsupported/i.test(f.item),
                     expanded: topIpExpanded,
                     toggle: () => setTopIpExpanded((v) => !v),
-                    Icon: Gauge,
+                    icon: Gauge,
                     iconBg: 'bg-green-50',
                     iconColor: 'text-green-600',
                     barColor: 'bg-green-500',
                   },
                 ];
 
-                const visibleCards = consumerCards
-                  .map((card) => {
-                    const items = findings
-                      .filter(card.filter)
-                      .sort((a, b) => b.managementTokens - a.managementTokens)
-                      .slice(0, 5);
-                    return { ...card, items };
-                  })
-                  .filter((card) => card.items.length > 0);
+                const visibleCards = consumerCards.filter((card) => {
+                  const items = findings.filter(card.filter);
+                  return items.length > 0;
+                });
 
                 if (visibleCards.length === 0) return null;
 
                 return (
-                  <div className="mt-6 mb-4">
-                    <div className="text-[13px] text-[var(--muted-foreground)] mb-3" style={{ fontWeight: 600 }}>
-                      Top Consumers
-                    </div>
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                      {visibleCards.map((card) => {
-                        const maxTokens = card.items[0]?.managementTokens ?? 1;
-                        return (
-                          <div key={card.key} className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-                            <button
-                              className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-50 transition-colors"
-                              onClick={card.toggle}
-                              type="button"
-                            >
-                              <div className="flex items-center gap-2">
-                                <span className={`${card.iconBg} ${card.iconColor} rounded-lg p-1.5`}>
-                                  <card.Icon size={14} />
-                                </span>
-                                <span className="text-[12px]" style={{ fontWeight: 600 }}>{card.label}</span>
+                  <div className="grid grid-cols-1 gap-4 mb-6">
+                    {visibleCards.map((card) => {
+                      const topItems = findings
+                        .filter(card.filter)
+                        .sort((a, b) => b.managementTokens - a.managementTokens)
+                        .slice(0, 5);
+                      const totalCardTokens = topItems.reduce((s, f) => s + f.managementTokens, 0);
+                      const IconComp = card.icon;
+                      return (
+                        <div key={card.key} className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+                          <button
+                            type="button"
+                            className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-gray-50 transition-colors text-left"
+                            onClick={card.toggle}
+                          >
+                            <div className="flex items-center gap-2.5">
+                              <div className={`w-8 h-8 rounded-lg ${card.iconBg} flex items-center justify-center`}>
+                                <IconComp className={`w-4 h-4 ${card.iconColor}`} />
                               </div>
-                              {card.expanded
-                                ? <ChevronUp size={14} className="text-gray-400 shrink-0" />
-                                : <ChevronDown size={14} className="text-gray-400 shrink-0" />
-                              }
-                            </button>
-                            {card.expanded && (
-                              <div className="px-4 pb-3">
-                                <div className="space-y-2">
-                                  {card.items.map((item, idx) => {
-                                    const pct = maxTokens > 0 ? (item.managementTokens / maxTokens) * 100 : 0;
-                                    return (
-                                      <div key={`${item.provider}-${item.source}-${item.item}-${idx}`}>
-                                        <div className="flex items-center justify-between mb-0.5">
-                                          <span className="text-[11px] text-gray-700 truncate max-w-[60%]">{item.source}</span>
-                                          <span className="text-[11px] tabular-nums text-gray-500">{item.managementTokens.toLocaleString()} tk</span>
-                                        </div>
-                                        <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                                          <div
-                                            className={`h-full rounded-full ${card.barColor}`}
-                                            style={{ width: `${pct}%` }}
-                                          />
-                                        </div>
-                                      </div>
-                                    );
-                                  })}
+                              <div>
+                                <div className="text-[13px]" style={{ fontWeight: 600 }}>{card.label}</div>
+                                <div className="text-[11px] text-[var(--muted-foreground)]">
+                                  {totalCardTokens.toLocaleString()} tokens across {topItems.length} items
                                 </div>
                               </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                );
-              })()}
-
-              {/* NIOS-X Migration Planner (FE-04) */}
-              {selectedProviders.includes('nios') && niosServerMetrics.length > 0 && (() => {
-                const fullUddiTokens = niosServerMetrics.reduce(
-                  (sum, m) => sum + calcServerTokenTier(m.qps, m.lps, m.objectCount, 'nios-x').serverTokens,
-                  0
-                );
-                const currentNiosTokens = scanResults?.totalManagementTokens ?? 0;
-                const hybridTokens = (() => {
-                  const migratedTokens = niosServerMetrics
-                    .filter((m) => niosMigrationMap.has(m.memberName))
-                    .reduce((sum, m) => sum + calcServerTokenTier(m.qps, m.lps, m.objectCount, 'nios-x').serverTokens, 0);
-                  const migratedCount = niosMigrationMap.size;
-                  const totalCount = niosServerMetrics.length;
-                  const remainingNiosTokens = totalCount > 0
-                    ? Math.round(currentNiosTokens * (1 - migratedCount / totalCount))
-                    : 0;
-                  return migratedTokens + remainingNiosTokens;
-                })();
-
-                const scenarios = [
-                  { label: 'Current NIOS', tokens: currentNiosTokens, color: 'border-gray-200', badge: 'bg-gray-100 text-gray-600' },
-                  { label: 'Hybrid', tokens: hybridTokens, color: 'border-blue-200', badge: 'bg-blue-50 text-blue-700' },
-                  { label: 'Full UDDI', tokens: fullUddiTokens, color: 'border-[var(--infoblox-orange)]/30', badge: 'bg-orange-50 text-orange-700' },
-                ];
-
-                return (
-                  <div className="mt-6 mb-4">
-                    <div className="text-[13px] mb-3" style={{ fontWeight: 600 }}>
-                      NIOS-X Migration Planner
-                    </div>
-                    {/* Scenario cards */}
-                    <div className="grid grid-cols-3 gap-3 mb-4">
-                      {scenarios.map((s) => (
-                        <div key={s.label} className={`bg-white rounded-xl border-2 ${s.color} p-4`}>
-                          <div className={`text-[10px] px-2 py-0.5 rounded-full inline-block mb-2 ${s.badge}`} style={{ fontWeight: 600 }}>{s.label}</div>
-                          <div className="text-[22px] text-[var(--infoblox-orange)]" style={{ fontWeight: 700 }}>{s.tokens.toLocaleString()}</div>
-                          <div className="text-[11px] text-[var(--muted-foreground)]">tokens</div>
+                            </div>
+                            {card.expanded
+                              ? <ChevronUp className="w-4 h-4 text-gray-400" />
+                              : <ChevronDown className="w-4 h-4 text-gray-400" />
+                            }
+                          </button>
+                          {card.expanded && (
+                            <div className="px-5 pb-4 border-t border-gray-100">
+                              <table className="w-full text-[12px] mt-3">
+                                <thead>
+                                  <tr className="text-[11px] text-[var(--muted-foreground)]">
+                                    <th className="text-left pb-2 pr-3" style={{ fontWeight: 500 }}>Source</th>
+                                    <th className="text-left pb-2 pr-3" style={{ fontWeight: 500 }}>Item</th>
+                                    <th className="text-right pb-2 pr-3" style={{ fontWeight: 500 }}>Count</th>
+                                    <th className="text-right pb-2" style={{ fontWeight: 500 }}>Tokens</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {topItems.map((f, idx) => {
+                                    const provider = PROVIDERS.find((p) => p.id === f.provider)!;
+                                    const pct = totalCardTokens > 0 ? (f.managementTokens / totalCardTokens) * 100 : 0;
+                                    return (
+                                      <tr key={`${card.key}-top-${idx}`} className="border-t border-gray-50">
+                                        <td className="py-2 pr-3">
+                                          <div className="flex items-center gap-1.5">
+                                            <span
+                                              className="inline-block w-2 h-2 rounded-full shrink-0"
+                                              style={{ backgroundColor: provider.color }}
+                                            />
+                                            <span className="truncate max-w-[220px]">{f.source}</span>
+                                          </div>
+                                        </td>
+                                        <td className="py-2 pr-3">{f.item}</td>
+                                        <td className="py-2 pr-3 text-right tabular-nums">{f.count.toLocaleString()}</td>
+                                        <td className="py-2 text-right">
+                                          <div className="flex items-center justify-end gap-2">
+                                            <div className="w-16 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                                              <div
+                                                className={`h-full rounded-full ${card.barColor}`}
+                                                style={{ width: `${pct}%` }}
+                                              />
+                                            </div>
+                                            <span className="tabular-nums" style={{ fontWeight: 500 }}>{f.managementTokens.toLocaleString()}</span>
+                                          </div>
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
                         </div>
-                      ))}
-                    </div>
-                    {/* Member selection table */}
-                    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-                      <table className="w-full text-[12px]">
-                        <thead>
-                          <tr className="border-b border-gray-100 bg-gray-50">
-                            <th className="text-left px-4 py-2 text-[var(--muted-foreground)]" style={{ fontWeight: 500 }}>Migrate</th>
-                            <th className="text-left px-4 py-2 text-[var(--muted-foreground)]" style={{ fontWeight: 500 }}>Member</th>
-                            <th className="text-left px-4 py-2 text-[var(--muted-foreground)]" style={{ fontWeight: 500 }}>Role</th>
-                            <th className="text-right px-4 py-2 text-[var(--muted-foreground)]" style={{ fontWeight: 500 }}>Tier</th>
-                            <th className="text-right px-4 py-2 text-[var(--muted-foreground)]" style={{ fontWeight: 500 }}>Server Tokens</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {niosServerMetrics.map((m) => {
-                            const tier = calcServerTokenTier(m.qps, m.lps, m.objectCount, 'nios-x');
-                            const checked = niosMigrationMap.has(m.memberName);
-                            return (
-                              <tr key={m.memberId} className="border-b border-gray-50 hover:bg-gray-50">
-                                <td className="px-4 py-2.5">
-                                  <input
-                                    type="checkbox"
-                                    checked={checked}
-                                    onChange={() => {
-                                      setNiosMigrationMap((prev) => {
-                                        const next = new Map(prev);
-                                        if (next.has(m.memberName)) next.delete(m.memberName);
-                                        else next.set(m.memberName, 'nios-x');
-                                        return next;
-                                      });
-                                    }}
-                                    className="rounded"
-                                  />
-                                </td>
-                                <td className="px-4 py-2.5 text-gray-800">{m.memberName}</td>
-                                <td className="px-4 py-2.5 text-gray-500">{m.role}</td>
-                                <td className="px-4 py-2.5 text-right text-gray-700">{tier.name}</td>
-                                <td className="px-4 py-2.5 text-right tabular-nums text-gray-700">{tier.serverTokens.toLocaleString()}</td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                );
-              })()}
-
-              {/* Server Token Calculator + XaaS Consolidation (FE-05 + FE-06) */}
-              {selectedProviders.includes('nios') && niosServerMetrics.length > 0 && (() => {
-                // Split members by form factor (default to 'nios-x' if not in map)
-                const niosXMembers = niosServerMetrics.filter(
-                  (m) => (niosMigrationMap.get(m.memberName) ?? 'nios-x') === 'nios-x'
-                );
-                const xaasMembers = niosServerMetrics.filter(
-                  (m) => niosMigrationMap.get(m.memberName) === 'nios-xaas'
-                );
-
-                const xaasInstances = consolidateXaasInstances(xaasMembers);
-
-                const niosXTotal = niosXMembers.reduce(
-                  (sum, m) => sum + calcServerTokenTier(m.qps, m.lps, m.objectCount, 'nios-x').serverTokens, 0
-                );
-                const xaasTotal = xaasInstances.reduce((sum, inst) => sum + inst.totalServerTokens, 0);
-                const grandTotal = niosXTotal + xaasTotal;
-
-                const dash = <span className="text-gray-300">&mdash;</span>;
-
-                return (
-                  <div className="mt-6 mb-4">
-                    <div className="text-[13px] mb-3" style={{ fontWeight: 600 }}>
-                      Server Token Calculator
-                    </div>
-                    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-                      <table className="w-full text-[12px]">
-                        <thead>
-                          <tr className="border-b border-gray-100 bg-gray-50">
-                            <th className="text-left px-4 py-2 text-[var(--muted-foreground)]" style={{ fontWeight: 500 }}>Member</th>
-                            <th className="text-left px-4 py-2 text-[var(--muted-foreground)]" style={{ fontWeight: 500 }}>Role</th>
-                            <th className="text-right px-4 py-2 text-[var(--muted-foreground)]" style={{ fontWeight: 500 }}>QPS</th>
-                            <th className="text-right px-4 py-2 text-[var(--muted-foreground)]" style={{ fontWeight: 500 }}>LPS</th>
-                            <th className="text-left px-4 py-2 text-[var(--muted-foreground)]" style={{ fontWeight: 500 }}>Form Factor</th>
-                            <th className="text-left px-4 py-2 text-[var(--muted-foreground)]" style={{ fontWeight: 500 }}>Tier</th>
-                            <th className="text-right px-4 py-2 text-[var(--muted-foreground)]" style={{ fontWeight: 500 }}>Server Tokens</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {/* NIOS-X on-prem rows */}
-                          {niosXMembers.map((m) => {
-                            const tier = calcServerTokenTier(m.qps, m.lps, m.objectCount, 'nios-x');
-                            const ff = niosMigrationMap.get(m.memberName) ?? 'nios-x';
-                            return (
-                              <tr key={m.memberId} className="border-b border-gray-50 hover:bg-gray-50">
-                                <td className="px-4 py-2.5 text-gray-800">{m.memberName}</td>
-                                <td className="px-4 py-2.5 text-gray-500">{m.role}</td>
-                                <td className="px-4 py-2.5 text-right tabular-nums">{m.qps > 0 ? m.qps.toLocaleString() : dash}</td>
-                                <td className="px-4 py-2.5 text-right tabular-nums">{m.lps > 0 ? m.lps.toLocaleString() : dash}</td>
-                                <td className="px-4 py-2.5">
-                                  <div className="flex gap-1">
-                                    <button
-                                      type="button"
-                                      className={`text-[10px] px-2 py-0.5 rounded-md border transition-colors ${ff === 'nios-x' ? 'bg-blue-50 border-blue-300 text-blue-700' : 'border-gray-200 text-gray-400 hover:border-gray-300'}`}
-                                      onClick={() => setNiosMigrationMap((prev) => { const next = new Map(prev); next.set(m.memberName, 'nios-x'); return next; })}
-                                    >NIOS-X</button>
-                                    <button
-                                      type="button"
-                                      className={`text-[10px] px-2 py-0.5 rounded-md border transition-colors ${ff === 'nios-xaas' ? 'bg-purple-50 border-purple-300 text-purple-700' : 'border-gray-200 text-gray-400 hover:border-gray-300'}`}
-                                      onClick={() => setNiosMigrationMap((prev) => { const next = new Map(prev); next.set(m.memberName, 'nios-xaas'); return next; })}
-                                    >XaaS</button>
-                                  </div>
-                                </td>
-                                <td className="px-4 py-2.5 text-gray-700">{tier.name}</td>
-                                <td className="px-4 py-2.5 text-right tabular-nums text-gray-700">{tier.serverTokens.toLocaleString()}</td>
-                              </tr>
-                            );
-                          })}
-
-                          {/* XaaS Consolidation instance groups (FE-06) */}
-                          {xaasInstances.map((inst, instIdx) => (
-                            <Fragment key={`xaas-inst-${instIdx}`}>
-                              {/* Instance header row */}
-                              <tr className="bg-purple-50 border-b border-purple-100">
-                                <td colSpan={4} className="px-4 py-2 text-purple-700 text-[11px]" style={{ fontWeight: 600 }}>
-                                  XaaS Instance {instIdx + 1} — {inst.tier.name} tier
-                                  {inst.extraConnections > 0 && (
-                                    <span className="ml-2 text-purple-500">
-                                      (+{inst.extraConnections} extra connections &times; {XAAS_EXTRA_CONNECTION_COST} tk = {inst.extraTokens.toLocaleString()} tk)
-                                    </span>
-                                  )}
-                                </td>
-                                <td className="px-4 py-2 text-purple-700 text-[11px]" style={{ fontWeight: 600 }}>XaaS</td>
-                                <td className="px-4 py-2 text-purple-700 text-[11px]">{inst.tier.name}</td>
-                                <td className="px-4 py-2 text-right tabular-nums text-purple-700 text-[11px]" style={{ fontWeight: 600 }}>{inst.totalServerTokens.toLocaleString()}</td>
-                              </tr>
-                              {/* Member sub-rows */}
-                              {inst.members.map((m) => (
-                                <tr key={m.memberId} className="border-b border-gray-50 bg-purple-50/30 hover:bg-purple-50/60">
-                                  <td className="pl-8 pr-4 py-2 text-gray-700 text-[11px]">{m.memberName}</td>
-                                  <td className="px-4 py-2 text-gray-500 text-[11px]">{m.role}</td>
-                                  <td className="px-4 py-2 text-right tabular-nums text-[11px]">{m.qps > 0 ? m.qps.toLocaleString() : dash}</td>
-                                  <td className="px-4 py-2 text-right tabular-nums text-[11px]">{m.lps > 0 ? m.lps.toLocaleString() : dash}</td>
-                                  <td className="px-4 py-2">
-                                    <div className="flex gap-1">
-                                      <button
-                                        type="button"
-                                        className="text-[10px] px-2 py-0.5 rounded-md border border-gray-200 text-gray-400 hover:border-gray-300 transition-colors"
-                                        onClick={() => setNiosMigrationMap((prev) => { const next = new Map(prev); next.set(m.memberName, 'nios-x'); return next; })}
-                                      >NIOS-X</button>
-                                      <button
-                                        type="button"
-                                        className="text-[10px] px-2 py-0.5 rounded-md border bg-purple-50 border-purple-300 text-purple-700 transition-colors"
-                                        onClick={() => setNiosMigrationMap((prev) => { const next = new Map(prev); next.set(m.memberName, 'nios-xaas'); return next; })}
-                                      >XaaS</button>
-                                    </div>
-                                  </td>
-                                  <td className="px-4 py-2 text-gray-400 text-[11px]">—</td>
-                                  <td className="px-4 py-2 text-right tabular-nums text-gray-400 text-[11px]">—</td>
-                                </tr>
-                              ))}
-                            </Fragment>
-                          ))}
-
-                          {/* Grand total row */}
-                          <tr className="bg-gray-50 border-t-2 border-gray-200">
-                            <td colSpan={6} className="px-4 py-3 text-[12px]" style={{ fontWeight: 600 }}>Total Server Tokens</td>
-                            <td className="px-4 py-3 text-right tabular-nums text-[var(--infoblox-orange)] text-[14px]" style={{ fontWeight: 700 }}>{grandTotal.toLocaleString()}</td>
-                          </tr>
-                        </tbody>
-                      </table>
-                    </div>
+                      );
+                    })}
                   </div>
                 );
               })()}
@@ -2084,9 +1928,9 @@ export function Wizard() {
                 };
 
                 const categories: { key: TokenCategory; label: string; color: string; bgLight: string; barColor: string; textColor: string; unitLabel: string }[] = [
-                  { key: 'DDI Objects', label: 'DDI Objects', color: 'text-blue-600', bgLight: 'bg-blue-50', barColor: 'bg-blue-500', textColor: 'text-blue-700', unitLabel: 'objects' },
-                  { key: 'Active IPs', label: 'Active IPs', color: 'text-purple-600', bgLight: 'bg-purple-50', barColor: 'bg-purple-500', textColor: 'text-purple-700', unitLabel: 'IPs' },
-                  { key: 'Managed Assets', label: 'Managed Assets', color: 'text-green-600', bgLight: 'bg-green-50', barColor: 'bg-green-500', textColor: 'text-green-700', unitLabel: 'assets' },
+                  { key: 'DDI Object', label: 'DDI Objects', color: 'text-blue-600', bgLight: 'bg-blue-50', barColor: 'bg-blue-500', textColor: 'text-blue-700', unitLabel: 'objects' },
+                  { key: 'Active IP', label: 'Active IPs', color: 'text-purple-600', bgLight: 'bg-purple-50', barColor: 'bg-purple-500', textColor: 'text-purple-700', unitLabel: 'IPs' },
+                  { key: 'Asset', label: 'Assets', color: 'text-green-600', bgLight: 'bg-green-50', barColor: 'bg-green-500', textColor: 'text-green-700', unitLabel: 'assets' },
                 ];
 
                 return (
@@ -2117,35 +1961,55 @@ export function Wizard() {
                               By {sourceLabel}
                             </div>
                             <div className="space-y-3">
-                              {sources.map((entry) => {
-                                const provider = PROVIDERS.find((p) => p.id === entry.provider)!;
-                                const pct = maxSourceTokens > 0 ? (entry.tokens / maxSourceTokens) * 100 : 0;
+                              {(() => {
+                                const CAT_LIMIT = 5;
+                                const showAll = showAllCategorySources[cat.key] || false;
+                                const visible = showAll ? sources : sources.slice(0, CAT_LIMIT);
+                                const catHidden = sources.length - CAT_LIMIT;
                                 return (
-                                  <div key={`${entry.provider}-${entry.source}`}>
-                                    <div className="flex items-center justify-between mb-1">
-                                      <span className="text-[12px] flex items-center gap-1.5 min-w-0" style={{ fontWeight: 500 }}>
-                                        <span
-                                          className="inline-block w-1.5 h-1.5 rounded-full shrink-0"
-                                          style={{ backgroundColor: provider.color }}
-                                        />
-                                        <span className="truncate">{entry.source}</span>
-                                      </span>
-                                      <span className="text-[12px] tabular-nums shrink-0 ml-2" style={{ fontWeight: 600 }}>
-                                        {entry.tokens.toLocaleString()}
-                                      </span>
-                                    </div>
-                                    <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                                      <div
-                                        className={`h-full rounded-full transition-all ${cat.barColor}`}
-                                        style={{ width: `${pct}%` }}
-                                      />
-                                    </div>
-                                    <div className="text-[10px] text-[var(--muted-foreground)] mt-0.5 tabular-nums">
-                                      {entry.count.toLocaleString()} {cat.unitLabel}
-                                    </div>
-                                  </div>
+                                  <>
+                                    {visible.map((entry) => {
+                                      const provider = PROVIDERS.find((p) => p.id === entry.provider)!;
+                                      const pct = maxSourceTokens > 0 ? (entry.tokens / maxSourceTokens) * 100 : 0;
+                                      return (
+                                        <div key={`${entry.provider}-${entry.source}`}>
+                                          <div className="flex items-center justify-between mb-1">
+                                            <span className="text-[12px] flex items-center gap-1.5 min-w-0" style={{ fontWeight: 500 }}>
+                                              <span
+                                                className="inline-block w-1.5 h-1.5 rounded-full shrink-0"
+                                                style={{ backgroundColor: provider.color }}
+                                              />
+                                              <span className="truncate">{entry.source}</span>
+                                            </span>
+                                            <span className="text-[12px] tabular-nums shrink-0 ml-2" style={{ fontWeight: 600 }}>
+                                              {entry.tokens.toLocaleString()}
+                                            </span>
+                                          </div>
+                                          <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                                            <div
+                                              className={`h-full rounded-full transition-all ${cat.barColor}`}
+                                              style={{ width: `${pct}%` }}
+                                            />
+                                          </div>
+                                          <div className="text-[10px] text-[var(--muted-foreground)] mt-0.5 tabular-nums">
+                                            {entry.count.toLocaleString()} {cat.unitLabel}
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                    {catHidden > 0 && (
+                                      <button
+                                        type="button"
+                                        onClick={() => setShowAllCategorySources((prev) => ({ ...prev, [cat.key]: !showAll }))}
+                                        className="text-[11px] text-[var(--infoblox-blue)] hover:underline"
+                                        style={{ fontWeight: 500 }}
+                                      >
+                                        {showAll ? 'Show less' : `+${catHidden} more`}
+                                      </button>
+                                    )}
+                                  </>
                                 );
-                              })}
+                              })()}
                               {sources.length === 0 && (
                                 <div className="text-[12px] text-[var(--muted-foreground)] italic py-2">
                                   No {cat.unitLabel} found
@@ -2159,70 +2023,6 @@ export function Wizard() {
                   </div>
                 );
               })()}
-
-              {/* Token formula summary — shows backend-computed values when available, or computed from findings */}
-              {(() => {
-                const ddiTokens = scanResults?.ddiTokens ?? categoryTotals['DDI Objects'];
-                const ipTokens = scanResults?.ipTokens ?? categoryTotals['Active IPs'];
-                const assetTokens = scanResults?.assetTokens ?? categoryTotals['Managed Assets'];
-                const grandTotal = scanResults?.totalManagementTokens ?? totalTokens;
-                const ddiCount = findings.filter(f => f.category === 'DDI Objects').reduce((s, f) => s + f.count, 0);
-                const ipCount = findings.filter(f => f.category === 'Active IPs').reduce((s, f) => s + f.count, 0);
-                const assetCount = findings.filter(f => f.category === 'Managed Assets').reduce((s, f) => s + f.count, 0);
-                return (
-                  <div className="bg-white rounded-xl border border-[var(--border)] p-4 mb-4 overflow-hidden">
-                    <div className="text-[12px] text-[var(--muted-foreground)] mb-3 uppercase tracking-wider" style={{ fontWeight: 600 }}>
-                      Token Formula (Grand Total = max of three categories)
-                    </div>
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-[13px]">
-                      <div className="bg-blue-50 rounded-lg p-3 border border-blue-100">
-                        <div className="text-[11px] text-blue-600 mb-1" style={{ fontWeight: 500 }}>DDI Objects</div>
-                        <div className="text-[18px] text-blue-700" style={{ fontWeight: 700 }}>{ddiTokens.toLocaleString()}</div>
-                        <div className="text-[11px] text-[var(--muted-foreground)]">{ddiCount.toLocaleString()} objects ÷ 25</div>
-                      </div>
-                      <div className="bg-purple-50 rounded-lg p-3 border border-purple-100">
-                        <div className="text-[11px] text-purple-600 mb-1" style={{ fontWeight: 500 }}>Active IPs</div>
-                        <div className="text-[18px] text-purple-700" style={{ fontWeight: 700 }}>{ipTokens.toLocaleString()}</div>
-                        <div className="text-[11px] text-[var(--muted-foreground)]">{ipCount.toLocaleString()} IPs ÷ 13</div>
-                      </div>
-                      <div className="bg-green-50 rounded-lg p-3 border border-green-100">
-                        <div className="text-[11px] text-green-600 mb-1" style={{ fontWeight: 500 }}>Managed Assets</div>
-                        <div className="text-[18px] text-green-700" style={{ fontWeight: 700 }}>{assetTokens.toLocaleString()}</div>
-                        <div className="text-[11px] text-[var(--muted-foreground)]">{assetCount.toLocaleString()} assets ÷ 3</div>
-                      </div>
-                      <div className="bg-orange-50 rounded-lg p-3 border border-orange-100">
-                        <div className="text-[11px] text-[var(--infoblox-orange)] mb-1" style={{ fontWeight: 500 }}>Grand Total</div>
-                        <div className="text-[18px] text-[var(--infoblox-orange)]" style={{ fontWeight: 700 }}>{grandTotal.toLocaleString()}</div>
-                        <div className="text-[11px] text-[var(--muted-foreground)]">= max of above</div>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })()}
-
-              {/* Provider errors (if any) */}
-              {providerErrors.length > 0 && (
-                <div className="bg-white rounded-xl border border-red-200 p-4 mb-4 overflow-hidden">
-                  <div className="flex items-center gap-2 mb-3">
-                    <AlertCircle className="w-4 h-4 text-red-500 shrink-0" />
-                    <div className="text-[13px] text-red-700" style={{ fontWeight: 600 }}>
-                      {providerErrors.length} scan error{providerErrors.length !== 1 ? 's' : ''} (partial results shown above)
-                    </div>
-                  </div>
-                  <div className="space-y-2">
-                    {providerErrors.map((e, i) => (
-                      <div key={i} className="flex items-start gap-2 p-2.5 bg-red-50 rounded-lg">
-                        <div className="flex-1 min-w-0">
-                          <div className="text-[11px] text-red-700" style={{ fontWeight: 600 }}>
-                            {e.provider} / {e.resource}
-                          </div>
-                          <div className="text-[11px] text-red-600">{e.message}</div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
 
               {/* Findings table */}
               <div className="bg-white rounded-xl border border-[var(--border)] mb-6 overflow-hidden">
@@ -2285,9 +2085,9 @@ export function Wizard() {
                       Category
                     </span>
                     {([
-                      { key: 'DDI Objects' as TokenCategory, label: 'DDI Objects', color: 'blue' },
-                      { key: 'Active IPs' as TokenCategory, label: 'Active IPs', color: 'purple' },
-                      { key: 'Managed Assets' as TokenCategory, label: 'Managed Assets', color: 'green' },
+                      { key: 'DDI Object' as TokenCategory, label: 'DDI Objects', color: 'blue' },
+                      { key: 'Active IP' as TokenCategory, label: 'Active IPs', color: 'purple' },
+                      { key: 'Asset' as TokenCategory, label: 'Assets', color: 'green' },
                     ]).map((cat) => {
                       const isExplicit = findingsCategoryFilter.has(cat.key);
                       const colorClasses = {
@@ -2324,7 +2124,7 @@ export function Wizard() {
                 {/* Filter summary */}
                 {(findingsProviderFilter.size > 0 || findingsCategoryFilter.size > 0) && (
                   <div className="px-4 py-2 bg-blue-50/50 border-b border-[var(--border)] text-[12px] text-[var(--muted-foreground)]">
-                    Showing {groupedFindings.length} of {findings.length} item types · {filteredTokenTotal.toLocaleString()} of {totalTokens.toLocaleString()} tokens
+                    Showing {filteredSortedFindings.length} of {findings.length} rows · {filteredTokenTotal.toLocaleString()} of {totalTokens.toLocaleString()} tokens
                   </div>
                 )}
 
@@ -2332,14 +2132,12 @@ export function Wizard() {
                   <table className="w-full text-[13px]">
                     <thead>
                       <tr className="border-b border-[var(--border)] text-left text-[var(--muted-foreground)]">
-                        {/* expand toggle placeholder */}
-                        <th className="px-2 py-2.5 w-8" />
                         {([
                           { col: 'provider' as SortColumn, label: 'Provider', align: 'left' },
                           { col: 'source' as SortColumn, label: 'Source', align: 'left' },
                           { col: 'category' as SortColumn, label: 'Token Category', align: 'left' },
                           { col: 'item' as SortColumn, label: 'Item', align: 'left' },
-                          { col: 'count' as SortColumn, label: 'Object Count', align: 'right' },
+                          { col: 'count' as SortColumn, label: 'Count', align: 'right' },
                           { col: 'managementTokens' as SortColumn, label: 'Mgmt Tokens', align: 'right' },
                         ]).map((header) => {
                           const isSorted = findingsSort?.col === header.col;
@@ -2369,88 +2167,54 @@ export function Wizard() {
                       </tr>
                     </thead>
                     <tbody>
-                      {groupedFindings.length === 0 ? (
+                      {filteredSortedFindings.length === 0 ? (
                         <tr>
-                          <td colSpan={7} className="px-4 py-8 text-center text-[var(--muted-foreground)]">
+                          <td colSpan={6} className="px-4 py-8 text-center text-[var(--muted-foreground)]">
                             No findings match the current filters.
                           </td>
                         </tr>
                       ) : (
-                        groupedFindings.map((g) => {
-                          const isExpanded = expandedGroups.has(g.key);
-                          const providerColor = PROVIDERS.find((p) => p.id === g.provider)?.color;
-                          const providerName = PROVIDERS.find((p) => p.id === g.provider)?.name;
-                          return (
-                            <Fragment key={g.key}>
-                              {/* Summary (aggregated) row */}
-                              <tr
-                                className={`border-b border-[var(--border)] ${g.multiRegion ? 'hover:bg-gray-50/70 cursor-pointer' : 'hover:bg-gray-50/50'}`}
-                                onClick={g.multiRegion ? () => toggleGroupExpand(g.key) : undefined}
+                        filteredSortedFindings.map((f, i) => (
+                          <tr
+                            key={`${f.provider}-${f.item}-${i}`}
+                            className="border-b border-[var(--border)] last:border-0 hover:bg-gray-50/50"
+                          >
+                            <td className="px-4 py-2.5">
+                              <span
+                                className="inline-block w-2 h-2 rounded-full mr-2"
+                                style={{
+                                  backgroundColor: PROVIDERS.find((p) => p.id === f.provider)
+                                    ?.color,
+                                }}
+                              />
+                              {PROVIDERS.find((p) => p.id === f.provider)?.name}
+                            </td>
+                            <td className="px-4 py-2.5 text-[var(--muted-foreground)] max-w-[200px] truncate" title={f.source}>{f.source}</td>
+                            <td className="px-4 py-2.5">
+                              <span
+                                className={`px-2 py-0.5 rounded-full text-[11px] ${
+                                  f.category === 'DDI Object'
+                                    ? 'bg-blue-100 text-blue-700'
+                                    : f.category === 'Active IP'
+                                      ? 'bg-purple-100 text-purple-700'
+                                      : 'bg-green-100 text-green-700'
+                                }`}
+                                style={{ fontWeight: 500 }}
                               >
-                                {/* Expand toggle */}
-                                <td className="px-2 py-2.5 w-8 text-center">
-                                  {g.multiRegion ? (
-                                    isExpanded
-                                      ? <ChevronDown className="w-3.5 h-3.5 text-[var(--muted-foreground)] mx-auto" />
-                                      : <ChevronRight className="w-3.5 h-3.5 text-[var(--muted-foreground)] mx-auto" />
-                                  ) : null}
-                                </td>
-                                <td className="px-4 py-2.5">
-                                  <span
-                                    className="inline-block w-2 h-2 rounded-full mr-2"
-                                    style={{ backgroundColor: providerColor }}
-                                  />
-                                  {providerName}
-                                </td>
-                                <td className="px-4 py-2.5 text-[var(--muted-foreground)]">{g.source}</td>
-                                <td className="px-4 py-2.5">
-                                  <span
-                                    className={`px-2 py-0.5 rounded-full text-[11px] ${
-                                      g.category === 'DDI Objects'
-                                        ? 'bg-blue-100 text-blue-700'
-                                        : g.category === 'Active IPs'
-                                          ? 'bg-purple-100 text-purple-700'
-                                          : 'bg-green-100 text-green-700'
-                                    }`}
-                                    style={{ fontWeight: 500 }}
-                                  >
-                                    {g.category}
-                                  </span>
-                                </td>
-                                <td className="px-4 py-2.5">{g.item}</td>
-                                <td className="px-4 py-2.5 text-right tabular-nums">
-                                  {g.totalCount.toLocaleString()}
-                                </td>
-                                <td className="px-4 py-2.5 text-right tabular-nums" style={{ fontWeight: 600 }}>
-                                  {g.totalTokens.toLocaleString()}
-                                </td>
-                              </tr>
-                              {/* Per-region sub-rows (shown when expanded) */}
-                              {g.multiRegion && isExpanded && g.subRows.map((sub) => (
-                                <tr
-                                  key={`${g.key}|${sub.region}`}
-                                  className="border-b border-[var(--border)] bg-gray-50/40"
-                                >
-                                  {/* indent: toggle cell + provider cell merged via padding */}
-                                  <td className="px-2 py-1.5 w-8" />
-                                  <td colSpan={3} className="px-4 py-1.5 pl-10 text-[var(--muted-foreground)] text-[12px]">
-                                    <span className="font-mono">{sub.region}</span>
-                                  </td>
-                                  <td className="px-4 py-1.5" />
-                                  <td className="px-4 py-1.5 text-right tabular-nums text-[12px] text-[var(--muted-foreground)]">
-                                    {sub.count.toLocaleString()}
-                                  </td>
-                                  <td className="px-4 py-1.5 text-right tabular-nums text-[12px] text-[var(--muted-foreground)]">
-                                    {sub.tokens.toLocaleString()}
-                                  </td>
-                                </tr>
-                              ))}
-                            </Fragment>
-                          );
-                        })
+                                {f.category}
+                              </span>
+                            </td>
+                            <td className="px-4 py-2.5">{f.item}</td>
+                            <td className="px-4 py-2.5 text-right tabular-nums whitespace-nowrap min-w-[80px]">
+                              {f.count.toLocaleString()}
+                            </td>
+                            <td className="px-4 py-2.5 text-right tabular-nums whitespace-nowrap min-w-[100px]" style={{ fontWeight: 600 }}>
+                              {f.managementTokens.toLocaleString()}
+                            </td>
+                          </tr>
+                        ))
                       )}
                       <tr className="bg-gray-50">
-                        <td colSpan={1} />
                         <td
                           colSpan={5}
                           className="px-4 py-3 text-right"
@@ -2476,6 +2240,563 @@ export function Wizard() {
                 </div>
               </div>
 
+              {/* NIOS-X Migration Planner — only shown when NIOS is among selected providers */}
+              {selectedProviders.includes('nios') && (() => {
+                // Collect unique NIOS sources (grid members)
+                const niosSources = Array.from(
+                  new Map(
+                    findings
+                      .filter((f) => f.provider === 'nios')
+                      .map((f) => [f.source, f.source])
+                  ).keys()
+                );
+
+                const toggleMigration = (source: string) => {
+                  setNiosMigrationMap((prev) => {
+                    const next = new Map(prev);
+                    if (next.has(source)) next.delete(source); else next.set(source, 'nios-x');
+                    return next;
+                  });
+                };
+
+                const setMemberFormFactor = (source: string, ff: ServerFormFactor) => {
+                  setNiosMigrationMap((prev) => {
+                    const next = new Map(prev);
+                    next.set(source, ff);
+                    return next;
+                  });
+                };
+
+                const toggleAllMigration = () => {
+                  if (niosMigrationMap.size === niosSources.length) {
+                    setNiosMigrationMap(new Map());
+                  } else {
+                    const next = new Map<string, ServerFormFactor>();
+                    niosSources.forEach(s => next.set(s, niosMigrationMap.get(s) || 'nios-x'));
+                    setNiosMigrationMap(next);
+                  }
+                };
+
+                // Compute tokens by scenario
+                const niosFindings = findings.filter((f) => f.provider === 'nios');
+                const nonNiosTokens = findings.filter((f) => f.provider !== 'nios').reduce((s, f) => s + f.managementTokens, 0);
+                const allNiosTokens = niosFindings.reduce((s, f) => s + f.managementTokens, 0);
+
+                const migratingTokens = niosFindings
+                  .filter((f) => niosMigrationMap.has(f.source))
+                  .reduce((s, f) => s + f.managementTokens, 0);
+                const stayingTokens = allNiosTokens - migratingTokens;
+
+                const niosXCount = Array.from(niosMigrationMap.values()).filter(v => v === 'nios-x').length;
+                const xaasCount = Array.from(niosMigrationMap.values()).filter(v => v === 'nios-xaas').length;
+                const hybridDesc = niosMigrationMap.size > 0
+                  ? `${niosMigrationMap.size} of ${niosSources.length} members migrated${niosXCount > 0 && xaasCount > 0 ? ` (${niosXCount} NIOS-X, ${xaasCount} XaaS)` : niosXCount > 0 ? ' to NIOS-X' : ' to XaaS'}. Remaining stay on NIOS licensing.`
+                  : `Select members to migrate. Remaining stay on NIOS licensing.`;
+
+                // Scenarios
+                const scenarioCurrent = { label: 'Current (NIOS Only)', niosTokens: 0, uddiTokens: nonNiosTokens, desc: 'Only cloud/MS sources need UDDI tokens. NIOS stays on traditional licensing.' };
+                const scenarioHybrid = { label: 'Hybrid', niosTokens: stayingTokens, uddiTokens: nonNiosTokens + migratingTokens, desc: hybridDesc };
+                const scenarioFull = { label: 'Full Universal DDI', niosTokens: 0, uddiTokens: nonNiosTokens + allNiosTokens, desc: 'All NIOS members migrated to Universal DDI. Everything on Universal DDI licensing.' };
+
+                return (
+                  <div className="bg-white rounded-xl border-2 border-[var(--infoblox-blue)]/30 mb-6 overflow-hidden">
+                    <div className="px-4 py-3 border-b border-[var(--border)] bg-blue-50/50 flex items-center gap-2">
+                      <img src={NIOS_GRID_LOGO} alt="NIOS Grid" className="w-5 h-5 rounded" />
+                      <ArrowRightLeft className="w-4 h-4 text-[var(--infoblox-blue)]" />
+                      <h3 className="text-[14px]" style={{ fontWeight: 600 }}>
+                        NIOS-X Migration Planner
+                      </h3>
+                      <span className="ml-auto text-[11px] text-[var(--muted-foreground)]">
+                        Select grid members &amp; target form factor
+                      </span>
+                    </div>
+
+                    {/* Member selector */}
+                    <div className="px-4 py-3 border-b border-[var(--border)]">
+                      <div className="flex items-center gap-2 mb-3">
+                        <button
+                          onClick={toggleAllMigration}
+                          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[12px] border border-[var(--border)] hover:bg-gray-50 transition-colors"
+                          style={{ fontWeight: 500 }}
+                        >
+                          <div className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition-colors ${
+                            niosMigrationMap.size === niosSources.length
+                              ? 'bg-[var(--infoblox-blue)] border-[var(--infoblox-blue)]'
+                              : niosMigrationMap.size > 0
+                                ? 'bg-[var(--infoblox-blue)]/60 border-[var(--infoblox-blue)]'
+                                : 'border-gray-300'
+                          }`}>
+                            {niosMigrationMap.size === niosSources.length && <Check className="w-2.5 h-2.5 text-white" />}
+                            {niosMigrationMap.size > 0 && niosMigrationMap.size < niosSources.length && <Minus className="w-2.5 h-2.5 text-white" />}
+                          </div>
+                          {niosMigrationMap.size === niosSources.length ? 'Deselect All' : 'Migrate All'}
+                        </button>
+                        <span className="text-[11px] text-[var(--muted-foreground)]">
+                          {niosMigrationMap.size} of {niosSources.length} members selected
+                          {niosMigrationMap.size > 0 && (() => {
+                            const nx = Array.from(niosMigrationMap.values()).filter(v => v === 'nios-x').length;
+                            const xs = Array.from(niosMigrationMap.values()).filter(v => v === 'nios-xaas').length;
+                            if (nx > 0 && xs > 0) return ` (${nx} NIOS-X, ${xs} XaaS)`;
+                            if (xs > 0) return ` (${xs} XaaS)`;
+                            return ` (${nx} NIOS-X)`;
+                          })()}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                        {niosSources.map((source) => {
+                          const isMigrating = niosMigrationMap.has(source);
+                          const memberFF = niosMigrationMap.get(source) || 'nios-x';
+                          const sourceTokens = niosFindings.filter((f) => f.source === source).reduce((s, f) => s + f.managementTokens, 0);
+                          return (
+                            <div
+                              key={source}
+                              className={`flex items-center gap-2.5 px-3 py-2 rounded-lg transition-colors ${
+                                isMigrating
+                                  ? memberFF === 'nios-xaas'
+                                    ? 'bg-purple-50 border border-purple-200'
+                                    : 'bg-blue-50 border border-blue-200'
+                                  : 'border border-[var(--border)] hover:bg-gray-50'
+                              }`}
+                            >
+                              <button
+                                onClick={() => toggleMigration(source)}
+                                className="flex items-center gap-0 shrink-0"
+                              >
+                                <div className={`w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 transition-colors ${
+                                  isMigrating
+                                    ? memberFF === 'nios-xaas'
+                                      ? 'bg-purple-600 border-purple-600'
+                                      : 'bg-[var(--infoblox-blue)] border-[var(--infoblox-blue)]'
+                                    : 'border-gray-300'
+                                }`}>
+                                  {isMigrating && <Check className="w-3 h-3 text-white" />}
+                                </div>
+                              </button>
+                              <div className="flex-1 min-w-0">
+                                <div className="text-[12px] truncate" style={{ fontWeight: 500 }}>{source}</div>
+                                <div className="text-[10px] text-[var(--muted-foreground)]">{sourceTokens.toLocaleString()} tokens</div>
+                              </div>
+                              {isMigrating && (
+                                <div className="flex items-center bg-white rounded-md border border-gray-200 p-0.5 shrink-0">
+                                  <button
+                                    onClick={() => setMemberFormFactor(source, 'nios-x')}
+                                    className={`px-2 py-0.5 rounded text-[9px] transition-all ${
+                                      memberFF === 'nios-x'
+                                        ? 'bg-[var(--infoblox-navy)] text-white shadow-sm'
+                                        : 'text-gray-400 hover:text-gray-600'
+                                    }`}
+                                    style={{ fontWeight: 600 }}
+                                  >
+                                    NIOS-X
+                                  </button>
+                                  <button
+                                    onClick={() => setMemberFormFactor(source, 'nios-xaas')}
+                                    className={`px-2 py-0.5 rounded text-[9px] transition-all ${
+                                      memberFF === 'nios-xaas'
+                                        ? 'bg-purple-600 text-white shadow-sm'
+                                        : 'text-gray-400 hover:text-gray-600'
+                                    }`}
+                                    style={{ fontWeight: 600 }}
+                                  >
+                                    XaaS
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Scenario comparison cards */}
+                    <div className="px-4 py-4">
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        {[scenarioCurrent, scenarioHybrid, scenarioFull].map((scenario, idx) => {
+                          const isHybrid = idx === 1;
+                          const isFull = idx === 2;
+                          const isActive = isHybrid ? niosMigrationMap.size > 0 && niosMigrationMap.size < niosSources.length : isFull ? niosMigrationMap.size === niosSources.length : niosMigrationMap.size === 0;
+                          return (
+                            <div
+                              key={scenario.label}
+                              className={`rounded-xl border-2 p-4 transition-colors ${
+                                isActive
+                                  ? 'border-[var(--infoblox-orange)] bg-orange-50/30 shadow-sm'
+                                  : 'border-[var(--border)] bg-white'
+                              }`}
+                            >
+                              <div className="flex items-center gap-2 mb-2">
+                                {isActive && <span className="w-2 h-2 rounded-full bg-[var(--infoblox-orange)]" />}
+                                <span className="text-[12px] uppercase tracking-wider text-[var(--muted-foreground)]" style={{ fontWeight: 600 }}>
+                                  {scenario.label}
+                                </span>
+                              </div>
+                              <div className="text-[28px] text-[var(--infoblox-orange)]" style={{ fontWeight: 700 }}>
+                                {scenario.uddiTokens.toLocaleString()}
+                              </div>
+                              <div className="text-[11px] text-[var(--muted-foreground)] mb-2">
+                                Universal DDI Tokens
+                              </div>
+                              {scenario.niosTokens > 0 && (
+                                <div className="text-[11px] text-gray-500 mb-1">
+                                  + {scenario.niosTokens.toLocaleString()} on NIOS licensing
+                                </div>
+                              )}
+                              <p className="text-[11px] text-[var(--muted-foreground)] border-t border-[var(--border)] pt-2 mt-2">
+                                {scenario.desc}
+                              </p>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Server Token Calculator — per-member QPS/LPS/Object sizing */}
+              {selectedProviders.includes('nios') && (() => {
+                // Only show metrics for members selected for migration
+                const migratingMembers = effectiveNiosMetrics.filter((m) =>
+                  niosMigrationMap.has(m.memberName)
+                );
+                const allMembers = effectiveNiosMetrics.filter((m) => {
+                  const niosSources = new Set(
+                    findings.filter((f) => f.provider === 'nios').map((f) => f.source)
+                  );
+                  return niosSources.has(m.memberName);
+                });
+
+                const displayMembers = migratingMembers.length > 0 ? migratingMembers : allMembers;
+
+                // Per-member form factor helper
+                const getMemberFF = (memberName: string): ServerFormFactor =>
+                  niosMigrationMap.get(memberName) || 'nios-x';
+
+                const hasAnyXaas = displayMembers.some((m) => getMemberFF(m.memberName) === 'nios-xaas');
+                const xaasMembers = displayMembers.filter((m) => getMemberFF(m.memberName) === 'nios-xaas');
+                const niosXMembers = displayMembers.filter((m) => getMemberFF(m.memberName) === 'nios-x');
+                const niosXMemberCount = niosXMembers.length;
+                const xaasMemberCount = xaasMembers.length;
+
+                // Consolidate XaaS members into instances (1 instance can replace many NIOS members)
+                const xaasInstances = consolidateXaasInstances(xaasMembers);
+                const totalXaasTokens = xaasInstances.reduce((s, inst) => s + inst.totalTokens, 0);
+
+                // NIOS-X tokens (individual per member)
+                const niosXTokens = niosXMembers.reduce((sum, m) => {
+                  return sum + calcServerTokenTier(m.qps, m.lps, m.objectCount, 'nios-x').serverTokens;
+                }, 0);
+
+                const totalServerTokens = niosXTokens + totalXaasTokens;
+                const totalNiosReplaced = xaasMembers.length; // 1 connection per NIOS member replaced
+
+                const roleColors: Record<string, string> = {
+                  GM: '#002B49',
+                  GMC: '#1a4a6e',
+                  DNS: '#0078d4',
+                  DHCP: '#00a5e5',
+                  'DNS/DHCP': '#005a9e',
+                  IPAM: '#7fba00',
+                  Reporting: '#8b8b8b',
+                };
+
+                const tierColorClass = (name: string) =>
+                  name === 'XL' ? 'bg-red-100 text-red-700' :
+                  name === 'L' ? 'bg-orange-100 text-orange-700' :
+                  name === 'M' ? 'bg-yellow-100 text-yellow-700' :
+                  name === 'S' ? 'bg-green-100 text-green-700' :
+                  name === 'XS' ? 'bg-sky-100 text-sky-700' :
+                  'bg-gray-100 text-gray-700';
+
+                return (
+                  <div className="bg-white rounded-xl border-2 border-emerald-200 mb-6 overflow-hidden">
+                    <div className="px-4 py-3 border-b border-[var(--border)] bg-emerald-50/50 flex items-center gap-2 flex-wrap">
+                      <img src={NIOS_GRID_LOGO} alt="NIOS Grid" className="w-5 h-5 rounded" />
+                      <h3 className="text-[14px]" style={{ fontWeight: 600 }}>
+                        Server Token Calculator
+                      </h3>
+
+                      <span className="ml-auto text-[11px] text-[var(--muted-foreground)]">
+                        {migratingMembers.length > 0
+                          ? `${migratingMembers.length} member${migratingMembers.length > 1 ? 's' : ''} selected${niosXMemberCount > 0 && xaasMemberCount > 0 ? ` (${niosXMemberCount} NIOS-X, ${xaasMemberCount} XaaS)` : niosXMemberCount > 0 ? ' \u2192 NIOS-X' : ' \u2192 XaaS'}`
+                          : `${allMembers.length} grid member${allMembers.length > 1 ? 's' : ''} detected`}
+                      </span>
+                    </div>
+
+                    {/* Summary hero */}
+                    <div className="px-4 py-4 border-b border-[var(--border)] bg-gradient-to-r from-emerald-50/80 to-white">
+                      <div className={`grid ${hasAnyXaas ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-1 sm:grid-cols-2'} gap-4`}>
+                        <div>
+                          <div className="text-[11px] uppercase tracking-wider text-[var(--muted-foreground)] mb-1" style={{ fontWeight: 600 }}>
+                            Allocated Server Tokens
+                          </div>
+                          <div className="text-[28px] text-emerald-700" style={{ fontWeight: 700 }}>
+                            {totalServerTokens.toLocaleString()}
+                          </div>
+                          <div className="text-[10px] text-[var(--muted-foreground)]">
+                            {niosXMemberCount > 0 && `${niosXTokens.toLocaleString()} NIOS-X`}
+                            {niosXMemberCount > 0 && xaasMemberCount > 0 && ' + '}
+                            {xaasMemberCount > 0 && `${totalXaasTokens.toLocaleString()} XaaS`}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-[11px] uppercase tracking-wider text-[var(--muted-foreground)] mb-1" style={{ fontWeight: 600 }}>
+                            NIOS Members
+                          </div>
+                          <div className="text-[22px] text-[var(--foreground)]" style={{ fontWeight: 600 }}>
+                            {displayMembers.length}
+                          </div>
+                          <div className="text-[10px] text-[var(--muted-foreground)]">
+                            {niosXMemberCount > 0 && `${niosXMemberCount} \u2192 NIOS-X`}
+                            {niosXMemberCount > 0 && xaasMembers.length > 0 && ' \u00b7 '}
+                            {xaasMembers.length > 0 && `${xaasMembers.length} \u2192 XaaS`}
+                          </div>
+                        </div>
+                        {hasAnyXaas && ([
+                            <div key="xaas-inst-summary">
+                              <div className="text-[11px] uppercase tracking-wider text-[var(--muted-foreground)] mb-1" style={{ fontWeight: 600 }}>
+                                XaaS Instances
+                              </div>
+                              <div className="text-[22px] text-purple-700" style={{ fontWeight: 600 }}>
+                                {xaasInstances.length}
+                              </div>
+                              <div className="text-[10px] text-[var(--muted-foreground)]">
+                                replacing {totalNiosReplaced} NIOS member{totalNiosReplaced > 1 ? 's' : ''}
+                              </div>
+                            </div>,
+                            <div key="xaas-consol-ratio">
+                              <div className="text-[11px] uppercase tracking-wider text-[var(--muted-foreground)] mb-1" style={{ fontWeight: 600 }}>
+                                Consolidation Ratio
+                              </div>
+                              <div className="text-[22px] text-purple-700" style={{ fontWeight: 600 }}>
+                                {totalNiosReplaced}:{xaasInstances.length}
+                              </div>
+                              <div className="text-[10px] text-[var(--muted-foreground)]">
+                                {totalNiosReplaced} NIOS \u2192 {xaasInstances.length} XaaS instance{xaasInstances.length > 1 ? 's' : ''}
+                              </div>
+                            </div>
+                        ])}
+                      </div>
+                      {hasAnyXaas && (
+                        <div className="mt-3 flex flex-col gap-1.5">
+                          <div className="flex items-start gap-1.5 text-[10px] text-purple-700 bg-purple-50 rounded-lg px-3 py-1.5 border border-purple-200">
+                            <Info className="w-3 h-3 mt-0.5 shrink-0" />
+                            <span>
+                              <b>{xaasMembers.length} NIOS member{xaasMembers.length > 1 ? 's' : ''}</b> consolidated into <b>{xaasInstances.length} XaaS instance{xaasInstances.length > 1 ? 's' : ''}</b>.
+                              {' '}Each XaaS instance uses aggregate QPS/LPS/Objects to determine the T-shirt size.
+                              {' '}1 connection = 1 NIOS member replaced.
+                            </span>
+                          </div>
+                          {xaasInstances.some(inst => inst.extraConnections > 0) && (
+                            <div className="flex items-start gap-1.5 text-[10px] text-amber-700 bg-amber-50 rounded-lg px-3 py-1.5 border border-amber-200">
+                              <Info className="w-3 h-3 mt-0.5 shrink-0" />
+                              <span>
+                                Some instances need extra connections beyond the included tier limit (+{XAAS_EXTRA_CONNECTION_COST} tokens each, up to 400 extra per instance).
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Per-member table */}
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-[12px]">
+                        <thead>
+                          <tr className="border-b border-[var(--border)] bg-gray-50/80">
+                            <th className="text-left px-4 py-2.5" style={{ fontWeight: 600 }}>Grid Member</th>
+                            <th className="text-center px-3 py-2.5" style={{ fontWeight: 600 }}>Role</th>
+                            <th className="text-center px-3 py-2.5" style={{ fontWeight: 600 }}>Target</th>
+                            <th className="text-right px-3 py-2.5" style={{ fontWeight: 600 }}>
+                              <span className="flex items-center justify-end gap-1">
+                                <Activity className="w-3 h-3" /> QPS
+                              </span>
+                            </th>
+                            <th className="text-right px-3 py-2.5" style={{ fontWeight: 600 }}>
+                              <span className="flex items-center justify-end gap-1">
+                                <Gauge className="w-3 h-3" /> LPS
+                              </span>
+                            </th>
+                            <th className="text-right px-3 py-2.5" style={{ fontWeight: 600 }}>Objects</th>
+                            <th className="text-center px-3 py-2.5" style={{ fontWeight: 600 }}>Size</th>
+                            <th className="text-center px-3 py-2.5" style={{ fontWeight: 600 }}>
+                              <span className="text-emerald-700">Allocated Tokens</span>
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {/* NIOS-X members — individual rows */}
+                          {niosXMembers.map((member) => {
+                            const tier = calcServerTokenTier(member.qps, member.lps, member.objectCount, 'nios-x');
+                            return (
+                              <tr key={member.memberId} className="border-b border-[var(--border)] hover:bg-gray-50/50 transition-colors">
+                                <td className="px-4 py-2.5">
+                                  <div className="truncate max-w-[260px]" style={{ fontWeight: 500 }}>{member.memberName}</div>
+                                </td>
+                                <td className="text-center px-3 py-2.5">
+                                  <span
+                                    className="inline-block px-2 py-0.5 rounded text-[10px] text-white"
+                                    style={{ fontWeight: 600, backgroundColor: roleColors[member.role] || '#666' }}
+                                  >
+                                    {member.role}
+                                  </span>
+                                </td>
+                                <td className="text-center px-3 py-2.5">
+                                  <span className="inline-block px-2 py-0.5 rounded text-[10px] bg-blue-100 text-blue-700" style={{ fontWeight: 600 }}>
+                                    NIOS-X
+                                  </span>
+                                </td>
+                                <td className="text-right px-3 py-2.5 tabular-nums">
+                                  {member.qps > 0 ? member.qps.toLocaleString() : <span className="text-gray-300">&mdash;</span>}
+                                </td>
+                                <td className="text-right px-3 py-2.5 tabular-nums">
+                                  {member.lps > 0 ? member.lps.toLocaleString() : <span className="text-gray-300">&mdash;</span>}
+                                </td>
+                                <td className="text-right px-3 py-2.5 tabular-nums">
+                                  {member.objectCount > 0 ? member.objectCount.toLocaleString() : <span className="text-gray-300">&mdash;</span>}
+                                </td>
+                                <td className="text-center px-3 py-2.5">
+                                  <span className={`inline-block px-2 py-0.5 rounded text-[10px] ${tierColorClass(tier.name)}`} style={{ fontWeight: 600 }}>
+                                    {tier.name}
+                                  </span>
+                                </td>
+                                <td className="text-center px-3 py-2.5">
+                                  <span className="inline-flex items-center justify-center min-w-[36px] h-7 px-1.5 rounded-full bg-emerald-100 text-emerald-700 text-[12px]" style={{ fontWeight: 700 }}>
+                                    {tier.serverTokens.toLocaleString()}
+                                  </span>
+                                </td>
+                              </tr>
+                            );
+                          })}
+
+                        </tbody>
+                          {/* XaaS consolidated instances */}
+                          {xaasInstances.map((inst) => (
+                            <tbody key={`xaas-inst-${inst.index}`}>
+                              {/* Instance header row */}
+                              <tr className="bg-purple-50/60 border-b border-purple-200">
+                                <td className="px-4 py-2 text-[11px] text-purple-800" style={{ fontWeight: 700 }} colSpan={8}>
+                                  <div className="flex items-center gap-2">
+                                    <span className="inline-flex items-center gap-1.5">
+                                      <span className="inline-block w-2.5 h-2.5 rounded-full bg-purple-500" />
+                                      XaaS Instance {xaasInstances.length > 1 ? inst.index + 1 : ''}
+                                    </span>
+                                    <span className="text-purple-500" style={{ fontWeight: 400 }}>—</span>
+                                    <span className="text-purple-600" style={{ fontWeight: 500 }}>
+                                      replaces {inst.connectionsUsed} NIOS member{inst.connectionsUsed > 1 ? 's' : ''}
+                                    </span>
+                                    <span className="ml-auto flex items-center gap-2">
+                                      <span className={`inline-block px-2 py-0.5 rounded text-[10px] ${tierColorClass(inst.tier.name)}`} style={{ fontWeight: 600 }}>
+                                        {inst.tier.name}
+                                      </span>
+                                      <span className="inline-flex items-center justify-center min-w-[36px] h-6 px-1.5 rounded-full bg-purple-200 text-purple-800 text-[11px]" style={{ fontWeight: 700 }}>
+                                        {inst.totalTokens.toLocaleString()}
+                                      </span>
+                                    </span>
+                                  </div>
+                                </td>
+                              </tr>
+                              {/* Individual member rows within this instance */}
+                              {inst.members.map((member) => (
+                                <tr key={member.memberId} className="border-b border-purple-100 hover:bg-purple-50/30 transition-colors">
+                                  <td className="pl-8 pr-4 py-2">
+                                    <div className="truncate max-w-[240px] text-[11px] text-purple-700" style={{ fontWeight: 500 }}>{member.memberName}</div>
+                                  </td>
+                                  <td className="text-center px-3 py-2">
+                                    <span
+                                      className="inline-block px-2 py-0.5 rounded text-[10px] text-white"
+                                      style={{ fontWeight: 600, backgroundColor: roleColors[member.role] || '#666' }}
+                                    >
+                                      {member.role}
+                                    </span>
+                                  </td>
+                                  <td className="text-center px-3 py-2">
+                                    <span className="inline-block px-2 py-0.5 rounded text-[9px] bg-purple-100 text-purple-600" style={{ fontWeight: 500 }}>
+                                      1 conn
+                                    </span>
+                                  </td>
+                                  <td className="text-right px-3 py-2 tabular-nums text-[11px] text-purple-600">
+                                    {member.qps > 0 ? member.qps.toLocaleString() : <span className="text-gray-300">&mdash;</span>}
+                                  </td>
+                                  <td className="text-right px-3 py-2 tabular-nums text-[11px] text-purple-600">
+                                    {member.lps > 0 ? member.lps.toLocaleString() : <span className="text-gray-300">&mdash;</span>}
+                                  </td>
+                                  <td className="text-right px-3 py-2 tabular-nums text-[11px] text-purple-600">
+                                    {member.objectCount > 0 ? member.objectCount.toLocaleString() : <span className="text-gray-300">&mdash;</span>}
+                                  </td>
+                                  <td className="text-center px-3 py-2" colSpan={2}>
+                                    <span className="text-[10px] text-gray-400">(consolidated)</span>
+                                  </td>
+                                </tr>
+                              ))}
+                              {/* Consolidated aggregate row */}
+                              <tr className="border-b border-purple-300 bg-purple-50/80">
+                                <td className="pl-8 pr-4 py-2 text-[11px] text-purple-800" style={{ fontWeight: 600 }}>
+                                  Aggregate ({inst.connectionsUsed} connection{inst.connectionsUsed > 1 ? 's' : ''} used / {inst.tier.maxConnections} included)
+                                  {inst.extraConnections > 0 && (
+                                    <span className="text-amber-600 ml-1">+{inst.extraConnections} extra</span>
+                                  )}
+                                </td>
+                                <td className="text-center px-3 py-2">
+                                  <span className="inline-block px-2 py-0.5 rounded text-[10px] bg-purple-100 text-purple-700" style={{ fontWeight: 600 }}>
+                                    XaaS
+                                  </span>
+                                </td>
+                                <td className="text-center px-3 py-2 text-[10px] text-purple-700" style={{ fontWeight: 600 }}>
+                                  {inst.connectionsUsed} conn
+                                </td>
+                                <td className="text-right px-3 py-2 tabular-nums text-purple-800" style={{ fontWeight: 600 }}>
+                                  {inst.totalQps > 0 ? inst.totalQps.toLocaleString() : <span className="text-gray-300">&mdash;</span>}
+                                </td>
+                                <td className="text-right px-3 py-2 tabular-nums text-purple-800" style={{ fontWeight: 600 }}>
+                                  {inst.totalLps > 0 ? inst.totalLps.toLocaleString() : <span className="text-gray-300">&mdash;</span>}
+                                </td>
+                                <td className="text-right px-3 py-2 tabular-nums text-purple-800" style={{ fontWeight: 600 }}>
+                                  {inst.totalObjects > 0 ? inst.totalObjects.toLocaleString() : <span className="text-gray-300">&mdash;</span>}
+                                </td>
+                                <td className="text-center px-3 py-2">
+                                  <span className={`inline-block px-2 py-0.5 rounded text-[10px] ${tierColorClass(inst.tier.name)}`} style={{ fontWeight: 600 }}>
+                                    {inst.tier.name}
+                                  </span>
+                                </td>
+                                <td className="text-center px-3 py-2">
+                                  <span className="inline-flex items-center justify-center min-w-[36px] h-7 px-1.5 rounded-full bg-purple-200 text-purple-800 text-[12px]" style={{ fontWeight: 700 }}>
+                                    {inst.totalTokens.toLocaleString()}
+                                  </span>
+                                  {inst.extraConnectionTokens > 0 && (
+                                    <div className="text-[9px] text-amber-600 mt-0.5">
+                                      incl. {inst.extraConnectionTokens.toLocaleString()} extra conn
+                                    </div>
+                                  )}
+                                </td>
+                              </tr>
+                            </tbody>
+                          ))}
+                        <tfoot>
+                          <tr className="bg-emerald-50/80">
+                            <td className="px-4 py-2.5 text-[12px]" style={{ fontWeight: 700 }} colSpan={7}>
+                              Total Allocated Server Tokens
+                              {hasAnyXaas && (
+                                <span className="text-[10px] text-[var(--muted-foreground)] ml-2" style={{ fontWeight: 400 }}>
+                                  ({niosXMemberCount > 0 ? `${niosXMemberCount} NIOS-X` : ''}{niosXMemberCount > 0 && xaasInstances.length > 0 ? ' + ' : ''}{xaasInstances.length > 0 ? `${xaasInstances.length} XaaS instance${xaasInstances.length > 1 ? 's' : ''} replacing ${totalNiosReplaced} members` : ''})
+                                </span>
+                              )}
+                            </td>
+                            <td className="text-center px-3 py-2.5">
+                              <span className="inline-flex items-center justify-center min-w-[40px] h-8 px-2 rounded-full bg-emerald-600 text-white text-[14px]" style={{ fontWeight: 700 }}>
+                                {totalServerTokens.toLocaleString()}
+                              </span>
+                            </td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+
+
+                  </div>
+                );
+              })()}
+
               {/* Export buttons */}
               <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
                 <button
@@ -2492,18 +2813,8 @@ export function Wizard() {
                   style={{ fontWeight: 500 }}
                 >
                   <FileSpreadsheet className="w-4 h-4" />
-                  Download Excel
+                  Download XLSX
                 </button>
-                {!backend.isDemo && (
-                  <button
-                    onClick={rescan}
-                    className="flex items-center justify-center gap-2 px-5 py-3 bg-[var(--infoblox-orange)] text-white rounded-xl hover:bg-[var(--infoblox-orange)]/90 transition-colors"
-                    style={{ fontWeight: 500 }}
-                  >
-                    <RotateCcw className="w-4 h-4" />
-                    Re-scan
-                  </button>
-                )}
                 <button
                   onClick={restart}
                   className="flex items-center justify-center gap-2 px-5 py-3 bg-white border border-[var(--border)] text-[var(--foreground)] rounded-xl hover:bg-gray-50 transition-colors"
@@ -2521,7 +2832,7 @@ export function Wizard() {
       {/* Bottom navigation */}
       {currentStep !== 'results' && (
         <div className="bg-white border-t border-[var(--border)] shrink-0">
-          <div className="max-w-4xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between">
+          <div className="max-w-6xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between">
             <button
               onClick={goBack}
               disabled={currentIndex === 0}
@@ -2551,6 +2862,35 @@ export function Wizard() {
           </div>
         </div>
       )}
+
+      {/* Footer */}
+      <footer className="bg-[var(--infoblox-navy)] text-white/50 shrink-0 mt-auto">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3 flex flex-col sm:flex-row items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5 text-[11px]">
+            <span>Made with</span>
+            <Heart className="w-3 h-3 text-red-400 fill-red-400" />
+            <span>by</span>
+            <a
+              href="https://github.com/stefanriegel"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-white/80 hover:text-white transition-colors underline underline-offset-2 decoration-white/30 hover:decoration-white/60"
+              style={{ fontWeight: 500 }}
+            >
+              Stefan Riegel
+            </a>
+          </div>
+          <a
+            href="https://github.com/stefanriegel"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1.5 text-[11px] text-white/40 hover:text-white/70 transition-colors"
+          >
+            <Github className="w-3.5 h-3.5" />
+            <span>github.com/stefanriegel</span>
+          </a>
+        </div>
+      </footer>
     </div>
   );
 }

@@ -131,6 +131,13 @@ func (s *Scanner) Scan(ctx context.Context, req scanner.ScanRequest, publish fun
 	password := req.Credentials["password"]
 
 	agg := scanAllDCs(ctx, hosts, username, password, publish)
+
+	// If no DC connected at all, return a top-level error so the orchestrator
+	// records a ProviderError that is surfaced in the results API.
+	if len(agg.dcNames) == 0 {
+		return nil, fmt.Errorf("ad: failed to connect to any server (%s)", strings.Join(hosts, ", "))
+	}
+
 	// source uses resolved DC computer names so the Detailed Findings table shows
 	// meaningful names (DC01, DC02) instead of raw IPs. Falls back to user-entered
 	// host if COMPUTERNAME query failed for that DC.
@@ -187,7 +194,7 @@ func (s *Scanner) Scan(ctx context.Context, req scanner.ScanRequest, publish fun
 		Status:   "done",
 	})
 
-	findings := []calculator.FindingRow{
+	allRows := []calculator.FindingRow{
 		{
 			Provider:         scanner.ProviderAD,
 			Source:           source,
@@ -244,6 +251,16 @@ func (s *Scanner) Scan(ctx context.Context, req scanner.ScanRequest, publish fun
 		},
 	}
 
+	// Filter out zero-count rows so empty results don't clutter the table.
+	var findings []calculator.FindingRow
+	for _, row := range allRows {
+		if row.Count > 0 {
+			findings = append(findings, row)
+		}
+	}
+	if len(findings) == 0 {
+		return findings, fmt.Errorf("ad: no resources discovered on %s (DNS, DHCP, and AD User queries all returned empty results)", source)
+	}
 	return findings, nil
 }
 

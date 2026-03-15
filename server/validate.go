@@ -16,7 +16,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ssooidc"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
-	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	armsubscriptions "github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armsubscriptions"
 	"github.com/go-chi/chi/v5"
@@ -140,21 +139,30 @@ func (h *ValidateHandler) HandleValidate(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Validation succeeded — create session and store credentials.
+	// Validation succeeded — reuse existing session if one exists (multi-provider),
+	// otherwise create a new one. This ensures credentials from previously-validated
+	// providers are preserved when the user validates multiple providers sequentially.
 	// Pass merged (not req.Credentials) so that any tokens written back by the
 	// validator (e.g. sso_access_token written by realAWSSSO) are captured.
-	sess := h.store.New()
+	var sess *session.Session
+	if cookie, err := r.Cookie("ddi_session"); err == nil {
+		if existing, ok := h.store.Get(cookie.Value); ok && existing.State == session.ScanStateCreated {
+			sess = existing
+		}
+	}
+	if sess == nil {
+		sess = h.store.New()
+		http.SetCookie(w, &http.Cookie{
+			Name:     "ddi_session",
+			Value:    sess.ID,
+			HttpOnly: true,
+			Secure:   false, // localhost — HTTPS not applicable
+			SameSite: http.SameSiteStrictMode,
+			Path:     "/",
+			MaxAge:   3600,
+		})
+	}
 	storeCredentials(sess, provider, req.AuthMethod, merged)
-
-	http.SetCookie(w, &http.Cookie{
-		Name:     "ddi_session",
-		Value:    sess.ID,
-		HttpOnly: true,
-		Secure:   false, // localhost — HTTPS not applicable
-		SameSite: http.SameSiteStrictMode,
-		Path:     "/",
-		MaxAge:   3600,
-	})
 
 	if subs == nil {
 		subs = []SubscriptionItem{}
@@ -171,13 +179,19 @@ func (h *ValidateHandler) HandleValidate(w http.ResponseWriter, r *http.Request)
 func storeCredentials(sess *session.Session, provider, authMethod string, creds map[string]string) {
 	switch provider {
 	case "aws":
+		// Frontend sends "profile", backend historically read "profileName".
+		// Accept both keys so the session is populated regardless of which is sent.
+		profileName := creds["profileName"]
+		if profileName == "" {
+			profileName = creds["profile"]
+		}
 		sess.AWS = &session.AWSCredentials{
 			AuthMethod:      authMethod,
 			AccessKeyID:     creds["accessKeyId"],
 			SecretAccessKey: creds["secretAccessKey"],
 			SessionToken:    creds["sessionToken"],
 			Region:          creds["region"],
-			ProfileName:     creds["profileName"],
+			ProfileName:     profileName,
 			RoleARN:         creds["roleArn"],
 			SSOStartURL:     creds["ssoStartUrl"],
 			SSORegion:       creds["ssoRegion"],
@@ -212,9 +226,18 @@ func storeCredentials(sess *session.Session, provider, authMethod string, creds 
 			CachedTokenSource:  cachedTS,
 		}
 	case "ad":
+		// Frontend sends "server" (singular), backend historically read "servers" (plural).
+		// Accept both keys so the session is populated regardless of which is sent,
+		// matching the same fallback logic already in realADValidator.
+		hosts := parseServers(creds["servers"])
+		if len(hosts) == 0 {
+			if h := creds["server"]; h != "" {
+				hosts = []string{h}
+			}
+		}
 		sess.AD = &session.ADCredentials{
 			AuthMethod: authMethod,
-			Hosts:      parseServers(creds["servers"]),
+			Hosts:      hosts,
 			Username:   creds["username"],
 			Password:   creds["password"],
 			Domain:     creds["domain"],
@@ -437,17 +460,6 @@ func realAzureBrowserSSO(ctx context.Context, creds map[string]string) ([]Subscr
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create browser credential: %w", err)
-	}
-
-	// GetToken triggers the browser open and blocks until login completes or ctx is cancelled.
-	_, err = cred.GetToken(ctx, policy.TokenRequestOptions{
-		Scopes: []string{"https://management.azure.com/.default"},
-	})
-	if err != nil {
-		if errors.Is(ctx.Err(), context.Canceled) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return nil, errors.New("browser SSO login cancelled or timed out")
-		}
-		return nil, fmt.Errorf("browser SSO login failed: %w", err)
 	}
 
 	// Cache the live credential so the scanner can reuse it without triggering

@@ -292,6 +292,206 @@ func TestValidate_ADMissingPassword(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// storeCredentials field-key consistency tests
+//
+// These verify that storeCredentials correctly maps frontend credential field
+// keys to session struct fields, including fallback handling for keys that
+// differ between frontend and backend.
+//
+// Audit of frontend field keys vs backend storeCredentials reads:
+//
+//   Frontend Key          | storeCredentials Key   | Match
+//   ----------------------|------------------------|------
+//   accessKeyId           | accessKeyId            | exact
+//   secretAccessKey       | secretAccessKey         | exact
+//   region                | region                 | exact
+//   profile               | profileName + profile  | fallback (fixed)
+//   roleArn               | roleArn                | exact
+//   ssoStartUrl           | ssoStartUrl            | exact
+//   ssoRegion             | ssoRegion              | exact
+//   tenantId              | tenantId               | exact
+//   clientId              | clientId               | exact
+//   clientSecret          | clientSecret           | exact
+//   serviceAccountJson    | serviceAccountJson     | exact
+//   server                | servers + server       | fallback (fixed)
+//   username              | username               | exact
+//   password              | password               | exact
+// ---------------------------------------------------------------------------
+
+// TestStoreCredentials_ADServerSingular: frontend sends "server" (singular) —
+// storeCredentials must populate sess.AD.Hosts via fallback.
+func TestStoreCredentials_ADServerSingular(t *testing.T) {
+	store := session.NewStore()
+	h := newTestValidateHandler(store)
+
+	rec := postValidate(t, store, h, "ad", map[string]interface{}{
+		"authMethod": "ntlm",
+		"credentials": map[string]string{
+			"server":   "dc01.corp.example.com",
+			"username": "admin",
+			"password": "secret",
+		},
+	})
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Extract session ID from cookie and verify AD.Hosts was populated.
+	resp := &http.Response{Header: rec.Header()}
+	var sessionID string
+	for _, c := range resp.Cookies() {
+		if c.Name == "ddi_session" {
+			sessionID = c.Value
+			break
+		}
+	}
+	if sessionID == "" {
+		t.Fatal("expected ddi_session cookie")
+	}
+
+	sess, ok := store.Get(sessionID)
+	if !ok {
+		t.Fatal("session not found in store")
+	}
+	if sess.AD == nil {
+		t.Fatal("expected sess.AD to be set")
+	}
+	if len(sess.AD.Hosts) == 0 {
+		t.Fatal("expected sess.AD.Hosts to contain the server address, got empty slice")
+	}
+	if sess.AD.Hosts[0] != "dc01.corp.example.com" {
+		t.Errorf("expected Hosts[0]=%q, got %q", "dc01.corp.example.com", sess.AD.Hosts[0])
+	}
+}
+
+// TestStoreCredentials_AWSProfileKey: frontend sends "profile" (not "profileName") —
+// storeCredentials must populate sess.AWS.ProfileName via fallback.
+func TestStoreCredentials_AWSProfileKey(t *testing.T) {
+	store := session.NewStore()
+	h := newTestValidateHandler(store)
+
+	rec := postValidate(t, store, h, "aws", map[string]interface{}{
+		"authMethod": "profile",
+		"credentials": map[string]string{
+			"profile": "my-named-profile",
+		},
+	})
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	resp := &http.Response{Header: rec.Header()}
+	var sessionID string
+	for _, c := range resp.Cookies() {
+		if c.Name == "ddi_session" {
+			sessionID = c.Value
+			break
+		}
+	}
+	if sessionID == "" {
+		t.Fatal("expected ddi_session cookie")
+	}
+
+	sess, ok := store.Get(sessionID)
+	if !ok {
+		t.Fatal("session not found in store")
+	}
+	if sess.AWS == nil {
+		t.Fatal("expected sess.AWS to be set")
+	}
+	if sess.AWS.ProfileName != "my-named-profile" {
+		t.Errorf("expected ProfileName=%q, got %q", "my-named-profile", sess.AWS.ProfileName)
+	}
+}
+
+// TestValidate_MultiProviderSessionReuse: validating two providers sequentially
+// reuses the same session, so both providers' credentials are available for scanning.
+func TestValidate_MultiProviderSessionReuse(t *testing.T) {
+	store := session.NewStore()
+	h := newTestValidateHandler(store)
+	router := server.NewRouter(noopStatic, store, nil)
+	server.RegisterValidateHandler(router, h)
+
+	// Step 1: Validate AWS — creates a new session and sets ddi_session cookie.
+	awsBody, _ := json.Marshal(map[string]interface{}{
+		"authMethod": "access-key",
+		"credentials": map[string]string{
+			"accessKeyId":     "AKIA-TEST",
+			"secretAccessKey": "secret",
+			"region":          "us-east-1",
+		},
+	})
+	req1 := httptest.NewRequest(http.MethodPost, "/api/v1/providers/aws/validate", bytes.NewReader(awsBody))
+	req1.Header.Set("Content-Type", "application/json")
+	rec1 := httptest.NewRecorder()
+	router.ServeHTTP(rec1, req1)
+
+	if rec1.Code != http.StatusOK {
+		t.Fatalf("AWS validate: expected 200, got %d: %s", rec1.Code, rec1.Body.String())
+	}
+
+	// Extract ddi_session cookie from first response.
+	var sessionCookie *http.Cookie
+	for _, c := range (&http.Response{Header: rec1.Header()}).Cookies() {
+		if c.Name == "ddi_session" {
+			sessionCookie = c
+			break
+		}
+	}
+	if sessionCookie == nil {
+		t.Fatal("expected ddi_session cookie after AWS validate")
+	}
+	sessionID := sessionCookie.Value
+
+	// Step 2: Validate Azure — passes the existing ddi_session cookie.
+	// The handler should reuse the session instead of creating a new one.
+	azureBody, _ := json.Marshal(map[string]interface{}{
+		"authMethod": "service-principal",
+		"credentials": map[string]string{
+			"tenantId":     "tenant-123",
+			"clientId":     "client-456",
+			"clientSecret": "azure-secret",
+		},
+	})
+	req2 := httptest.NewRequest(http.MethodPost, "/api/v1/providers/azure/validate", bytes.NewReader(azureBody))
+	req2.Header.Set("Content-Type", "application/json")
+	req2.AddCookie(sessionCookie) // pass the cookie from step 1
+	rec2 := httptest.NewRecorder()
+	router.ServeHTTP(rec2, req2)
+
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("Azure validate: expected 200, got %d: %s", rec2.Code, rec2.Body.String())
+	}
+
+	// The second response should NOT set a new cookie (session was reused).
+	for _, c := range (&http.Response{Header: rec2.Header()}).Cookies() {
+		if c.Name == "ddi_session" && c.Value != sessionID {
+			t.Errorf("expected session reuse (same cookie), but got new session ID %q vs original %q", c.Value, sessionID)
+		}
+	}
+
+	// Verify the single session has BOTH providers' credentials.
+	sess, ok := store.Get(sessionID)
+	if !ok {
+		t.Fatal("session not found in store")
+	}
+	if sess.AWS == nil {
+		t.Error("expected sess.AWS to be set (from first validation)")
+	}
+	if sess.Azure == nil {
+		t.Error("expected sess.Azure to be set (from second validation)")
+	}
+	if sess.AWS != nil && sess.AWS.AccessKeyID != "AKIA-TEST" {
+		t.Errorf("expected AWS AccessKeyID=%q, got %q", "AKIA-TEST", sess.AWS.AccessKeyID)
+	}
+	if sess.Azure != nil && sess.Azure.TenantID != "tenant-123" {
+		t.Errorf("expected Azure TenantID=%q, got %q", "tenant-123", sess.Azure.TenantID)
+	}
+}
+
 // TestValidate_ADMissingField: missing "host" in AD credentials → 200, valid:false.
 func TestValidate_ADMissingField(t *testing.T) {
 	store := session.NewStore()

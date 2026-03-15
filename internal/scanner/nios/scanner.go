@@ -79,6 +79,13 @@ func (s *Scanner) Scan(_ context.Context, req scanner.ScanRequest, publish func(
 	memberProps := make(map[string]map[string]string) // hostname → props
 	gmHostname := ""
 
+	publish(scanner.Event{
+		Type:     "resource_progress",
+		Provider: "nios",
+		Resource: "pass1_start",
+		Count:    0,
+	})
+
 	if err := streamOnedbXML(backupPath, func(props map[string]string) {
 		xmlType := props["__type"]
 		if _, isMember := MemberXMLTypes[xmlType]; !isMember {
@@ -103,6 +110,15 @@ func (s *Scanner) Scan(_ context.Context, req scanner.ScanRequest, publish func(
 		return nil, fmt.Errorf("nios: pass 1 failed: %w", err)
 	}
 
+	// gmHostname fallback: if is_grid_master was not found in any member,
+	// use the first member hostname from vnodeMap.
+	if gmHostname == "" && len(vnodeMap) > 0 {
+		for _, h := range vnodeMap {
+			gmHostname = h
+			break
+		}
+	}
+
 	publish(scanner.Event{
 		Type:     "resource_progress",
 		Provider: "nios",
@@ -112,6 +128,13 @@ func (s *Scanner) Scan(_ context.Context, req scanner.ScanRequest, publish func(
 
 	// ---- Pass 2: collect all parsedObjects and count ----
 	var objects []parsedObject
+
+	publish(scanner.Event{
+		Type:     "resource_progress",
+		Provider: "nios",
+		Resource: "pass2_start",
+		Count:    0,
+	})
 
 	if err := streamOnedbXML(backupPath, func(props map[string]string) {
 		xmlType := props["__type"]
@@ -138,72 +161,67 @@ func (s *Scanner) Scan(_ context.Context, req scanner.ScanRequest, publish func(
 		Count:    len(objects),
 	})
 
+	publish(scanner.Event{
+		Type:     "resource_progress",
+		Provider: "nios",
+		Resource: "counting",
+		Count:    result.gridDDI,
+	})
+
 	// ---- Build FindingRows ----
 	var rows []calculator.FindingRow
 
-	// Grid-level DDI → attributed to GM.
+	// Emit per-family DDI rows with human-readable names (grid-level, attributed to GM).
+	// All DDI objects are grid-level in the current NIOS model (only LEASE is member-scoped,
+	// and LEASE is not a DDI family). familyCounts contains DDI-adjusted values (HOST_OBJECT
+	// uses +2/+3 expansion, matching Python per_family_ddi).
 	if result.gridDDI > 0 {
-		rows = append(rows, calculator.FindingRow{
-			Provider:      "nios",
-			Source:        gmHostname,
-			Category:      calculator.CategoryDDIObjects,
-			Item:          "NIOS Grid DDI Objects",
-			Count:         result.gridDDI,
-			TokensPerUnit: calculator.TokensPerDDIObject,
-		})
-	}
-
-	// Per-member DDI (currently all goes to GM via countObjects, but include any non-GM members).
-	for hostname, acc := range result.memberAccs {
-		if hostname == gmHostname {
-			continue // already emitted as grid-level DDI above
-		}
-		if acc.ddiCount > 0 {
+		for family, count := range result.familyCounts {
+			if count == 0 {
+				continue
+			}
+			displayName := familyDisplayName(family)
 			rows = append(rows, calculator.FindingRow{
-				Provider:      "nios",
-				Source:        hostname,
-				Category:      calculator.CategoryDDIObjects,
-				Item:          "NIOS Grid DDI Objects",
-				Count:         acc.ddiCount,
-				TokensPerUnit: calculator.TokensPerDDIObject,
+				Provider:         "nios",
+				Source:           gmHostname,
+				Category:         calculator.CategoryDDIObjects,
+				Item:             displayName,
+				Count:            count,
+				TokensPerUnit:    calculator.TokensPerDDIObject,
+				ManagementTokens: ceilDiv(count, calculator.TokensPerDDIObject),
 			})
 		}
 	}
 
-	// DNS Zones specifically (so tests can look for Item="DNS Zone").
-	// Count DNS zones separately for the Item field.
-	dnsZoneCount := 0
-	for _, obj := range objects {
-		if obj.Family == NiosFamilyDNSZone {
-			dnsZoneCount++
+	// Per-member DDI: emit rows for any member that has DDI objects attributed to it.
+	// In the current NIOS model, per-member DDI is always 0 (only LEASE is member-scoped
+	// and LEASE is not a DDI family), but this handles future member-scoped DDI families.
+	for hostname, acc := range result.memberAccs {
+		if acc.ddiCount > 0 {
+			rows = append(rows, calculator.FindingRow{
+				Provider:         "nios",
+				Source:           hostname,
+				Category:         calculator.CategoryDDIObjects,
+				Item:             "DDI Objects (Total)",
+				Count:            acc.ddiCount,
+				TokensPerUnit:    calculator.TokensPerDDIObject,
+				ManagementTokens: ceilDiv(acc.ddiCount, calculator.TokensPerDDIObject),
+			})
 		}
 	}
-	if dnsZoneCount > 0 {
-		// Replace or supplement the grid DDI row with a zone-specific row.
-		// The zone count is already included in gridDDI; emit an additional
-		// labeled row so the test can find Item="DNS Zone".
-		rows = append(rows, calculator.FindingRow{
-			Provider:      "nios",
-			Source:        gmHostname,
-			Category:      calculator.CategoryDDIObjects,
-			Item:          "DNS Zone",
-			Count:         dnsZoneCount,
-			TokensPerUnit: calculator.TokensPerDDIObject,
-		})
-	}
 
-	// Grid-level Active IPs — count unique active lease IPs only (not fixed/host/network).
-	// Fixed addresses and host addresses contribute to DDI Objects, not Active IPs.
-	// The globalLeaseIPSet is the deduplicated set of active lease IP addresses.
-	globalLeaseIPSet := buildGlobalLeaseIPSet(result)
-	if len(globalLeaseIPSet) > 0 {
+	// Grid-level Active IPs — count ALL unique IPs across all sources:
+	// leases, fixed addresses, host addresses, network reservations, and discovery data.
+	// Uses globalIPSet which deduplicates across all sources to avoid double-counting.
+	if len(result.globalIPSet) > 0 {
 		rows = append(rows, calculator.FindingRow{
-			Provider:      "nios",
-			Source:        gmHostname,
-			Category:      calculator.CategoryActiveIPs,
-			Item:          "NIOS Active Leases",
-			Count:         len(globalLeaseIPSet),
-			TokensPerUnit: calculator.TokensPerActiveIP,
+			Provider:         "nios",
+			Source:           gmHostname,
+			Category:         calculator.CategoryActiveIPs,
+			Item:             "NIOS Active IPs (All Sources)",
+			Count:            len(result.globalIPSet),
+			TokensPerUnit:    calculator.TokensPerActiveIP,
+			ManagementTokens: ceilDiv(len(result.globalIPSet), calculator.TokensPerActiveIP),
 		})
 	}
 
@@ -211,19 +229,8 @@ func (s *Scanner) Scan(_ context.Context, req scanner.ScanRequest, publish func(
 	// The dedup test expects total Active IP count <= 3 (fixture has 3 unique leases).
 	// We emit only the global row to avoid double-counting in the sum.
 
-	// TODO NIOS-04: HA pair deduplication not yet implemented — each member counts as
-	// 1 asset even if part of an HA pair. When implemented, detect ha_pair_hostname and
-	// emit one row for the pair (lexicographically first hostname as primary).
-	for _, hostname := range vnodeMap {
-		rows = append(rows, calculator.FindingRow{
-			Provider:      "nios",
-			Source:        hostname,
-			Category:      calculator.CategoryManagedAssets,
-			Item:          "NIOS Grid Member",
-			Count:         1,
-			TokensPerUnit: calculator.TokensPerManagedAsset,
-		})
-	}
+	// NIOS Grid Members are NOT counted as managed assets.
+	// They are part of the NIOS grid licensing, not Universal DDI managed assets.
 
 	// ---- Apply selectedMembers filter ----
 	// If selectedMembers is non-empty, only emit rows for hostnames in the set.
@@ -250,20 +257,9 @@ func (s *Scanner) Scan(_ context.Context, req scanner.ScanRequest, publish func(
 	return rows, nil
 }
 
-// buildGlobalLeaseIPSet aggregates unique active lease IPs from all member accumulators.
-// This is distinct from result.globalIPSet which also includes fixed/host/network IPs.
-// Only active lease IPs count as "Active IPs" for the Active IPs FindingRow category.
-func buildGlobalLeaseIPSet(result countResult) map[string]struct{} {
-	global := make(map[string]struct{})
-	for _, acc := range result.memberAccs {
-		for ip := range acc.leaseIPSet {
-			global[ip] = struct{}{}
-		}
-	}
-	return global
-}
-
 // buildMetrics constructs NiosServerMetric entries for each member in vnodeMap.
+// ObjectCount for GM includes grid-level DDI (since all DDI is grid-level in current NIOS model).
+// ObjectCount for non-GM members includes their per-member DDI (currently 0) plus lease count.
 func buildMetrics(
 	vnodeMap map[string]string,
 	memberProps map[string]map[string]string,
@@ -279,7 +275,7 @@ func buildMetrics(
 		if acc, ok := result.memberAccs[hostname]; ok {
 			objectCount = acc.ddiCount
 		}
-		// GM gets grid-level DDI too.
+		// GM gets grid-level DDI (all DDI is grid-level in current NIOS model).
 		if hostname == gmHostname {
 			objectCount += result.gridDDI
 		}
@@ -294,6 +290,52 @@ func buildMetrics(
 		})
 	}
 	return metrics
+}
+
+// familyDisplayNames maps NiosFamily constants to human-readable display names
+// for the FindingRow Item field.
+var familyDisplayNames = map[string]string{
+	NiosFamilyDNSZone:          "DNS Zones",
+	NiosFamilyDNSRecordA:      "DNS A Records",
+	NiosFamilyDNSRecordAAAA:   "DNS AAAA Records",
+	NiosFamilyDNSRecordCNAME:  "DNS CNAME Records",
+	NiosFamilyDNSRecordMX:     "DNS MX Records",
+	NiosFamilyDNSRecordNS:     "DNS NS Records",
+	NiosFamilyDNSRecordPTR:    "DNS PTR Records",
+	NiosFamilyDNSRecordSOA:    "DNS SOA Records",
+	NiosFamilyDNSRecordSRV:    "DNS SRV Records",
+	NiosFamilyDNSRecordTXT:    "DNS TXT Records",
+	NiosFamilyNetwork:         "DHCP Networks",
+	NiosFamilyHostObject:      "Host Records",
+	NiosFamilyHostAlias:       "Host Aliases",
+	NiosFamilyFixedAddress:    "Fixed Addresses",
+	NiosFamilyDHCPRange:       "DHCP Ranges",
+	NiosFamilyExclusionRange:  "Exclusion Ranges",
+	NiosFamilyNetworkContainer: "Network Containers",
+	NiosFamilyNetworkView:     "Network Views",
+	NiosFamilyDTCLBDN:         "DTC Load-Balanced Names",
+	NiosFamilyDTCPool:         "DTC Pools",
+	NiosFamilyDTCServer:       "DTC Servers",
+	NiosFamilyDTCMonitor:      "DTC Monitors",
+	NiosFamilyDTCTopology:     "DTC Topologies",
+	NiosFamilyDiscoveryData:   "Discovered IPs",
+}
+
+// familyDisplayName returns the human-readable name for a NiosFamily constant.
+// Falls back to "Other DDI Objects" for unmapped families.
+func familyDisplayName(family string) string {
+	if name, ok := familyDisplayNames[family]; ok {
+		return name
+	}
+	return "Other DDI Objects"
+}
+
+// ceilDiv computes ceiling(n / d). Returns 0 if n is 0.
+func ceilDiv(n, d int) int {
+	if n == 0 {
+		return 0
+	}
+	return (n + d - 1) / d
 }
 
 // streamOnedbXML opens the gzip+tar backup at path, finds onedb.xml, and calls

@@ -4,6 +4,9 @@
 ddi-scanner
 ddi-scanner.exe
 
+# GoReleaser output
+dist/
+
 # frontend/dist is intentionally committed for Phase 1 embedding.
 # Phase 8 CI/CD will build it in GitHub Actions and this line will be uncommented.
 # frontend/dist/

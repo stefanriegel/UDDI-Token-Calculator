@@ -1,27 +1,26 @@
-# GoReleaser OSS v2 — prebuilt builder pattern
-# Binaries are cross-compiled by the GitHub Actions workflow before GoReleaser runs.
-# GoReleaser ingests the pre-built binaries, creates checksums, and uploads to GitHub Release.
+# GoReleaser OSS v2 — native cross-compilation
+# GoReleaser handles cross-compilation natively for all targets.
 version: 2
 
 builds:
-  - id: windows
-    builder: prebuilt
+  - id: ddi-scanner
+    env:
+      - CGO_ENABLED=0
     goos:
       - windows
-    goarch:
-      - amd64
-    prebuilt:
-      path: dist/ddi-scanner_{{ .Os }}_{{ .Arch }}/ddi-scanner.exe
-    binary: ddi-scanner
-
-  - id: macos-arm64
-    builder: prebuilt
-    goos:
       - darwin
     goarch:
+      - amd64
       - arm64
-    prebuilt:
-      path: dist/ddi-scanner_{{ .Os }}_{{ .Arch }}/ddi-scanner
+    ignore:
+      - goos: darwin
+        goarch: amd64
+      - goos: windows
+        goarch: arm64
+    ldflags:
+      - -s -w
+      - -X github.com/infoblox/uddi-go-token-calculator/internal/version.Version={{.Version}}
+      - -X github.com/infoblox/uddi-go-token-calculator/internal/version.Commit={{.ShortCommit}}
     binary: ddi-scanner
 
 archives:

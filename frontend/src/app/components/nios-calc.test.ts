@@ -67,13 +67,17 @@ describe('consolidateXaasInstances', () => {
     ];
     const result = consolidateXaasInstances(members);
     expect(result).toHaveLength(1);
+    expect(result[0].index).toBe(0);
     expect(result[0].connectionsUsed).toBe(1);
     expect(result[0].extraConnections).toBe(0);
-    expect(result[0].extraTokens).toBe(0);
-    expect(result[0].totalServerTokens).toBe(result[0].tier.serverTokens);
+    expect(result[0].extraConnectionTokens).toBe(0);
+    expect(result[0].totalTokens).toBe(result[0].tier.serverTokens);
+    expect(result[0].totalQps).toBe(100);
+    expect(result[0].totalLps).toBe(1);
+    expect(result[0].totalObjects).toBe(10);
   });
 
-  it('packs 11 tiny members into 1 S-tier instance with 1 extra connection', () => {
+  it('upgrades 11 tiny members to M-tier (connections exceed S maxConnections=10)', () => {
     const members: NiosServerMetrics[] = Array.from({ length: 11 }, (_, i) => ({
       memberId: `m${i}`,
       memberName: `member-${i}`,
@@ -85,50 +89,78 @@ describe('consolidateXaasInstances', () => {
     const result = consolidateXaasInstances(members);
     expect(result).toHaveLength(1);
     const inst = result[0];
-    expect(inst.tier.name).toBe('S');
+    expect(inst.tier.name).toBe('M');
     expect(inst.connectionsUsed).toBe(11);
-    expect(inst.extraConnections).toBe(1);  // 11 - 10 (S maxConnections) = 1
-    expect(inst.extraTokens).toBe(100);      // 1 * XAAS_EXTRA_CONNECTION_COST
-    expect(inst.totalServerTokens).toBe(inst.tier.serverTokens + inst.extraTokens);
+    expect(inst.extraConnections).toBe(0);  // 11 <= 20 (M maxConnections)
+    expect(inst.extraConnectionTokens).toBe(0);
+    expect(inst.totalTokens).toBe(inst.tier.serverTokens); // M = 4100, no extras
+    // SUM aggregation: 11 * 100 = 1100 QPS
+    expect(inst.totalQps).toBe(1100);
   });
 
-  it('splits members exceeding XL capacity into 2+ instances', () => {
-    // Create one very high-QPS member that forces XL, and another one that also needs XL
-    // Two members with QPS > maxQps of any single tier but combined need separate instances
-    const members: NiosServerMetrics[] = [
-      { memberId: 'm1', memberName: 'member-1', role: 'DNS',  qps: 100000, lps: 600, objectCount: 800000 },
-      { memberId: 'm2', memberName: 'member-2', role: 'DNS',  qps: 100000, lps: 600, objectCount: 800000 },
-    ];
-    // Each member max(qps) = 100000, max(lps) = 600, max(objects) = 800000 — fits in XL
-    // But when aggregated (max across members), max(100000, 100000)=100000, lps=600, objects=800000
-    // This still fits in XL (maxQps:115000, maxLps:675, maxObjects:880000)
-    // So this test should verify they CAN be packed in one instance
+  it('upgrades 21 tiny members to L-tier (connections exceed M maxConnections=20)', () => {
+    const members: NiosServerMetrics[] = Array.from({ length: 21 }, (_, i) => ({
+      memberId: `m${i}`,
+      memberName: `member-${i}`,
+      role: 'DNS',
+      qps: 100,
+      lps: 1,
+      objectCount: 10,
+    }));
     const result = consolidateXaasInstances(members);
-    // Both fit in XL since max of both is still within XL limits
+    expect(result).toHaveLength(1);
+    const inst = result[0];
+    expect(inst.tier.name).toBe('L');
+    expect(inst.connectionsUsed).toBe(21);
+    expect(inst.extraConnections).toBe(0);  // 21 <= 35 (L maxConnections)
+    expect(inst.extraConnectionTokens).toBe(0);
+    expect(inst.totalTokens).toBe(inst.tier.serverTokens); // L = 6100
+  });
+
+  it('uses XL-tier with extra connections for 86 tiny members (exceeds XL maxConnections=85)', () => {
+    const members: NiosServerMetrics[] = Array.from({ length: 86 }, (_, i) => ({
+      memberId: `m${i}`,
+      memberName: `member-${i}`,
+      role: 'DNS',
+      qps: 100,
+      lps: 1,
+      objectCount: 10,
+    }));
+    const result = consolidateXaasInstances(members);
+    expect(result).toHaveLength(1);
+    const inst = result[0];
+    expect(inst.tier.name).toBe('XL');
+    expect(inst.connectionsUsed).toBe(86);
+    expect(inst.extraConnections).toBe(1);  // 86 - 85 (XL maxConnections) = 1
+    expect(inst.extraConnectionTokens).toBe(100); // 1 * 100
+    expect(inst.totalTokens).toBe(inst.tier.serverTokens + 100); // XL = 8500 + 100
+  });
+
+  it('packs 2 moderate members into 1 XL instance (SUM aggregation)', () => {
+    // With SUM aggregation: 60000+50000=110000 QPS fits XL (115000 max)
+    const members: NiosServerMetrics[] = [
+      { memberId: 'm1', memberName: 'member-1', role: 'DNS',  qps: 60000, lps: 300, objectCount: 400000 },
+      { memberId: 'm2', memberName: 'member-2', role: 'DNS',  qps: 50000, lps: 300, objectCount: 400000 },
+    ];
+    const result = consolidateXaasInstances(members);
     expect(result).toHaveLength(1);
     expect(result[0].tier.name).toBe('XL');
     expect(result[0].connectionsUsed).toBe(2);
+    expect(result[0].totalQps).toBe(110000);
+    expect(result[0].totalLps).toBe(600);
+    expect(result[0].totalObjects).toBe(800000);
   });
 
-  it('creates 2 instances when metrics exceed XL capacity', () => {
-    // Use QPS exceeding XL to force split
+  it('creates 2 instances when SUM exceeds XL capacity', () => {
+    // With SUM: 60000+60000=120000 > 115000 XL max QPS -> must split
     const members: NiosServerMetrics[] = [
-      { memberId: 'm1', memberName: 'member-1', role: 'DNS', qps: 90000, lps: 500, objectCount: 700000 },
-      { memberId: 'm2', memberName: 'member-2', role: 'DNS', qps: 90000, lps: 500, objectCount: 700000 },
+      { memberId: 'm1', memberName: 'member-1', role: 'DNS', qps: 60000, lps: 300, objectCount: 400000 },
+      { memberId: 'm2', memberName: 'member-2', role: 'DNS', qps: 60000, lps: 300, objectCount: 400000 },
     ];
-    // Aggregate max: qps=90000 (within XL), lps=500 (within XL), objects=700000 (within XL)
-    // Both fit in L tier (maxQps:70000... no, 90000 > 70000, so XL)
-    // Both members together: max is still 90000 qps which fits in XL (115000 limit)
-    // So one instance with XL. Let's use values that actually exceed XL:
-    const bigMembers: NiosServerMetrics[] = [
-      { memberId: 'm1', memberName: 'member-1', role: 'DNS', qps: 120000, lps: 700, objectCount: 900000 },
-      { memberId: 'm2', memberName: 'member-2', role: 'DNS', qps: 80000, lps: 500, objectCount: 600000 },
-    ];
-    // member-1 alone already exceeds XL (qps:120000>115000, lps:700>675, objects:900000>880000)
-    // So member-1 must be its own instance (capped at XL)
-    // member-2 alone fits in XL
-    const result2 = consolidateXaasInstances(bigMembers);
-    expect(result2.length).toBeGreaterThanOrEqual(2);
+    const result = consolidateXaasInstances(members);
+    expect(result).toHaveLength(2);
+    expect(result[0].index).toBe(0);
+    expect(result[1].index).toBe(1);
   });
 
   it('XAAS_EXTRA_CONNECTION_COST is 100', () => {

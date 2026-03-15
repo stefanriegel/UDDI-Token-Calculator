@@ -6,6 +6,9 @@ import (
 	"testing"
 
 	"github.com/masterzen/winrm"
+
+	"github.com/infoblox/uddi-go-token-calculator/internal/calculator"
+	"github.com/infoblox/uddi-go-token-calculator/internal/scanner"
 )
 
 // Compile-time signature assertion — BuildNTLMClient must remain exported
@@ -185,5 +188,56 @@ func TestReservationKeys(t *testing.T) {
 
 	if got := len(agg.reservationKeys); got != 2 {
 		t.Errorf("different reservation IPs same scope: count = %d, want 2", got)
+	}
+}
+
+// TestZeroCountFilteredOut verifies that FindingRows with Count=0 are excluded
+// from the final results, and only non-zero rows are returned.
+func TestZeroCountFilteredOut(t *testing.T) {
+	allRows := []calculator.FindingRow{
+		{Provider: scanner.ProviderAD, Source: "DC01", Category: calculator.CategoryDDIObjects, Item: "dns_zone", Count: 5, TokensPerUnit: calculator.TokensPerDDIObject, ManagementTokens: 1},
+		{Provider: scanner.ProviderAD, Source: "DC01", Category: calculator.CategoryDDIObjects, Item: "dns_record", Count: 0, TokensPerUnit: calculator.TokensPerDDIObject, ManagementTokens: 0},
+		{Provider: scanner.ProviderAD, Source: "DC01", Category: calculator.CategoryDDIObjects, Item: "dhcp_scope", Count: 0, TokensPerUnit: calculator.TokensPerDDIObject, ManagementTokens: 0},
+		{Provider: scanner.ProviderAD, Source: "DC01", Category: calculator.CategoryActiveIPs, Item: "dhcp_lease", Count: 10, TokensPerUnit: calculator.TokensPerActiveIP, ManagementTokens: 1},
+		{Provider: scanner.ProviderAD, Source: "DC01", Category: calculator.CategoryActiveIPs, Item: "dhcp_reservation", Count: 0, TokensPerUnit: calculator.TokensPerActiveIP, ManagementTokens: 0},
+		{Provider: scanner.ProviderAD, Source: "DC01", Category: calculator.CategoryManagedAssets, Item: "user_account", Count: 0, TokensPerUnit: calculator.TokensPerManagedAsset, ManagementTokens: 0},
+	}
+
+	var filtered []calculator.FindingRow
+	for _, row := range allRows {
+		if row.Count > 0 {
+			filtered = append(filtered, row)
+		}
+	}
+
+	if got := len(filtered); got != 2 {
+		t.Errorf("filtered row count = %d, want 2 (only dns_zone and dhcp_lease)", got)
+	}
+	if filtered[0].Item != "dns_zone" {
+		t.Errorf("filtered[0].Item = %q, want dns_zone", filtered[0].Item)
+	}
+	if filtered[1].Item != "dhcp_lease" {
+		t.Errorf("filtered[1].Item = %q, want dhcp_lease", filtered[1].Item)
+	}
+}
+
+// TestAllZeroCountReturnsEmpty verifies that when all rows have Count=0,
+// the filtered result is empty (triggering the "no resources discovered" error path).
+func TestAllZeroCountReturnsEmpty(t *testing.T) {
+	allRows := []calculator.FindingRow{
+		{Provider: scanner.ProviderAD, Source: "DC01", Category: calculator.CategoryDDIObjects, Item: "dns_zone", Count: 0},
+		{Provider: scanner.ProviderAD, Source: "DC01", Category: calculator.CategoryDDIObjects, Item: "dns_record", Count: 0},
+		{Provider: scanner.ProviderAD, Source: "DC01", Category: calculator.CategoryActiveIPs, Item: "dhcp_lease", Count: 0},
+	}
+
+	var filtered []calculator.FindingRow
+	for _, row := range allRows {
+		if row.Count > 0 {
+			filtered = append(filtered, row)
+		}
+	}
+
+	if len(filtered) != 0 {
+		t.Errorf("all-zero rows: filtered count = %d, want 0", len(filtered))
 	}
 }

@@ -29,6 +29,13 @@ const minimalOnedbXML = `<?xml version="1.0" encoding="UTF-8"?>
 <PROPERTY NAME="is_candidate_master" VALUE="false"/>
 </OBJECT>
 <OBJECT>
+<PROPERTY NAME="__type" VALUE=".com.infoblox.one.virtual_node"/>
+<PROPERTY NAME="virtual_oid" VALUE="103"/>
+<PROPERTY NAME="host_name" VALUE="dhcp1.test.local"/>
+<PROPERTY NAME="is_grid_master" VALUE="false"/>
+<PROPERTY NAME="enable_dhcp" VALUE="true"/>
+</OBJECT>
+<OBJECT>
 <PROPERTY NAME="__type" VALUE=".com.infoblox.dns.lease"/>
 <PROPERTY NAME="vnode_id" VALUE="101"/>
 <PROPERTY NAME="binding_state" VALUE="active"/>
@@ -45,6 +52,24 @@ const minimalOnedbXML = `<?xml version="1.0" encoding="UTF-8"?>
 <PROPERTY NAME="vnode_id" VALUE="101"/>
 <PROPERTY NAME="binding_state" VALUE="active"/>
 <PROPERTY NAME="ip_address" VALUE="10.0.0.3"/>
+</OBJECT>
+<OBJECT>
+<PROPERTY NAME="__type" VALUE=".com.infoblox.dns.lease"/>
+<PROPERTY NAME="vnode_id" VALUE="103"/>
+<PROPERTY NAME="binding_state" VALUE="active"/>
+<PROPERTY NAME="ip_address" VALUE="10.0.0.20"/>
+</OBJECT>
+<OBJECT>
+<PROPERTY NAME="__type" VALUE=".com.infoblox.dns.lease"/>
+<PROPERTY NAME="vnode_id" VALUE="103"/>
+<PROPERTY NAME="binding_state" VALUE="expired"/>
+<PROPERTY NAME="ip_address" VALUE="10.0.0.21"/>
+</OBJECT>
+<OBJECT>
+<PROPERTY NAME="__type" VALUE=".com.infoblox.dns.lease"/>
+<PROPERTY NAME="vnode_id" VALUE="101"/>
+<PROPERTY NAME="binding_state" VALUE="free"/>
+<PROPERTY NAME="ip_address" VALUE="10.0.0.99"/>
 </OBJECT>
 <OBJECT>
 <PROPERTY NAME="__type" VALUE=".com.infoblox.dns.zone"/>
@@ -66,13 +91,37 @@ const minimalOnedbXML = `<?xml version="1.0" encoding="UTF-8"?>
 <PROPERTY NAME="__type" VALUE=".com.infoblox.dns.network"/>
 <PROPERTY NAME="cidr" VALUE="10.0.1.0/24"/>
 </OBJECT>
+<OBJECT>
+<PROPERTY NAME="__type" VALUE=".com.infoblox.dns.discovery_data"/>
+<PROPERTY NAME="ip_address" VALUE="10.0.0.1"/>
+<PROPERTY NAME="discovered_name" VALUE="host1.test.local"/>
+</OBJECT>
+<OBJECT>
+<PROPERTY NAME="__type" VALUE=".com.infoblox.dns.discovery_data"/>
+<PROPERTY NAME="ip_address" VALUE="10.0.0.100"/>
+<PROPERTY NAME="discovered_name" VALUE="host2.test.local"/>
+</OBJECT>
+<OBJECT>
+<PROPERTY NAME="__type" VALUE=".com.infoblox.one.idns_lbdn"/>
+<PROPERTY NAME="name" VALUE="app.test.local"/>
+</OBJECT>
+<OBJECT>
+<PROPERTY NAME="__type" VALUE=".com.infoblox.dns.host"/>
+<PROPERTY NAME="fqdn" VALUE="server1.test.local"/>
+<PROPERTY NAME="aliases" VALUE=""/>
+</OBJECT>
+<OBJECT>
+<PROPERTY NAME="__type" VALUE=".com.infoblox.dns.host"/>
+<PROPERTY NAME="fqdn" VALUE="server2.test.local"/>
+<PROPERTY NAME="aliases" VALUE="alias1.test.local"/>
+</OBJECT>
 </DATABASE>
 `
 
 // TestGenerateMinimalFixture writes internal/scanner/nios/testdata/minimal.tar.gz.
 // The file is a valid gzip+tar archive containing a single entry "onedb.xml" with
-// 2 Grid Members (GM + DNS-only), 3 active LEASE objects, 2 DNS zones, 1 fixed
-// address, 1 host address, and 1 network.
+// 3 Grid Members (GM + DNS-only + DHCP-only), 3 active LEASE objects, 2 DNS zones,
+// 1 fixed address, 1 host address, 1 network, 2 discovery_data objects, and 1 idns_lbdn.
 //
 // The test is idempotent: if the file already exists it is overwritten to ensure
 // the fixture stays in sync with this definition. Pass -regen flag (not required

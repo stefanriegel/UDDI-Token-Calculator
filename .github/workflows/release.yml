@@ -28,7 +28,7 @@ jobs:
       - name: Run vet
         run: go vet ./...
 
-  # Job 2: Cross-compile all targets + GoReleaser release (main and tags only)
+  # Job 2: GoReleaser release with native cross-compilation (main and tags only)
   # NOTE: Code signing (DIST-02) is deferred — Azure Artifact Signing is not available
   # in all regions. Unsigned binaries ship; Windows users see a SmartScreen popup
   # ("More info → Run anyway"). Signing can be revisited via DigiCert/SignPath.io in v2.
@@ -48,30 +48,6 @@ jobs:
         with:
           go-version: stable
           cache: true
-
-      - name: Compute version string
-        id: ver
-        run: echo "summary=$(git describe --tags --long --always)" >> "$GITHUB_OUTPUT"
-
-      - name: Cross-compile release targets
-        run: |
-          VERSION="${{ steps.ver.outputs.summary }}"
-          COMMIT="${GITHUB_SHA:0:8}"
-          LDFLAGS="-s -w \
-            -X github.com/infoblox/uddi-go-token-calculator/internal/version.Version=${VERSION} \
-            -X github.com/infoblox/uddi-go-token-calculator/internal/version.Commit=${COMMIT}"
-
-          # Windows amd64
-          mkdir -p dist/ddi-scanner_windows_amd64
-          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 \
-            go build -ldflags="${LDFLAGS}" \
-            -o dist/ddi-scanner_windows_amd64/ddi-scanner.exe .
-
-          # macOS arm64 (Apple Silicon — M1/M2/M3)
-          mkdir -p dist/ddi-scanner_darwin_arm64
-          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 \
-            go build -ldflags="${LDFLAGS}" \
-            -o dist/ddi-scanner_darwin_arm64/ddi-scanner .
 
       # For main-push builds (not tagged releases): create a snapshot tag so GoReleaser
       # can produce a GitHub Release. GoReleaser OSS requires a tag — nightly/snapshot
