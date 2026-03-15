@@ -8,6 +8,7 @@ builds:
     targets:
       - darwin_arm64
       - windows_amd64
+      - linux_amd64
     ldflags:
       - -s -w
       - -X github.com/infoblox/uddi-go-token-calculator/internal/version.Version={{.Version}}
@@ -18,6 +19,12 @@ archives:
   - id: default
     name_template: "uddi-token-calculator_{{ .Os }}_{{ .Arch }}"
     formats: [binary]
+  - id: homebrew
+    name_template: "uddi-token-calculator_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    ids: [uddi-token-calculator]
+    files:
+      - none*
 
 checksum:
   name_template: "checksums.txt"
@@ -40,6 +47,20 @@ release:
   prerelease: auto
   name_template: "{{.ProjectName}} {{.Tag}}"
   make_latest: true
+
+brews:
+  - ids: [homebrew]
+    repository:
+      owner: stefanriegel
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    name: uddi-token-calculator
+    homepage: "https://github.com/stefanriegel/UDDI-Token-Calculator"
+    description: "Estimates Infoblox Universal DDI management tokens from cloud infrastructure"
+    license: "Proprietary"
+    install: |
+      bin.install "uddi-token-calculator"
+    goamd64: v1
 
 changelog:
   disable: true

@@ -265,6 +265,35 @@ export async function uploadNiosBackup(file: File): Promise<NiosUploadResponse> 
   return res.json();
 }
 
+// ─── Update Check ─────────────────────────────────────────────────────────────
+
+export interface UpdateCheckResponse {
+  currentVersion: string;
+  latestVersion: string;
+  updateAvailable: boolean;
+  releaseURL?: string;
+  releaseNotes?: string;
+  downloadURL?: string;
+}
+
+export interface SelfUpdateResponse {
+  success: boolean;
+  error?: string;
+  message?: string;
+}
+
+export async function checkForUpdate(): Promise<UpdateCheckResponse> {
+  const res = await fetch(apiUrl('/update/check'), { signal: AbortSignal.timeout(10000) });
+  if (!res.ok) throw new Error(`Update check failed: ${res.status}`);
+  return res.json();
+}
+
+export async function applySelfUpdate(): Promise<SelfUpdateResponse> {
+  const res = await fetch(apiUrl('/update/apply'), { method: 'POST', signal: AbortSignal.timeout(120000) });
+  if (!res.ok) throw new Error(`Self-update failed: ${res.status}`);
+  return res.json();
+}
+
 // ─── Scan Results ──────────────────────────────────────────────────────────────
 
 export interface NiosServerMetricAPI {
