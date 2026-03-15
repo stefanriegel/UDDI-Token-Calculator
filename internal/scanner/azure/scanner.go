@@ -299,6 +299,93 @@ func scanSubscription(ctx context.Context, cred azcore.TokenCredential, subID st
 		})
 	}
 
+	// ── VPN Gateways (Virtual Network Gateways) ─────────────────────────────
+	vpnGWCount, err := countVPNGateways(ctx, cred, subID)
+	if err != nil {
+		publish(scanner.Event{
+			Type:     "error",
+			Provider: scanner.ProviderAzure,
+			Resource: "vpn_gateway",
+			Status:   "error",
+			Message:  err.Error(),
+		})
+	} else {
+		publish(scanner.Event{
+			Type:     "resource_progress",
+			Provider: scanner.ProviderAzure,
+			Resource: "vpn_gateway",
+			Count:    vpnGWCount,
+			Status:   "done",
+		})
+		findings = append(findings, calculator.FindingRow{
+			Provider:         scanner.ProviderAzure,
+			Source:           displayName,
+			Category:         calculator.CategoryManagedAssets,
+			Item:             "vpn_gateway",
+			Count:            vpnGWCount,
+			TokensPerUnit:    calculator.TokensPerManagedAsset,
+			ManagementTokens: vpnGWCount / calculator.TokensPerManagedAsset,
+		})
+	}
+
+	// ── Azure Firewalls ─────────────────────────────────────────────────────
+	fwCount, err := countAzureFirewalls(ctx, cred, subID)
+	if err != nil {
+		publish(scanner.Event{
+			Type:     "error",
+			Provider: scanner.ProviderAzure,
+			Resource: "azure_firewall",
+			Status:   "error",
+			Message:  err.Error(),
+		})
+	} else {
+		publish(scanner.Event{
+			Type:     "resource_progress",
+			Provider: scanner.ProviderAzure,
+			Resource: "azure_firewall",
+			Count:    fwCount,
+			Status:   "done",
+		})
+		findings = append(findings, calculator.FindingRow{
+			Provider:         scanner.ProviderAzure,
+			Source:           displayName,
+			Category:         calculator.CategoryManagedAssets,
+			Item:             "azure_firewall",
+			Count:            fwCount,
+			TokensPerUnit:    calculator.TokensPerManagedAsset,
+			ManagementTokens: fwCount / calculator.TokensPerManagedAsset,
+		})
+	}
+
+	// ── Virtual Hubs ────────────────────────────────────────────────────────
+	vhubCount, err := countVirtualHubs(ctx, cred, subID)
+	if err != nil {
+		publish(scanner.Event{
+			Type:     "error",
+			Provider: scanner.ProviderAzure,
+			Resource: "virtual_hub",
+			Status:   "error",
+			Message:  err.Error(),
+		})
+	} else {
+		publish(scanner.Event{
+			Type:     "resource_progress",
+			Provider: scanner.ProviderAzure,
+			Resource: "virtual_hub",
+			Count:    vhubCount,
+			Status:   "done",
+		})
+		findings = append(findings, calculator.FindingRow{
+			Provider:         scanner.ProviderAzure,
+			Source:           displayName,
+			Category:         calculator.CategoryManagedAssets,
+			Item:             "virtual_hub",
+			Count:            vhubCount,
+			TokensPerUnit:    calculator.TokensPerManagedAsset,
+			ManagementTokens: vhubCount / calculator.TokensPerManagedAsset,
+		})
+	}
+
 	return findings, nil
 }
 

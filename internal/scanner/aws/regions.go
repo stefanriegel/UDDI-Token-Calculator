@@ -112,6 +112,31 @@ func scanRegion(ctx context.Context, cfg awssdk.Config, region string, accountID
 		"load_balancer", calculator.CategoryManagedAssets, calculator.TokensPerManagedAsset,
 		publish, func() (int, error) { return scanLoadBalancers(ctx, cfg) }))
 
+	// Elastic IPs — Active IPs (Address)
+	findings = append(findings, runResourceScan(ctx, cfg, region, accountID,
+		"elastic_ip", calculator.CategoryActiveIPs, calculator.TokensPerActiveIP,
+		publish, func() (int, error) { return scanElasticIPs(ctx, cfg) }))
+
+	// NAT Gateways — Managed Assets
+	findings = append(findings, runResourceScan(ctx, cfg, region, accountID,
+		"nat_gateway", calculator.CategoryManagedAssets, calculator.TokensPerManagedAsset,
+		publish, func() (int, error) { return scanNATGateways(ctx, cfg) }))
+
+	// Transit Gateways — Managed Assets
+	findings = append(findings, runResourceScan(ctx, cfg, region, accountID,
+		"transit_gateway", calculator.CategoryManagedAssets, calculator.TokensPerManagedAsset,
+		publish, func() (int, error) { return scanTransitGateways(ctx, cfg) }))
+
+	// VPN Gateways — Managed Assets
+	findings = append(findings, runResourceScan(ctx, cfg, region, accountID,
+		"vpn_gateway", calculator.CategoryManagedAssets, calculator.TokensPerManagedAsset,
+		publish, func() (int, error) { return scanVPNGateways(ctx, cfg) }))
+
+	// Customer Gateways — Managed Assets
+	findings = append(findings, runResourceScan(ctx, cfg, region, accountID,
+		"customer_gateway", calculator.CategoryManagedAssets, calculator.TokensPerManagedAsset,
+		publish, func() (int, error) { return scanCustomerGateways(ctx, cfg) }))
+
 	return findings
 }
 

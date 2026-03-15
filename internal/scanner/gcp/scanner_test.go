@@ -21,6 +21,11 @@ var _ func(context.Context, []option.ClientOption, string) (int, error) = countI
 var _ func(context.Context, []option.ClientOption, string) (int, error) = countInstanceIPs
 var _ func(*computepb.Instance) int = countGCPInstanceIPs
 var _ func(context.Context, oauth2.TokenSource, string) (int, int, error) = countDNS
+var _ func(context.Context, []option.ClientOption, string) (int, error) = countAddresses
+var _ func(context.Context, []option.ClientOption, string) (int, error) = countRouters
+var _ func(context.Context, []option.ClientOption, string) (int, error) = countVPNGateways
+var _ func(context.Context, []option.ClientOption, string) (int, error) = countForwardingRules
+var _ func(context.Context, []option.ClientOption, string) (int, error) = countInternalRanges
 
 // ---- Tests ----
 
