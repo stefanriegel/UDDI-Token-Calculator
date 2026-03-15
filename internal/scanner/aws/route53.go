@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/route53"
 	"github.com/aws/aws-sdk-go-v2/service/route53resolver"
 	"github.com/infoblox/uddi-go-token-calculator/internal/calculator"
+	"github.com/infoblox/uddi-go-token-calculator/internal/cloudutil"
 	"github.com/infoblox/uddi-go-token-calculator/internal/scanner"
 )
 
@@ -56,9 +57,9 @@ func scanRoute53(ctx context.Context, cfg awssdk.Config, accountID string, publi
 		})
 	}
 
-	// Record sets — sum across all zones
+	// Record sets — per-type counts across all zones
 	recStart := time.Now()
-	records, err := countAllRecordSets(ctx, cfg, zoneIDs)
+	typeCounts, err := countAllRecordSetsByType(ctx, cfg, zoneIDs)
 	recDur := time.Since(recStart).Milliseconds()
 	if err != nil {
 		publish(scanner.Event{
@@ -71,28 +72,36 @@ func scanRoute53(ctx context.Context, cfg awssdk.Config, accountID string, publi
 			DurMS:    recDur,
 		})
 	} else {
+		// Sum for backward-compatible aggregate progress event.
+		totalRecords := 0
+		for _, c := range typeCounts {
+			totalRecords += c
+		}
 		publish(scanner.Event{
 			Type:     "resource_progress",
 			Provider: scanner.ProviderAWS,
 			Resource: "dns_record",
 			Region:   "global",
-			Count:    records,
+			Count:    totalRecords,
 			Status:   "done",
 			DurMS:    recDur,
 		})
-		tokens := 0
-		if records > 0 {
-			tokens = (records + calculator.TokensPerDDIObject - 1) / calculator.TokensPerDDIObject
+		// Emit one FindingRow per non-zero record type.
+		for rrtype, count := range typeCounts {
+			if count == 0 {
+				continue
+			}
+			tokens := (count + calculator.TokensPerDDIObject - 1) / calculator.TokensPerDDIObject
+			findings = append(findings, calculator.FindingRow{
+				Provider:         scanner.ProviderAWS,
+				Source:           accountID,
+				Category:         calculator.CategoryDDIObjects,
+				Item:             cloudutil.RecordTypeItem(rrtype),
+				Count:            count,
+				TokensPerUnit:    calculator.TokensPerDDIObject,
+				ManagementTokens: tokens,
+			})
 		}
-		findings = append(findings, calculator.FindingRow{
-			Provider:         scanner.ProviderAWS,
-			Source:           accountID,
-			Category:         calculator.CategoryDDIObjects,
-			Item:             "dns_record",
-			Count:            records,
-			TokensPerUnit:    calculator.TokensPerDDIObject,
-			ManagementTokens: tokens,
-		})
 	}
 
 	// Route53 Health Checks (global)
@@ -129,10 +138,12 @@ func listHostedZones(ctx context.Context, cfg awssdk.Config) (int, []string, err
 	return count, ids, nil
 }
 
-// countAllRecordSets sums all resource record sets across all zones.
-func countAllRecordSets(ctx context.Context, cfg awssdk.Config, zoneIDs []string) (int, error) {
+// countAllRecordSetsByType counts all resource record sets across all zones,
+// grouped by RR type (e.g. "A", "AAAA", "CNAME").  Returns a non-nil map even
+// when no records are found.
+func countAllRecordSetsByType(ctx context.Context, cfg awssdk.Config, zoneIDs []string) (map[string]int, error) {
 	client := route53.NewFromConfig(cfg)
-	total := 0
+	counts := map[string]int{}
 	for _, zid := range zoneIDs {
 		paginator := route53.NewListResourceRecordSetsPaginator(client, &route53.ListResourceRecordSetsInput{
 			HostedZoneId: awssdk.String(zid),
@@ -143,10 +154,12 @@ func countAllRecordSets(ctx context.Context, cfg awssdk.Config, zoneIDs []string
 				// Skip this zone on error — continue counting others.
 				break
 			}
-			total += len(page.ResourceRecordSets)
+			for _, rrs := range page.ResourceRecordSets {
+				counts[string(rrs.Type)]++
+			}
 		}
 	}
-	return total, nil
+	return counts, nil
 }
 
 // stripZoneID removes the "/hostedzone/" prefix from a Route53 zone ID.

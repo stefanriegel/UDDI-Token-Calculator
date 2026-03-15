@@ -207,7 +207,7 @@ func scanOneProject(ctx context.Context, projectID string, ts oauth2.TokenSource
 	// runResourceScan cannot handle the paired return, so we publish manually.
 	{
 		start := time.Now()
-		zoneCount, recordCount, dnsErr := countDNS(ctx, ts, projectID)
+		zoneCount, typeCounts, dnsErr := countDNS(ctx, ts, projectID)
 		durMS := time.Since(start).Milliseconds()
 
 		// Publish dns_zone event.
@@ -246,7 +246,7 @@ func scanOneProject(ctx context.Context, projectID string, ts oauth2.TokenSource
 			ManagementTokens: zoneTokens,
 		})
 
-		// Publish dns_record event.
+		// Publish dns_record event — aggregate total for backward compatibility.
 		if dnsErr != nil {
 			publish(scanner.Event{
 				Type:     "resource_progress",
@@ -257,30 +257,41 @@ func scanOneProject(ctx context.Context, projectID string, ts oauth2.TokenSource
 				DurMS:    durMS,
 			})
 		} else {
+			totalRecords := 0
+			for _, c := range typeCounts {
+				totalRecords += c
+			}
 			publish(scanner.Event{
 				Type:     "resource_progress",
 				Provider: scanner.ProviderGCP,
 				Resource: "dns_record",
-				Count:    recordCount,
+				Count:    totalRecords,
 				Status:   "done",
 				DurMS:    durMS,
 			})
 		}
 
-		// Always append dns_record FindingRow.
-		recordTokens := 0
-		if dnsErr == nil && calculator.TokensPerDDIObject > 0 {
-			recordTokens = int(math.Ceil(float64(recordCount) / float64(calculator.TokensPerDDIObject)))
+		// Emit one FindingRow per non-zero record type.
+		if dnsErr == nil {
+			for rrtype, count := range typeCounts {
+				if count == 0 {
+					continue
+				}
+				recordTokens := 0
+				if calculator.TokensPerDDIObject > 0 {
+					recordTokens = int(math.Ceil(float64(count) / float64(calculator.TokensPerDDIObject)))
+				}
+				findings = append(findings, calculator.FindingRow{
+					Provider:         scanner.ProviderGCP,
+					Source:           projectID,
+					Category:         calculator.CategoryDDIObjects,
+					Item:             cloudutil.RecordTypeItem(rrtype),
+					Count:            count,
+					TokensPerUnit:    calculator.TokensPerDDIObject,
+					ManagementTokens: recordTokens,
+				})
+			}
 		}
-		findings = append(findings, calculator.FindingRow{
-			Provider:         scanner.ProviderGCP,
-			Source:           projectID,
-			Category:         calculator.CategoryDDIObjects,
-			Item:             "dns_record",
-			Count:            recordCount,
-			TokensPerUnit:    calculator.TokensPerDDIObject,
-			ManagementTokens: recordTokens,
-		})
 	}
 
 	// GCP-05 (managed assets): Compute instances — CategoryManagedAssets

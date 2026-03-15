@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -310,7 +311,7 @@ func scanSubscription(ctx context.Context, cred azcore.TokenCredential, subID st
 	}
 
 	// ── DNS zones and records (public + private) ───────────────────────────────
-	zoneCount, recordCount, err := countDNS(ctx, cred, subID)
+	zoneCount, typeCounts, err := countDNS(ctx, cred, subID)
 	if err != nil {
 		publish(scanner.Event{
 			Type:     "error",
@@ -337,22 +338,38 @@ func scanSubscription(ctx context.Context, cred azcore.TokenCredential, subID st
 			ManagementTokens: zoneCount / calculator.TokensPerDDIObject,
 		})
 
+		// Sum for backward-compatible aggregate progress event.
+		totalRecords := 0
+		for _, c := range typeCounts {
+			totalRecords += c
+		}
 		publish(scanner.Event{
 			Type:     "resource_progress",
 			Provider: scanner.ProviderAzure,
 			Resource: "dns_record",
-			Count:    recordCount,
+			Count:    totalRecords,
 			Status:   "done",
 		})
-		findings = append(findings, calculator.FindingRow{
-			Provider:         scanner.ProviderAzure,
-			Source:           displayName,
-			Category:         calculator.CategoryDDIObjects,
-			Item:             "dns_record",
-			Count:            recordCount,
-			TokensPerUnit:    calculator.TokensPerDDIObject,
-			ManagementTokens: recordCount / calculator.TokensPerDDIObject,
-		})
+
+		// Emit one FindingRow per non-zero record type.
+		for rrtype, count := range typeCounts {
+			if count == 0 {
+				continue
+			}
+			tokens := 0
+			if calculator.TokensPerDDIObject > 0 {
+				tokens = (count + calculator.TokensPerDDIObject - 1) / calculator.TokensPerDDIObject
+			}
+			findings = append(findings, calculator.FindingRow{
+				Provider:         scanner.ProviderAzure,
+				Source:           displayName,
+				Category:         calculator.CategoryDDIObjects,
+				Item:             cloudutil.RecordTypeItem(rrtype),
+				Count:            count,
+				TokensPerUnit:    calculator.TokensPerDDIObject,
+				ManagementTokens: tokens,
+			})
+		}
 	}
 
 	// ── VM NIC IPs ────────────────────────────────────────────────────────────
@@ -668,24 +685,28 @@ func countVNetsAndSubnets(ctx context.Context, cred azcore.TokenCredential, subI
 	return vnets, subnets, vnetIDs, nil
 }
 
-// countDNS lists all public and private DNS zones and counts their record sets.
-// Counts from both zone types are combined into the returned zones and records values.
-func countDNS(ctx context.Context, cred azcore.TokenCredential, subID string) (zones, records int, err error) {
+// countDNS lists all public and private DNS zones and counts their record sets
+// broken down by record type. The type is extracted from the RecordSet.Type
+// field suffix (e.g. "Microsoft.Network/dnsZones/A" → "A").
+// Counts from both zone types are combined into the returned zones and typeCounts values.
+func countDNS(ctx context.Context, cred azcore.TokenCredential, subID string) (zones int, typeCounts map[string]int, err error) {
+	typeCounts = make(map[string]int)
+
 	// ── Public DNS zones (armdns) ─────────────────────────────────────────────
 	zonesClient, err := armdns.NewZonesClient(subID, cred, nil)
 	if err != nil {
-		return 0, 0, err
+		return 0, nil, err
 	}
 	recordsClient, err := armdns.NewRecordSetsClient(subID, cred, nil)
 	if err != nil {
-		return 0, 0, err
+		return 0, nil, err
 	}
 
 	zonePager := zonesClient.NewListPager(nil)
 	for zonePager.More() {
 		page, err := zonePager.NextPage(ctx)
 		if err != nil {
-			return zones, records, err
+			return zones, typeCounts, err
 		}
 		for _, zone := range page.Value {
 			zones++
@@ -702,7 +723,9 @@ func countDNS(ctx context.Context, cred azcore.TokenCredential, subID string) (z
 				if err != nil {
 					break // skip this zone's records on error
 				}
-				records += len(rsPage.Value)
+				for _, rs := range rsPage.Value {
+					typeCounts[extractAzureDNSType(rs.Type)]++
+				}
 			}
 		}
 	}
@@ -710,18 +733,18 @@ func countDNS(ctx context.Context, cred azcore.TokenCredential, subID string) (z
 	// ── Private DNS zones (armprivatedns) ─────────────────────────────────────
 	privateZonesClient, err := armprivatedns.NewPrivateZonesClient(subID, cred, nil)
 	if err != nil {
-		return zones, records, err
+		return zones, typeCounts, err
 	}
 	privateRecordsClient, err := armprivatedns.NewRecordSetsClient(subID, cred, nil)
 	if err != nil {
-		return zones, records, err
+		return zones, typeCounts, err
 	}
 
 	privateZonePager := privateZonesClient.NewListPager(nil)
 	for privateZonePager.More() {
 		page, err := privateZonePager.NextPage(ctx)
 		if err != nil {
-			return zones, records, err
+			return zones, typeCounts, err
 		}
 		for _, zone := range page.Value {
 			zones++
@@ -739,12 +762,29 @@ func countDNS(ctx context.Context, cred azcore.TokenCredential, subID string) (z
 				if err != nil {
 					break // skip this zone's records on error
 				}
-				records += len(rsPage.Value)
+				for _, rs := range rsPage.Value {
+					typeCounts[extractAzureDNSType(rs.Type)]++
+				}
 			}
 		}
 	}
 
-	return zones, records, nil
+	return zones, typeCounts, nil
+}
+
+// extractAzureDNSType extracts the DNS record type from an Azure RecordSet.Type
+// field. Azure formats these as "Microsoft.Network/dnsZones/A" (public) or
+// "Microsoft.Network/privateDnsZones/AAAA" (private). The function returns the
+// suffix after the last "/". A nil pointer returns "UNKNOWN".
+func extractAzureDNSType(rsType *string) string {
+	if rsType == nil {
+		return "UNKNOWN"
+	}
+	t := *rsType
+	if idx := strings.LastIndex(t, "/"); idx >= 0 && idx < len(t)-1 {
+		return t[idx+1:]
+	}
+	return t // no separator — use as-is
 }
 
 // countVMIPs counts the total number of IP configurations across all NICs

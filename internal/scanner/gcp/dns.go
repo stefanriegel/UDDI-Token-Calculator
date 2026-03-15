@@ -10,15 +10,18 @@ import (
 )
 
 // countDNS returns the total number of managed DNS zones and DNS resource record sets
-// across all zones in the project. Both public and private zones are counted (no visibility filter).
+// broken down by record type across all zones in the project. Both public and private
+// zones are counted (no visibility filter).
 //
 // On per-zone record enumeration error, the error is logged and scanning continues.
-// The last zone error is returned as err if any zone failed; zoneCount and recordCount
+// The last zone error is returned as err if any zone failed; zoneCount and typeCounts
 // reflect the successfully scanned data.
-func countDNS(ctx context.Context, ts oauth2.TokenSource, projectID string) (zoneCount int, recordCount int, err error) {
+func countDNS(ctx context.Context, ts oauth2.TokenSource, projectID string) (zoneCount int, typeCounts map[string]int, err error) {
+	typeCounts = make(map[string]int)
+
 	svc, err := dnsv1.NewService(ctx, option.WithTokenSource(ts))
 	if err != nil {
-		return 0, 0, fmt.Errorf("dns: failed to create DNS service: %w", err)
+		return 0, nil, fmt.Errorf("dns: failed to create DNS service: %w", err)
 	}
 
 	// Collect zone names while counting zones.
@@ -32,14 +35,16 @@ func countDNS(ctx context.Context, ts oauth2.TokenSource, projectID string) (zon
 		zoneCount += len(page.ManagedZones)
 		return nil
 	}); listErr != nil {
-		return 0, 0, wrapGCPError(listErr)
+		return 0, nil, wrapGCPError(listErr)
 	}
 
 	// For each zone, list all resource record sets.
 	var lastZoneErr error
 	for _, zoneName := range zoneNames {
 		if rrErr := svc.ResourceRecordSets.List(projectID, zoneName).Pages(ctx, func(page *dnsv1.ResourceRecordSetsListResponse) error {
-			recordCount += len(page.Rrsets)
+			for _, rrset := range page.Rrsets {
+				typeCounts[rrset.Type]++
+			}
 			return nil
 		}); rrErr != nil {
 			// Log error and continue — do not abort all DNS scanning on a single zone failure.
@@ -47,5 +52,5 @@ func countDNS(ctx context.Context, ts oauth2.TokenSource, projectID string) (zon
 		}
 	}
 
-	return zoneCount, recordCount, lastZoneErr
+	return zoneCount, typeCounts, lastZoneErr
 }
