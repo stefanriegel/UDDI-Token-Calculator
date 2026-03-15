@@ -22,6 +22,20 @@ jobs:
           go-version: stable
           cache: true
 
+      - uses: pnpm/action-setup@v4
+        with:
+          version: latest
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Build frontend
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile && pnpm build
+
       - name: Run tests
         run: go test ./... -race -count=1
 
@@ -60,9 +74,6 @@ jobs:
       - name: Build frontend
         working-directory: frontend
         run: pnpm install --frozen-lockfile && pnpm build
-
-      - name: Stage frontend dist
-        run: git add -f frontend/dist/
 
       - name: Prepare release notes
         id: notes
