@@ -63,7 +63,7 @@ This milestone is complete only when all are true:
   > After this: Scan against a rate-limited API completes with visible retry events in progress stream instead of failing; concurrency limits configurable via scan request
 - [x] **S02: AWS Multi-Account Org Scanning + Expanded Resources** `risk:high` `depends:[S01]`
   > After this: User enters org master credentials + role name, tool discovers all child accounts and scans them in parallel with per-account progress and expanded resource coverage
-- [ ] **S03: Azure Parallel Multi-Subscription + Expanded Resources** `risk:medium` `depends:[S01]`
+- [x] **S03: Azure Parallel Multi-Subscription + Expanded Resources** `risk:medium` `depends:[S01]`
   > After this: User authenticates once, tool auto-discovers all tenant subscriptions, scans them concurrently with configurable parallelism, shows combined results with expanded resource types
 - [ ] **S04: GCP Multi-Project Org Discovery + Expanded Resources** `risk:medium` `depends:[S01]`
   > After this: User authenticates with org-level SA, tool discovers all projects via Resource Manager folder traversal, scans in parallel with expanded resource coverage

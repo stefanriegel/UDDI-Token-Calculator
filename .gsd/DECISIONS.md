@@ -90,3 +90,7 @@
 - "organizationsAPI interface defined for testability — same mock pattern used for EC2/STS/IAM in existing tests"
 - "Route53 ListTrafficPolicies uses manual IsTruncated/TrafficPolicyIdMarker pagination — SDK provides no built-in paginator for this API"
 - "Resolver endpoint scanner catches 'not available', 'InvalidRequestException', 'not supported', 'UnknownEndpoint' error patterns for graceful 0 return in unsupported regions"
+- "Azure scanSubscriptionFunc package-level var for test seam — allows test to swap scanSubscription without interface indirection, matching Go idiom for testing unexported orchestration"
+- "Azure subscription display name resolution done once in scanAllSubscriptions before goroutine launch — shared map avoids per-goroutine API calls"
+- "countVNetsAndSubnets extended to return vnetIDs []string alongside vnets/subnets counts — VNet IDs naturally available during enumeration, avoids separate API call for gateway RG extraction"
+- "VNet gateway objects counted as Managed Assets AND their IPConfigurations counted as Active IPs — two separate FindingRow items from one per-RG API iteration"
