@@ -9,6 +9,7 @@ package orchestrator
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"time"
 
@@ -192,7 +193,7 @@ func buildScanRequest(p ScanProviderRequest, sess *session.Session) scanner.Scan
 	case scanner.ProviderAD:
 		if sess.AD != nil {
 			req.Credentials["auth_method"] = sess.AD.AuthMethod
-			req.Credentials["host"] = sess.AD.Host
+			req.Credentials["servers"] = strings.Join(sess.AD.Hosts, ",")
 			req.Credentials["username"] = sess.AD.Username
 			req.Credentials["password"] = sess.AD.Password
 			req.Credentials["domain"] = sess.AD.Domain

@@ -72,7 +72,7 @@ type GCPCredentials struct {
 // No json tags — credentials must never be accidentally serialized.
 type ADCredentials struct {
 	AuthMethod string
-	Host       string
+	Hosts      []string // One entry per domain controller. Was: Host string (single DC only).
 	Username   string
 	Password   string
 	Domain     string

@@ -212,15 +212,9 @@ func storeCredentials(sess *session.Session, provider, authMethod string, creds 
 			CachedTokenSource:  cachedTS,
 		}
 	case "ad":
-		// Frontend sends "server" (matching the field key in mock-data.ts).
-		// Fall back to "host" for any direct API callers that use the old key.
-		adHost := creds["server"]
-		if adHost == "" {
-			adHost = creds["host"]
-		}
 		sess.AD = &session.ADCredentials{
 			AuthMethod: authMethod,
-			Host:       adHost,
+			Hosts:      parseServers(creds["servers"]),
 			Username:   creds["username"],
 			Password:   creds["password"],
 			Domain:     creds["domain"],
@@ -651,16 +645,22 @@ func realGCPADCValidator(ctx context.Context, creds map[string]string) ([]Subscr
 // realADValidator validates Active Directory / WinRM credentials by opening a
 // WinRM connection and running a lightweight PowerShell probe ($PSVersionTable).
 // NTLM is the only supported auth method — Kerberos requires a domain-joined machine.
+// The frontend sends a comma-separated "servers" field; the validator probes the first
+// server and returns one SubscriptionItem per server on success.
 func realADValidator(ctx context.Context, creds map[string]string) ([]SubscriptionItem, error) {
-	if creds["authMethod"] == "kerberos" {
-		return nil, errors.New("Coming soon — not yet implemented in this version")
+	// Parse the first server from the comma-separated list for the connectivity probe.
+	servers := parseServers(creds["servers"])
+	if len(servers) == 0 {
+		// Fall back to legacy "server" / "host" keys for any direct API callers.
+		if h := creds["server"]; h != "" {
+			servers = []string{h}
+		} else if h := creds["host"]; h != "" {
+			servers = []string{h}
+		}
 	}
-
-	// The frontend sends credentials with key "server" (matching the field key in mock-data.ts).
-	// Accept both "server" and "host" for backwards compatibility.
-	host := creds["server"]
-	if host == "" {
-		host = creds["host"]
+	host := ""
+	if len(servers) > 0 {
+		host = servers[0]
 	}
 	username := creds["username"]
 	password := creds["password"]
@@ -697,8 +697,60 @@ func realADValidator(ctx context.Context, creds map[string]string) ([]Subscripti
 		return nil, fmt.Errorf("WinRM probe failed (exit %d): %s", exitCode, msg)
 	}
 
-	return []SubscriptionItem{{
-		ID:   host,
-		Name: "AD Domain Controller " + host,
-	}}, nil
+	// Resolve COMPUTERNAME for each DC concurrently (best-effort, 10s timeout per server).
+	// On success: name = "DC01 (192.168.1.10)". On failure: fall back to raw host.
+	const maxConcurrentResolutions = 5
+	sem := make(chan struct{}, maxConcurrentResolutions)
+	names := make([]string, len(servers))
+	var wg sync.WaitGroup
+	for i, s := range servers {
+		wg.Add(1)
+		go func(idx int, host string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			c, cerr := ad.BuildNTLMClient(host, username, password)
+			if cerr != nil {
+				names[idx] = host
+				return
+			}
+			resolveCtx, resolveCancel := context.WithTimeout(ctx, 10*time.Second)
+			defer resolveCancel()
+			var nameOut, nameErr strings.Builder
+			exitCode2, rerr := c.RunWithContext(resolveCtx,
+				winrm.Powershell(`$env:COMPUTERNAME`),
+				&nameOut, &nameErr,
+			)
+			if rerr != nil || exitCode2 != 0 {
+				names[idx] = host
+				return
+			}
+			cn := strings.TrimSpace(nameOut.String())
+			if cn == "" {
+				names[idx] = host
+				return
+			}
+			names[idx] = cn + " (" + host + ")"
+		}(i, s)
+	}
+	wg.Wait()
+
+	items := make([]SubscriptionItem, 0, len(servers))
+	for i, s := range servers {
+		items = append(items, SubscriptionItem{ID: s, Name: names[i]})
+	}
+	return items, nil
+}
+
+// parseServers splits a comma-separated string of server hostnames into a []string,
+// trimming whitespace and discarding empty entries.
+func parseServers(s string) []string {
+	var out []string
+	for _, h := range strings.Split(s, ",") {
+		if h = strings.TrimSpace(h); h != "" {
+			out = append(out, h)
+		}
+	}
+	return out
 }

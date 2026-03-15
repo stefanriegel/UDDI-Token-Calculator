@@ -49,6 +49,36 @@ func (s *Store) Delete(id string) {
 	s.m.Delete(id)
 }
 
+// CloneSession creates a new ScanStateCreated session that shares the credential
+// structs of the session identified by oldID. The new session gets a fresh
+// crypto-random ID, a new Broker, and StartedAt = now.
+//
+// Credentials are copied by pointer (not deep-copied) so that live token objects
+// (azcore.TokenCredential, oauth2.TokenSource) are shared — this avoids a second
+// browser popup for SSO/OAuth-based providers on re-scan.
+//
+// Returns (newSession, true) on success or (nil, false) if oldID is not found.
+func (s *Store) CloneSession(oldID string) (*Session, bool) {
+	old, ok := s.Get(oldID)
+	if !ok {
+		return nil, false
+	}
+
+	newSess := &Session{
+		ID:        newSessionID(),
+		State:     ScanStateCreated,
+		StartedAt: time.Now(),
+		Broker:    broker.New(),
+		// Share credential structs — pointer copy preserves live token objects.
+		AWS:   old.AWS,
+		Azure: old.Azure,
+		GCP:   old.GCP,
+		AD:    old.AD,
+	}
+	s.m.Store(newSess.ID, newSess)
+	return newSess, true
+}
+
 // newSessionID generates a 32-character (16-byte) lowercase hex session ID
 // from the system cryptographic random source. Panics if crypto/rand is
 // unavailable — this would indicate a broken OS environment.

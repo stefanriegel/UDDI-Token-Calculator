@@ -160,32 +160,12 @@ export const PROVIDERS: ProviderOption[] = [
     subscriptionLabel: 'Servers',
     authMethods: [
       {
-        id: 'kerberos',
-        name: 'Windows / Kerberos (Current User)',
-        description: 'Use your current Windows domain session (integrated auth)',
-        fields: [
-          { key: 'server', label: 'Server Address', placeholder: 'dc01.corp.local or 10.0.1.50' },
-        ],
-      },
-      {
         id: 'ntlm',
         name: 'Username & Password (NTLM)',
-        description: 'Authenticate with domain credentials',
+        description: 'Authenticate with domain credentials. Enter one or more Domain Controller addresses below.',
         fields: [
-          { key: 'server', label: 'Server Address', placeholder: 'dc01.corp.local or 10.0.1.50' },
           { key: 'username', label: 'Username', placeholder: 'DOMAIN\\admin' },
           { key: 'password', label: 'Password', placeholder: '********', secret: true },
-        ],
-      },
-      {
-        id: 'powershell-remote',
-        name: 'PowerShell Remoting (WinRM)',
-        description: 'Connect via WinRM to a remote Windows Server',
-        fields: [
-          { key: 'server', label: 'Server Address', placeholder: 'dc01.corp.local' },
-          { key: 'username', label: 'Username', placeholder: 'DOMAIN\\admin' },
-          { key: 'password', label: 'Password', placeholder: '********', secret: true },
-          { key: 'useSSL', label: 'Use HTTPS (port 5986)', placeholder: 'true', helpText: 'Enable for encrypted WinRM transport' },
         ],
       },
     ],

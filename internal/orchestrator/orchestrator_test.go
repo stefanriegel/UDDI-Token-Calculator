@@ -8,7 +8,6 @@ import (
 
 	"github.com/infoblox/uddi-go-token-calculator/internal/broker"
 	"github.com/infoblox/uddi-go-token-calculator/internal/calculator"
-	adstub "github.com/infoblox/uddi-go-token-calculator/internal/scanner/ad"
 
 	"github.com/infoblox/uddi-go-token-calculator/internal/orchestrator"
 	"github.com/infoblox/uddi-go-token-calculator/internal/scanner"
@@ -22,6 +21,21 @@ type noopScanner struct{}
 
 func (n *noopScanner) Scan(_ context.Context, _ scanner.ScanRequest, _ func(scanner.Event)) ([]calculator.FindingRow, error) {
 	return nil, nil
+}
+
+// findingScanner is a test helper that returns a single zero-count FindingRow.
+// Use this instead of noopScanner when the test asserts that findings are non-empty.
+type findingScanner struct{}
+
+func (f *findingScanner) Scan(_ context.Context, req scanner.ScanRequest, _ func(scanner.Event)) ([]calculator.FindingRow, error) {
+	return []calculator.FindingRow{{
+		Provider:      req.Provider,
+		Source:        "test",
+		Category:      calculator.CategoryDDIObjects,
+		Item:          "test_item",
+		Count:         0,
+		TokensPerUnit: calculator.TokensPerDDIObject,
+	}}, nil
 }
 
 // failingScanner is a test helper that always returns an error from Scan.
@@ -82,7 +96,7 @@ func TestOrchestratorAllStubs(t *testing.T) {
 		"aws":   &noopScanner{},
 		"azure": &noopScanner{},
 		"gcp":   &noopScanner{},
-		"ad":    &adstub.Stub{},
+		"ad":    &noopScanner{},
 	}
 	o := orchestrator.New(scanners)
 
@@ -187,10 +201,10 @@ func TestOrchestratorPartialFailure(t *testing.T) {
 	t.Parallel()
 
 	scanners := map[string]scanner.Scanner{
-		"aws":   &noopScanner{},
+		"aws":   &findingScanner{},
 		"azure": &failingScanner{errMsg: "azure API timeout"},
-		"gcp":   &noopScanner{},
-		"ad":    &adstub.Stub{},
+		"gcp":   &findingScanner{},
+		"ad":    &findingScanner{},
 	}
 	o := orchestrator.New(scanners)
 

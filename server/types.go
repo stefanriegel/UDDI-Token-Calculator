@@ -69,6 +69,13 @@ type ValidateResponse struct {
 	Subscriptions []SubscriptionItem `json:"subscriptions"`
 }
 
+// CloneSessionResponse is returned by POST /api/v1/session/clone.
+// The new session ID should be used for the next scan; the ddi_session cookie
+// is also updated by the server so JS does not need to manage it directly.
+type CloneSessionResponse struct {
+	SessionID string `json:"sessionId"`
+}
+
 // ScanResultsResponse is the body for GET /api/v1/scan/{id}/results.
 type ScanResultsResponse struct {
 	ScanID                string                  `json:"scanId"`

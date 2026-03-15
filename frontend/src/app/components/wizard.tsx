@@ -24,6 +24,8 @@ import {
   ArrowUpDown,
   ArrowUp,
   ArrowDown,
+  Plus,
+  Trash2,
 } from 'lucide-react';
 import { useBackendConnection } from './use-backend';
 import {
@@ -32,6 +34,7 @@ import {
   startScanEvents,
   getScanResults as apiGetScanResults,
   getSessionId,
+  cloneSession,
   type ScanResultsResponse,
 } from './api-client';
 import {
@@ -103,6 +106,14 @@ export function Wizard() {
     gcp: 'service-account',
     ad: 'ntlm',
   });
+  // AD-specific: dynamic list of Domain Controller hostnames
+  const [adServers, setAdServers] = useState<string[]>(['']);
+
+  const addDCServer = () => setAdServers(prev => [...prev, '']);
+  const removeDCServer = (index: number) => setAdServers(prev => prev.filter((_, i) => i !== index));
+  const updateDCServer = (index: number, value: string) =>
+    setAdServers(prev => prev.map((s, i) => i === index ? value : s));
+
   const [sourceSearch, setSourceSearch] = useState<Record<ProviderType, string>>({
     aws: '', azure: '', gcp: '', ad: '',
   });
@@ -188,11 +199,41 @@ export function Wizard() {
     setCredentialError({ aws: '', azure: '', gcp: '', ad: '' });
     setScanError('');
     setScanId('');
+    setAdServers(['']);
     setSourceSearch({ aws: '', azure: '', gcp: '', ad: '' });
     setSelectionMode({ aws: 'include', azure: 'include', gcp: 'include', ad: 'include' });
     setFindingsProviderFilter(new Set());
     setFindingsCategoryFilter(new Set());
     setFindingsSort(null);
+  };
+
+  // Re-scan with same credentials — clones the session server-side so SSO/OAuth
+  // providers do not trigger a second browser popup. Falls back to full restart
+  // if the old session has expired or cannot be found.
+  const rescan = async () => {
+    clearScanIntervals();
+    try {
+      await cloneSession(); // sets new ddi_session cookie server-side
+    } catch {
+      // Session expired or server unreachable — fall back to full restart.
+      restart();
+      return;
+    }
+    // Reset only scan-phase state; preserve providers, credentials, authMethods,
+    // adServers, subscriptions, and credentialStatus (all still 'valid').
+    setScanProgress(0);
+    setProviderScanProgress({ aws: 0, azure: 0, gcp: 0, ad: 0 });
+    setFindings([]);
+    setScanResults(null);
+    setProviderErrors([]);
+    setScanError('');
+    setScanId('');
+    setFindingsProviderFilter(new Set());
+    setFindingsCategoryFilter(new Set());
+    setFindingsSort(null);
+    setExpandedGroups(new Set());
+    // Return to sources step — subscriptions are already populated and selected.
+    setCurrentStep('sources');
   };
 
   // Provider toggle
@@ -254,7 +295,19 @@ export function Wizard() {
         return;
       }
 
-      const result = await apiValidate(providerId, authMethod, creds);
+      // For AD provider: require at least one non-empty DC hostname
+      if (providerId === 'ad' && adServers.every(s => !s.trim())) {
+        setCredentialStatus((prev) => ({ ...prev, [providerId]: 'error' }));
+        setCredentialError((prev) => ({ ...prev, [providerId]: 'At least one Domain Controller address is required' }));
+        return;
+      }
+
+      // For AD, merge the servers list as a comma-separated credential field
+      const mergedCreds = providerId === 'ad'
+        ? { ...creds, servers: adServers.filter(s => s.trim() !== '').join(',') }
+        : creds;
+
+      const result = await apiValidate(providerId, authMethod, mergedCreds);
       if (result.valid) {
         setCredentialStatus((prev) => ({ ...prev, [providerId]: 'valid' }));
         setSubscriptions((prev) => ({
@@ -272,7 +325,7 @@ export function Wizard() {
         [providerId]: err?.message || 'Connection error — is the backend running?',
       }));
     }
-  }, [backend.isDemo, selectedAuthMethod, credentials]);
+  }, [backend.isDemo, selectedAuthMethod, credentials, adServers]);
 
   // Toggle subscription selection
   const toggleSubscription = (providerId: ProviderType, subId: string) => {
@@ -863,7 +916,7 @@ export function Wizard() {
                               aws: ['profile', 'assume-role'],
                               azure: ['device-code', 'certificate', 'az-cli'],
                               gcp: [],
-                              ad: ['kerberos', 'powershell-remote'],
+                              ad: [],
                             };
                             const isComingSoon = COMING_SOON[provId]?.includes(method.id) ?? false;
                             return (
@@ -984,6 +1037,46 @@ export function Wizard() {
                           <div className="py-2 px-3 bg-green-50 rounded-lg border border-green-100 mb-3">
                             <p className="text-[12px] text-green-700">
                               No credentials needed — the scanner will use your local gcloud application-default credentials. Click Validate to verify access.
+                            </p>
+                          </div>
+                        )}
+
+                        {/* Dynamic Domain Controller list — shown only for AD provider */}
+                        {provId === 'ad' && (
+                          <div className="space-y-2 mt-3">
+                            <label className="block text-[12px] text-[var(--muted-foreground)]" style={{ fontWeight: 500 }}>
+                              Domain Controllers
+                            </label>
+                            {adServers.map((server, idx) => (
+                              <div key={idx} className="flex items-center gap-2">
+                                <input
+                                  type="text"
+                                  value={server}
+                                  onChange={e => updateDCServer(idx, e.target.value)}
+                                  placeholder="dc01.corp.local or 10.0.1.50"
+                                  className="flex-1 px-3 py-2 text-[13px] border border-[var(--border)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--infoblox-navy)] focus:border-transparent"
+                                />
+                                {adServers.length > 1 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => removeDCServer(idx)}
+                                    className="p-2 text-[var(--muted-foreground)] hover:text-red-500 transition-colors"
+                                    title="Remove"
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </button>
+                                )}
+                              </div>
+                            ))}
+                            <button
+                              type="button"
+                              onClick={addDCServer}
+                              className="flex items-center gap-1.5 text-[12px] text-[var(--infoblox-navy)] hover:underline mt-1"
+                            >
+                              <Plus className="w-3.5 h-3.5" /> Add Domain Controller
+                            </button>
+                            <p className="text-[11px] text-[var(--muted-foreground)] mt-1">
+                              Same username and password will be used for all domain controllers.
                             </p>
                           </div>
                         )}
@@ -1933,6 +2026,16 @@ export function Wizard() {
                   <FileSpreadsheet className="w-4 h-4" />
                   Download Excel
                 </button>
+                {!backend.isDemo && (
+                  <button
+                    onClick={rescan}
+                    className="flex items-center justify-center gap-2 px-5 py-3 bg-[var(--infoblox-orange)] text-white rounded-xl hover:bg-[var(--infoblox-orange)]/90 transition-colors"
+                    style={{ fontWeight: 500 }}
+                  >
+                    <RotateCcw className="w-4 h-4" />
+                    Re-scan
+                  </button>
+                )}
                 <button
                   onClick={restart}
                   className="flex items-center justify-center gap-2 px-5 py-3 bg-white border border-[var(--border)] text-[var(--foreground)] rounded-xl hover:bg-gray-50 transition-colors"
