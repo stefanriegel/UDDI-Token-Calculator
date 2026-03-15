@@ -168,9 +168,10 @@ type UpdateCheckResponse struct {
 
 // SelfUpdateResponse is the JSON body for POST /api/v1/update/apply.
 type SelfUpdateResponse struct {
-	Success bool   `json:"success"`
-	Error   string `json:"error,omitempty"`
-	Message string `json:"message,omitempty"`
+	Success        bool   `json:"success"`
+	Error          string `json:"error,omitempty"`
+	Message        string `json:"message,omitempty"`
+	RestartPending bool   `json:"restartPending,omitempty"`
 }
 
 // ScanResultsResponse is the body for GET /api/v1/scan/{id}/results.

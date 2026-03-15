@@ -885,9 +885,17 @@ export function Wizard() {
               </div>
             )}
             {backend.updateStatus === 'done' ? (
-              <div className="flex items-center gap-1.5 px-2.5 py-1 bg-green-500/20 border border-green-500/30 rounded-full text-[11px] text-green-300">
-                <ArrowUpCircle className="w-3 h-3" />
-                <span className="hidden sm:inline">Updated! Restart to apply</span>
+              <button
+                onClick={backend.restartAfterUpdate}
+                className="flex items-center gap-1.5 px-2.5 py-1 bg-green-500/20 border border-green-500/30 rounded-full text-[11px] text-green-300 hover:bg-green-500/30 transition-colors cursor-pointer"
+              >
+                <RotateCcw className="w-3 h-3" />
+                <span className="hidden sm:inline">Restart Now</span>
+              </button>
+            ) : backend.updateStatus === 'restarting' ? (
+              <div className="flex items-center gap-1.5 px-2.5 py-1 bg-blue-500/20 border border-blue-500/30 rounded-full text-[11px] text-blue-300">
+                <Loader2 className="w-3 h-3 animate-spin" />
+                <span className="hidden sm:inline">Restarting...</span>
               </div>
             ) : backend.updateStatus === 'error' ? (
               <div className="flex items-center gap-1.5 px-2.5 py-1 bg-red-500/20 border border-red-500/30 rounded-full text-[11px] text-red-300">

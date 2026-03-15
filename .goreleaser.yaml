@@ -63,4 +63,20 @@ brews:
     goamd64: v1
 
 changelog:
-  disable: true
+  sort: asc
+  use: github
+  groups:
+    - title: "🚀 Features"
+      regexp: '^.*?feat(\([[:word:]]+\))??!?:.+$'
+      order: 0
+    - title: "🐛 Bug Fixes"
+      regexp: '^.*?fix(\([[:word:]]+\))??!?:.+$'
+      order: 1
+    - title: "📦 Build & CI"
+      regexp: '^.*?(build|ci)(\([[:word:]]+\))??!?:.+$'
+      order: 2
+    - title: "📝 Documentation"
+      regexp: '^.*?docs(\([[:word:]]+\))??!?:.+$'
+      order: 3
+    - title: "🔧 Other Changes"
+      order: 999
