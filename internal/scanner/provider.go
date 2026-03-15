@@ -43,6 +43,13 @@ type ScanRequest struct {
 	// during browser-oauth validation so the GCP scanner does not re-open the browser.
 	// Nil for all non-browser-oauth auth methods.
 	CachedGCPTokenSource oauth2.TokenSource
+
+	// MaxWorkers is the maximum number of concurrent workers for this scan.
+	// 0 means use the provider's default concurrency (e.g. 5 for AWS regions).
+	MaxWorkers int
+	// RequestTimeout is the per-request timeout in seconds.
+	// 0 means use the provider's default timeout (typically 30s).
+	RequestTimeout int
 }
 
 // Event carries scan progress information published over the SSE stream.

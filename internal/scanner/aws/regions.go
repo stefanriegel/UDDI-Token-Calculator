@@ -8,6 +8,7 @@ import (
 	awssdk "github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/infoblox/uddi-go-token-calculator/internal/calculator"
+	"github.com/infoblox/uddi-go-token-calculator/internal/cloudutil"
 	"github.com/infoblox/uddi-go-token-calculator/internal/scanner"
 )
 
@@ -40,11 +41,15 @@ func listEnabledRegions(ctx context.Context, cfg awssdk.Config) ([]string, error
 	return regions, nil
 }
 
-// scanAllRegions fans out one goroutine per region, gated by a buffered channel semaphore
-// of capacity maxConcurrentRegions. Each goroutine calls scanRegion then appends results
-// under a mutex. WaitGroup ensures all goroutines finish before returning.
-func scanAllRegions(ctx context.Context, baseCfg awssdk.Config, regions []string, accountID string, publish func(scanner.Event)) []calculator.FindingRow {
-	sem := make(chan struct{}, maxConcurrentRegions)
+// scanAllRegions fans out one goroutine per region, gated by a cloudutil.Semaphore
+// of the given maxWorkers capacity (0 defaults to maxConcurrentRegions).
+// Each goroutine calls scanRegion then appends results under a mutex.
+// WaitGroup ensures all goroutines finish before returning.
+func scanAllRegions(ctx context.Context, baseCfg awssdk.Config, regions []string, accountID string, maxWorkers int, publish func(scanner.Event)) []calculator.FindingRow {
+	if maxWorkers <= 0 {
+		maxWorkers = maxConcurrentRegions
+	}
+	sem := cloudutil.NewSemaphore(maxWorkers)
 	var (
 		mu       sync.Mutex
 		wg       sync.WaitGroup
@@ -56,13 +61,11 @@ func scanAllRegions(ctx context.Context, baseCfg awssdk.Config, regions []string
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			// Acquire semaphore — use select to respect context cancellation.
-			select {
-			case sem <- struct{}{}:
-			case <-ctx.Done():
+			// Acquire semaphore — returns ctx.Err() on cancellation.
+			if err := sem.Acquire(ctx); err != nil {
 				return
 			}
-			defer func() { <-sem }()
+			defer sem.Release()
 
 			// Check cancellation after acquiring slot, before doing any work.
 			if ctx.Err() != nil {

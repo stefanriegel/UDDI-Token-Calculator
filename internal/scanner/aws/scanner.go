@@ -68,7 +68,7 @@ func (s *Scanner) Scan(ctx context.Context, req scanner.ScanRequest, publish fun
 		return findings, fmt.Errorf("aws: list regions: %w", err)
 	}
 
-	regionalFindings := scanAllRegions(ctx, baseCfg, regions, accountName, publish)
+	regionalFindings := scanAllRegions(ctx, baseCfg, regions, accountName, req.MaxWorkers, publish)
 	findings = append(findings, regionalFindings...)
 
 	return findings, nil

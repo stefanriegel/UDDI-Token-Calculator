@@ -192,6 +192,8 @@ export interface ScanRequest {
     backupToken?: string;       // NIOS only: opaque token from /providers/nios/upload
     selectedMembers?: string[]; // NIOS only: hostnames selected in Sources step
     mode?: 'backup' | 'wapi';  // NIOS only: scan mode
+    maxWorkers?: number;        // max concurrent workers (0 = provider default)
+    requestTimeout?: number;    // per-request timeout in seconds (0 = provider default)
   }[];
 }
 
