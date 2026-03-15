@@ -54,7 +54,7 @@ User can authenticate via Kerberos protocol with username, password, realm, and 
 - Source: inferred
 - Primary Slice: M004-2qci81/S02
 
-User can enter org master credentials + role name to discover and scan all child accounts in an AWS Organization. Backend implemented in M004-2qci81/S02: DiscoverAccounts with Organizations ListAccounts, multi-account fan-out with per-account AssumeRole, management account detection, per-account failure tolerance. Frontend org credential form with orgEnabled injection completed in M004-2qci81/S07.
+User can enter org master credentials + role name to discover and scan all child accounts in an AWS Organization. Backend implemented in M004-2qci81/S02: DiscoverAccounts with Organizations ListAccounts, multi-account fan-out with per-account AssumeRole, management account detection, per-account failure tolerance. Frontend org credential form with orgEnabled injection completed in M004-2qci81/S07. End-to-end implementation complete, pending live AWS Organization API validation.
 
 ### AWS-RES-01 — AWS scanner counts 19 resource types (5 original + 9 EC2 expanded + 3 Route53/Resolver expanded + 2 original Route53) with correct token categories
 
@@ -81,7 +81,7 @@ Azure scanner counts 14 resource types: VNets, subnets, VMs, load balancers, app
 - Source: inferred
 - Primary Slice: M004-2qci81/S04
 
-User can authenticate with org-level SA and discover all org projects via Resource Manager v3 SearchProjects + BFS ListFolders folder traversal for parallel scanning. Backend implemented in M004-2qci81/S04: DiscoverProjects with BFS folder traversal, multi-project fan-out with per-project progress, non-fatal per-project errors. Frontend org credential form pending S07.
+User can authenticate with org-level SA and discover all org projects via Resource Manager v3 SearchProjects + BFS ListFolders folder traversal for parallel scanning. Backend implemented in M004-2qci81/S04: DiscoverProjects with BFS folder traversal, multi-project fan-out with per-project progress, non-fatal per-project errors. Frontend org credential form completed in M004-2qci81/S07. End-to-end implementation complete, pending live GCP org API validation.
 
 ### GCP-RES-01 — GCP scanner counts 13 resource types (6 original + 7 expanded) with correct token categories
 
@@ -99,7 +99,7 @@ GCP scanner counts 13 resource types: VPC networks, subnets, compute instances, 
 - Source: M004-2qci81 success criteria
 - Primary Slice: M004-2qci81/S06
 
-All three cloud scanners (AWS Route53, Azure DNS, GCP Cloud DNS) emit per-type DNS record FindingRows (`dns_record_a`, `dns_record_aaaa`, `dns_record_cname`, etc.) instead of a single generic `dns_record` row. Shared `SupportedDNSTypes` set (13 types) in `cloudutil/dns.go`. Backend complete in M004-2qci81/S06. Frontend display of per-type breakdown pending S07.
+All three cloud scanners (AWS Route53, Azure DNS, GCP Cloud DNS) emit per-type DNS record FindingRows (`dns_record_a`, `dns_record_aaaa`, `dns_record_cname`, etc.) instead of a single generic `dns_record` row. Shared `SupportedDNSTypes` set (13 types) in `cloudutil/dns.go`. Backend complete in M004-2qci81/S06. Frontend display with formatItemLabel completed in M004-2qci81/S07. End-to-end implementation complete, pending live DNS API validation.
 
 ## Validated
 

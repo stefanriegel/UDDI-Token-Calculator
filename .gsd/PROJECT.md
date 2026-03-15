@@ -2,8 +2,10 @@
 
 ## Current State
 
-**Last completed milestone:** M003 — Auth Method Completion (v2.1, shipped 2026-03-14)
-**In progress:** M004-2qci81 — Enterprise-Scale Cloud Scanning — ALL 7 SLICES COMPLETE (S01 ✅ retry/backoff + configurable params, S02 ✅ AWS multi-account org scanning + 12 expanded resource types, S03 ✅ Azure multi-subscription parallel scanning + 8 expanded resource types, S04 ✅ GCP multi-project org discovery + 7 expanded resource types, S05 ✅ checkpoint/resume for long scans, S06 ✅ DNS record type breakdown, S07 ✅ frontend UI extensions for multi-account scanning)
+**Last completed milestone:** M004-2qci81 — Enterprise-Scale Cloud Scanning (shipped 2026-03-15)
+**In progress:** none
+
+Enterprise-scale cloud scanning is complete: multi-account AWS scanning with Organizations discovery + AssumeRole fan-out, multi-subscription Azure scanning with parallel execution, multi-project GCP scanning with org/folder traversal, retry/backoff with exponential backoff for throttle + transient errors, checkpoint/resume for interrupted scans, per-type DNS record breakdown, 27 new resource scanners (19 AWS + 14 Azure + 13 GCP total), configurable concurrency per provider, and frontend org credential forms with auto-select.
 
 All 9 backend auth methods across AWS, Azure, GCP, and AD are implemented with validators, session storage, orchestrator wiring, and scanner credential routing. No "Coming soon" stubs or silent fallthrough errors remain. Five auth methods still need frontend credential forms (AZ-AUTH-01, AZ-AUTH-03, AD-AUTH-01, GCP-AUTH-01, GCP-AUTH-02).
 
@@ -45,6 +47,12 @@ A pre-sales engineer can hand this `.exe` to any customer and get an accurate to
 - [ ] Azure Device Code Flow auth (backend complete in M003/S02, frontend display pending)
 - [ ] GCP Browser OAuth auth (backend complete in M003/S03, frontend OAuth form pending)
 - [ ] GCP Workload Identity Federation auth (backend complete in M003/S03, frontend JSON upload form pending)
+- [ ] AWS org multi-account scanning (backend + frontend complete in M004, pending live API validation)
+- [ ] AWS 19 resource types (backend complete in M004, pending live API validation)
+- [ ] Azure 14 resource types (backend complete in M004, pending live API validation)
+- [ ] GCP org multi-project scanning (backend + frontend complete in M004, pending live API validation)
+- [ ] GCP 13 resource types (backend complete in M004, pending live API validation)
+- [ ] DNS per-type record breakdown (backend + frontend complete in M004, pending live API validation)
 
 ### Out of Scope
 
@@ -67,6 +75,9 @@ A pre-sales engineer can hand this `.exe` to any customer and get an accurate to
 **Known tech debt:**
 - DIST-02: Binary unsigned — customers see SmartScreen "More info → Run anyway". Signing via DigiCert/Sectigo/SignPath.io deferred to v2 (Azure Artifact Signing unavailable in Germany)
 - AUTH-FE: Five auth methods have backend implementations but no frontend credential forms yet (Azure certificate, Azure device code, AD Kerberos, GCP browser-oauth, GCP workload-identity)
+- RETRY-MIGRATION: Bluecat/EfficientIP scanners still use their own retry logic — migration to shared CallWithBackoff deferred
+- DNS-TYPES-UNIFY: Bluecat/EfficientIP scanners use inline DNS type lists — migration to shared cloudutil.SupportedDNSTypes deferred
+- REQUEST-TIMEOUT: RequestTimeout threaded through pipeline but not yet consumed by any scanner
 
 **Binary size:** ~30MB stripped (-s -w) with all 3 cloud SDKs
 
@@ -101,4 +112,4 @@ A pre-sales engineer can hand this `.exe` to any customer and get an accurate to
 | Session clone for re-scan | SSO credential objects (azcore.TokenCredential) shared by pointer — prevents second browser popup | ✓ Good |
 
 ---
-*Last updated: 2026-03-15 after M004-2qci81/S07 (Frontend UI Extensions for Multi-Account Scanning) completed — all 7 slices done*
+*Last updated: 2026-03-15 after M004-2qci81 (Enterprise-Scale Cloud Scanning) milestone completed — retry/backoff, multi-account AWS/Azure/GCP scanning, checkpoint/resume, DNS per-type breakdown, 27 new resource scanners, frontend org forms*
