@@ -1,3 +1,4 @@
+/// <reference types="vitest" />
 import { defineConfig } from 'vite'
 import path from 'path'
 import tailwindcss from '@tailwindcss/vite'
@@ -38,5 +39,10 @@ export default defineConfig({
     // Single directory output for easy Go embed
     outDir: 'dist',
     assetsDir: 'assets',
+  },
+
+  test: {
+    environment: 'jsdom',
+    globals: true,
   },
 })

@@ -147,51 +147,68 @@ export async function startScan(request: ScanRequest): Promise<ScanStartResponse
   return res.json();
 }
 
-// ─── SSE Scan Events ───────────────────────────────────────────────────────────
+// ─── Scan Status (Polling) ─────────────────────────────────────────────────────
 
-export type ScanEventType =
-  | 'scan_start'
-  | 'provider_start'
-  | 'resource_progress'
-  | 'error'
-  | 'provider_complete'
-  | 'scan_complete'
-  | 'heartbeat';
-
-export interface ScanEvent {
-  type: ScanEventType;
-  provider?: string;
-  resource?: string;
-  count?: number;
-  status?: 'done' | 'error';
-  message?: string;
-  duration_ms?: number;
+export interface ProviderScanStatus {
+  provider: string;
+  progress: number;    // 0–100
+  status: string;      // "pending" | "running" | "complete" | "error"
+  itemsFound: number;
 }
 
-/**
- * Opens an SSE connection to /api/v1/scan/{scanId}/events.
- * Calls onEvent for each received event.
- * Returns a cleanup function that closes the EventSource.
- */
-export function startScanEvents(
-  scanId: string,
-  onEvent: (event: ScanEvent) => void,
-  onError?: (err: Event) => void,
-): () => void {
-  const es = new EventSource(apiUrl(`/scan/${scanId}/events`));
-  es.onmessage = (e: MessageEvent) => {
-    try {
-      const event: ScanEvent = JSON.parse(e.data);
-      if (event.type !== 'heartbeat') onEvent(event);
-    } catch {
-      // malformed event — ignore
-    }
-  };
-  if (onError) es.onerror = onError;
-  return () => es.close();
+export interface ScanStatusResponse {
+  scanId: string;
+  status: 'running' | 'complete';
+  progress: number;    // 0–100
+  providers: ProviderScanStatus[];
+}
+
+export async function getScanStatus(scanId: string): Promise<ScanStatusResponse> {
+  const res = await fetch(apiUrl(`/scan/${scanId}/status`));
+  if (!res.ok) throw new Error(`Status fetch failed: ${res.status}`);
+  return res.json();
+}
+
+// ─── NIOS ──────────────────────────────────────────────────────────────────────
+
+export interface NiosGridMember {
+  hostname: string;
+  role: string;        // "Master" | "Candidate" | "Regular"
+}
+
+export interface NiosUploadResponse {
+  valid: boolean;
+  error?: string;
+  gridName?: string;
+  niosVersion?: string;
+  members: NiosGridMember[];
+}
+
+export async function uploadNiosBackup(file: File): Promise<NiosUploadResponse> {
+  const form = new FormData();
+  form.append('file', file);
+  const res = await fetch(apiUrl('/providers/nios/upload'), {
+    method: 'POST',
+    body: form,
+    // no Content-Type header — browser sets multipart boundary automatically
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as { error?: string }).error || `Upload failed: ${res.status}`);
+  }
+  return res.json();
 }
 
 // ─── Scan Results ──────────────────────────────────────────────────────────────
+
+export interface NiosServerMetricAPI {
+  memberId: string;
+  memberName: string;
+  role: string;   // loose type — backend sends plain string
+  qps: number;
+  lps: number;
+  objectCount: number;
+}
 
 export interface FindingRowAPI {
   provider: string;
@@ -214,6 +231,7 @@ export interface ScanResultsResponse {
   assetTokens: number;
   findings: FindingRowAPI[];
   errors: { provider: string; resource: string; message: string }[];
+  niosServerMetrics?: NiosServerMetricAPI[];
 }
 
 export async function getScanResults(scanId: string): Promise<ScanResultsResponse> {

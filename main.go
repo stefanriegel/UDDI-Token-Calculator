@@ -18,6 +18,7 @@ import (
 	azurescanner "github.com/infoblox/uddi-go-token-calculator/internal/scanner/azure"
 	gcpscanner "github.com/infoblox/uddi-go-token-calculator/internal/scanner/gcp"
 	adscanner "github.com/infoblox/uddi-go-token-calculator/internal/scanner/ad"
+	niosscanner "github.com/infoblox/uddi-go-token-calculator/internal/scanner/nios"
 
 	"github.com/infoblox/uddi-go-token-calculator/internal/orchestrator"
 	"github.com/infoblox/uddi-go-token-calculator/internal/scanner"
@@ -55,6 +56,7 @@ func main() {
 		scanner.ProviderAzure: azurescanner.New(),
 		scanner.ProviderGCP:   gcpscanner.New(),
 		scanner.ProviderAD:    adscanner.New(),
+		scanner.ProviderNIOS:  niosscanner.New(),
 	})
 
 	// 4. Build the chi router (health endpoint + scan lifecycle + static fallback).

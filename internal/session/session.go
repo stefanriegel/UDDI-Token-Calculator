@@ -108,7 +108,21 @@ type Session struct {
 	// Protected by mu; read only after State == ScanStateComplete.
 	TokenResult calculator.TokenResult
 
+	// NiosServerMetricsJSON holds JSON-encoded []NiosServerMetric from the NIOS scan.
+	// Stored as raw bytes to avoid an import cycle with internal/scanner/nios.
+	// nil if NIOS was not scanned.
+	NiosServerMetricsJSON []byte
+
 	mu sync.RWMutex // guards concurrent access to mutable fields
+}
+
+// SetNiosServerMetricsJSON stores the JSON-encoded NIOS server metrics in the session.
+// Called by the orchestrator after a successful NIOS scan.
+// Uses the session mutex to guard concurrent access.
+func (s *Session) SetNiosServerMetricsJSON(data []byte) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.NiosServerMetricsJSON = data
 }
 
 // ZeroCreds nils all credential pointer fields. Call this once the scan

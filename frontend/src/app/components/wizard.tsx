@@ -6,6 +6,7 @@ import {
   ChevronRight,
   ChevronLeft,
   ChevronDown,
+  ChevronUp,
   Cloud,
   Server,
   Eye,
@@ -26,17 +27,31 @@ import {
   ArrowDown,
   Plus,
   Trash2,
+  Activity,
+  Gauge,
+  ArrowRightLeft,
 } from 'lucide-react';
-import { useBackendConnection } from './use-backend';
+import { useBackendConnection, useScanPolling } from './use-backend';
 import {
   validateCredentials as apiValidate,
   startScan as apiStartScan,
-  startScanEvents,
   getScanResults as apiGetScanResults,
   getSessionId,
   cloneSession,
+  uploadNiosBackup,
   type ScanResultsResponse,
+  type NiosGridMember,
+  type NiosServerMetricAPI,
 } from './api-client';
+import {
+  calcServerTokenTier,
+  consolidateXaasInstances,
+  XAAS_EXTRA_CONNECTION_COST,
+  MOCK_NIOS_SERVER_METRICS,
+  type NiosServerMetrics,
+  type ServerFormFactor,
+  type ConsolidatedXaasInstance,
+} from './nios-calc';
 import {
   PROVIDERS,
   MOCK_SUBSCRIPTIONS,
@@ -71,12 +86,14 @@ export function Wizard() {
     azure: {},
     gcp: {},
     ad: {},
+    nios: {},
   });
   const [credentialStatus, setCredentialStatus] = useState<Record<ProviderType, 'idle' | 'validating' | 'valid' | 'error'>>({
     aws: 'idle',
     azure: 'idle',
     gcp: 'idle',
     ad: 'idle',
+    nios: 'idle',
   });
   const [subscriptions, setSubscriptions] = useState<
     Record<ProviderType, { id: string; name: string; selected: boolean }[]>
@@ -85,16 +102,17 @@ export function Wizard() {
     azure: [],
     gcp: [],
     ad: [],
+    nios: [],
   });
   const [scanProgress, setScanProgress] = useState(0);
   const [providerScanProgress, setProviderScanProgress] = useState<Record<ProviderType, number>>({
-    aws: 0, azure: 0, gcp: 0, ad: 0,
+    aws: 0, azure: 0, gcp: 0, ad: 0, nios: 0,
   });
   const [findings, setFindings] = useState<FindingRow[]>([]);
   const [scanResults, setScanResults] = useState<ScanResultsResponse | null>(null);
   const [providerErrors, setProviderErrors] = useState<{ provider: string; resource: string; message: string }[]>([]);
   const [credentialError, setCredentialError] = useState<Record<ProviderType, string>>({
-    aws: '', azure: '', gcp: '', ad: '',
+    aws: '', azure: '', gcp: '', ad: '', nios: '',
   });
   const [scanError, setScanError] = useState<string>('');
   const [scanId, setScanId] = useState<string>('');
@@ -105,6 +123,7 @@ export function Wizard() {
     azure: 'service-principal',
     gcp: 'service-account',
     ad: 'ntlm',
+    nios: 'backup-upload',
   });
   // AD-specific: dynamic list of Domain Controller hostnames
   const [adServers, setAdServers] = useState<string[]>(['']);
@@ -114,8 +133,36 @@ export function Wizard() {
   const updateDCServer = (index: number, value: string) =>
     setAdServers(prev => prev.map((s, i) => i === index ? value : s));
 
+  const handleNiosFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setNiosUploadStatus('uploading');
+    setNiosUploadError('');
+    setNiosMembers([]);
+    setNiosSelectedMembers(new Set());
+    setCredentialStatus((prev) => ({ ...prev, nios: 'validating' }));
+    try {
+      const resp = await uploadNiosBackup(file);
+      if (!resp.valid) {
+        setNiosUploadStatus('error');
+        setNiosUploadError(resp.error ?? 'Upload failed');
+        setCredentialStatus((prev) => ({ ...prev, nios: 'error' }));
+        return;
+      }
+      setNiosMembers(resp.members);
+      setNiosSelectedMembers(new Set(resp.members.map((m) => m.hostname)));
+      setNiosUploadStatus('done');
+      setCredentialStatus((prev) => ({ ...prev, nios: 'valid' }));
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Upload failed';
+      setNiosUploadStatus('error');
+      setNiosUploadError(msg);
+      setCredentialStatus((prev) => ({ ...prev, nios: 'error' }));
+    }
+  }, []);
+
   const [sourceSearch, setSourceSearch] = useState<Record<ProviderType, string>>({
-    aws: '', azure: '', gcp: '', ad: '',
+    aws: '', azure: '', gcp: '', ad: '', nios: '',
   });
   // Findings table filters & sorting
   const [findingsProviderFilter, setFindingsProviderFilter] = useState<Set<ProviderType>>(new Set());
@@ -126,8 +173,22 @@ export function Wizard() {
 
   // Selection mode: 'include' = checked items will be scanned; 'exclude' = checked items will be SKIPPED
   const [selectionMode, setSelectionMode] = useState<Record<ProviderType, 'include' | 'exclude'>>({
-    aws: 'include', azure: 'include', gcp: 'include', ad: 'include',
+    aws: 'include', azure: 'include', gcp: 'include', ad: 'include', nios: 'include',
   });
+
+  // NIOS-specific state
+  const [niosMembers, setNiosMembers] = useState<NiosGridMember[]>([]);
+  const [niosSelectedMembers, setNiosSelectedMembers] = useState<Set<string>>(new Set());
+  const [niosUploadStatus, setNiosUploadStatus] = useState<'idle' | 'uploading' | 'done' | 'error'>('idle');
+  const [niosUploadError, setNiosUploadError] = useState<string>('');
+
+  // Top Consumer Cards — expand/collapse
+  const [topDnsExpanded, setTopDnsExpanded] = useState(false);
+  const [topDhcpExpanded, setTopDhcpExpanded] = useState(false);
+  const [topIpExpanded, setTopIpExpanded] = useState(false);
+
+  // Migration Planner — per-member form factor selection
+  const [niosMigrationMap, setNiosMigrationMap] = useState<Map<string, ServerFormFactor>>(new Map());
 
   // Compute effective selection (what actually gets scanned) based on mode
   const getEffectiveSelected = useCallback((provId: ProviderType): Set<string> => {
@@ -151,7 +212,13 @@ export function Wizard() {
       case 'providers':
         return selectedProviders.length > 0;
       case 'credentials':
-        return selectedProviders.every((p) => credentialStatus[p] === 'valid');
+        return selectedProviders.every((p) => {
+          if (p === 'nios') {
+            // NIOS is "validated" after a successful upload with at least one member selected
+            return credentialStatus['nios'] === 'valid' && niosSelectedMembers.size > 0;
+          }
+          return credentialStatus[p] === 'valid';
+        });
       case 'sources':
         return selectedProviders.some((p) =>
           getEffectiveSelectedCount(p) > 0
@@ -188,23 +255,31 @@ export function Wizard() {
     clearScanIntervals();
     setCurrentStep('providers');
     setSelectedProviders([]);
-    setCredentials({ aws: {}, azure: {}, gcp: {}, ad: {} });
-    setCredentialStatus({ aws: 'idle', azure: 'idle', gcp: 'idle', ad: 'idle' });
-    setSubscriptions({ aws: [], azure: [], gcp: [], ad: [] });
+    setCredentials({ aws: {}, azure: {}, gcp: {}, ad: {}, nios: {} });
+    setCredentialStatus({ aws: 'idle', azure: 'idle', gcp: 'idle', ad: 'idle', nios: 'idle' });
+    setSubscriptions({ aws: [], azure: [], gcp: [], ad: [], nios: [] });
     setScanProgress(0);
-    setProviderScanProgress({ aws: 0, azure: 0, gcp: 0, ad: 0 });
+    setProviderScanProgress({ aws: 0, azure: 0, gcp: 0, ad: 0, nios: 0 });
     setFindings([]);
     setScanResults(null);
     setProviderErrors([]);
-    setCredentialError({ aws: '', azure: '', gcp: '', ad: '' });
+    setCredentialError({ aws: '', azure: '', gcp: '', ad: '', nios: '' });
     setScanError('');
     setScanId('');
     setAdServers(['']);
-    setSourceSearch({ aws: '', azure: '', gcp: '', ad: '' });
-    setSelectionMode({ aws: 'include', azure: 'include', gcp: 'include', ad: 'include' });
+    setSourceSearch({ aws: '', azure: '', gcp: '', ad: '', nios: '' });
+    setSelectionMode({ aws: 'include', azure: 'include', gcp: 'include', ad: 'include', nios: 'include' });
     setFindingsProviderFilter(new Set());
     setFindingsCategoryFilter(new Set());
     setFindingsSort(null);
+    setNiosMembers([]);
+    setNiosSelectedMembers(new Set());
+    setNiosUploadStatus('idle');
+    setNiosUploadError('');
+    setTopDnsExpanded(false);
+    setTopDhcpExpanded(false);
+    setTopIpExpanded(false);
+    setNiosMigrationMap(new Map());
   };
 
   // Re-scan with same credentials — clones the session server-side so SSO/OAuth
@@ -222,7 +297,7 @@ export function Wizard() {
     // Reset only scan-phase state; preserve providers, credentials, authMethods,
     // adServers, subscriptions, and credentialStatus (all still 'valid').
     setScanProgress(0);
-    setProviderScanProgress({ aws: 0, azure: 0, gcp: 0, ad: 0 });
+    setProviderScanProgress({ aws: 0, azure: 0, gcp: 0, ad: 0, nios: 0 });
     setFindings([]);
     setScanResults(null);
     setProviderErrors([]);
@@ -347,87 +422,51 @@ export function Wizard() {
     return () => clearScanIntervals();
   }, [clearScanIntervals]);
 
-  // SSE scan event listener — wires EventSource to scan progress state
-  useEffect(() => {
-    if (!scanId) return;
-
-    // Track resource-level progress per provider (count resources done)
-    const providerResourcesDone: Record<string, number> = {};
-
-    const stopEvents = startScanEvents(
-      scanId,
-      (event) => {
-        if (event.type === 'resource_progress' && event.provider) {
-          providerResourcesDone[event.provider] = (providerResourcesDone[event.provider] ?? 0) + 1;
-          // Capture resource-level errors (e.g. API not enabled, permission denied)
-          if (event.status === 'error' && event.resource && event.message) {
-            setProviderErrors((prev) => [
-              ...prev,
-              { provider: event.provider!, resource: event.resource!, message: event.message! },
-            ]);
-          }
-          // Show indeterminate progress: increment by small amount per resource
-          setProviderScanProgress((prev) => {
-            const cur = prev[event.provider as ProviderType] ?? 0;
-            return { ...prev, [event.provider as ProviderType]: Math.min(95, cur + 10) };
-          });
-          // Overall progress = average of all selected provider progresses
-          setScanProgress((prev) => Math.min(95, prev + Math.floor(5 / selectedProviders.length)));
-        } else if (event.type === 'provider_complete' && event.provider) {
-          setProviderScanProgress((prev) => ({
-            ...prev,
-            [event.provider as ProviderType]: 100,
-          }));
-        } else if (event.type === 'scan_complete') {
-          setScanProgress(100);
-          // Fetch final results
-          apiGetScanResults(scanId).then((results) => {
-            setScanResults(results);
-            setProviderErrors(results.errors ?? []);
-            const mapped: FindingRow[] = results.findings.map((f) => ({
-              provider: f.provider as ProviderType,
-              source: f.source,
-              region: f.region ?? '',
-              category: f.category as import('./mock-data').TokenCategory,
-              item: f.item,
-              count: f.count,
-              tokensPerUnit: f.tokensPerUnit,
-              managementTokens: f.managementTokens,
-            }));
-            setFindings(mapped);
-          }).catch((err: unknown) => {
-            const msg = err instanceof Error ? err.message : 'Failed to load results';
-            setScanError(msg);
-          });
-        } else if (event.type === 'error') {
-          if (event.provider && event.resource && event.message) {
-            setProviderErrors((prev) => [
-              ...prev,
-              { provider: event.provider!, resource: event.resource!, message: event.message! },
-            ]);
-          }
-        }
-      },
-      () => {
-        // SSE connection error — only show if scan not yet complete
-        setScanProgress((prev) => {
-          if (prev < 100) {
-            setScanError('Lost connection to backend during scan.');
-          }
-          return prev;
-        });
-      },
-    );
-
-    return stopEvents;
-  }, [scanId, selectedProviders]);
+  // Polling scan listener — replaces SSE; polls GET /api/v1/scan/{scanId}/status every 1.5s
+  useScanPolling(scanId, {
+    onStatus: (status) => {
+      setScanProgress(status.progress);
+      // Map per-provider progress from polling response
+      status.providers.forEach((p) => {
+        setProviderScanProgress((prev) => ({
+          ...prev,
+          [p.provider as ProviderType]: p.progress,
+        }));
+      });
+    },
+    onComplete: () => {
+      setScanProgress(100);
+      // Fetch final results once scan is complete
+      apiGetScanResults(scanId).then((results) => {
+        setScanResults(results);
+        setProviderErrors(results.errors ?? []);
+        const mapped: FindingRow[] = results.findings.map((f) => ({
+          provider: f.provider as ProviderType,
+          source: f.source,
+          region: f.region ?? '',
+          category: f.category as import('./mock-data').TokenCategory,
+          item: f.item,
+          count: f.count,
+          tokensPerUnit: f.tokensPerUnit,
+          managementTokens: f.managementTokens,
+        }));
+        setFindings(mapped);
+      }).catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : 'Failed to load results';
+        setScanError(msg);
+      });
+    },
+    onError: (msg) => {
+      setScanError(msg);
+    },
+  });
 
   // Start scan — uses real API when connected, mock when in demo mode
   const startScan = useCallback(() => {
     clearScanIntervals();
     setScanProgress(0);
     setScanError('');
-    const initProgress: Record<ProviderType, number> = { aws: 0, azure: 0, gcp: 0, ad: 0 };
+    const initProgress: Record<ProviderType, number> = { aws: 0, azure: 0, gcp: 0, ad: 0, nios: 0 };
     setProviderScanProgress(initProgress);
     setFindings([]);
 
@@ -482,8 +521,10 @@ export function Wizard() {
           sessionId,
           providers: selectedProviders.map((provId) => ({
             provider: provId,
-            subscriptions: Array.from(getEffectiveSelected(provId)),
-            selectionMode: selectionMode[provId],
+            subscriptions: provId === 'nios'
+              ? Array.from(niosSelectedMembers)
+              : Array.from(getEffectiveSelected(provId)),
+            selectionMode: provId === 'nios' ? 'include' : selectionMode[provId],
           })),
         };
         const { scanId: newScanId } = await apiStartScan(scanReq);
@@ -493,7 +534,15 @@ export function Wizard() {
         setScanError(msg);
       }
     })();
-  }, [backend.isDemo, selectedProviders, selectionMode, clearScanIntervals, getEffectiveSelected]);
+  }, [backend.isDemo, selectedProviders, selectionMode, clearScanIntervals, getEffectiveSelected, niosSelectedMembers]);
+
+  // Derive niosServerMetrics: demo mode uses mock data; live mode uses API results
+  const niosServerMetrics = useMemo<NiosServerMetrics[]>(() => {
+    const raw: NiosServerMetricAPI[] = backend.isDemo
+      ? (MOCK_NIOS_SERVER_METRICS as unknown as NiosServerMetricAPI[])
+      : (scanResults?.niosServerMetrics ?? []);
+    return raw as unknown as NiosServerMetrics[];
+  }, [backend.isDemo, scanResults]);
 
   // Export
   const totalTokens = useMemo(
@@ -866,6 +915,104 @@ export function Wizard() {
                   const provider = PROVIDERS.find((p) => p.id === provId)!;
                   const status = credentialStatus[provId];
                   const Icon = provId === 'ad' ? Server : Cloud;
+
+                  // NIOS: render file upload instead of credential form
+                  if (provider.isFileUpload) {
+                    return (
+                      <div key={provId} className="border border-[var(--border)] rounded-xl p-4">
+                        <div className="flex items-center gap-3 mb-4">
+                          <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ backgroundColor: '#00A1FF15' }}>
+                            <Server className="w-4 h-4" style={{ color: '#00A1FF' }} />
+                          </div>
+                          <div>
+                            <h3 className="text-[14px]" style={{ fontWeight: 600 }}>NIOS Grid Backup</h3>
+                            <p className="text-[12px] text-[var(--muted-foreground)]">Upload a .tar.gz, .tgz, or .bak backup file</p>
+                          </div>
+                        </div>
+
+                        {/* File dropzone */}
+                        <label className={`flex flex-col items-center justify-center w-full h-28 border-2 border-dashed rounded-lg cursor-pointer transition-colors ${
+                          niosUploadStatus === 'done' ? 'border-green-400 bg-green-50/50' :
+                          niosUploadStatus === 'error' ? 'border-red-300 bg-red-50/50' :
+                          'border-[var(--border)] hover:border-gray-400 bg-gray-50/50'
+                        }`}>
+                          <input
+                            type="file"
+                            accept=".tar.gz,.tgz,.bak"
+                            className="hidden"
+                            onChange={handleNiosFileChange}
+                            disabled={niosUploadStatus === 'uploading'}
+                          />
+                          {niosUploadStatus === 'idle' && (
+                            <>
+                              <Download className="w-6 h-6 text-gray-400 mb-1" />
+                              <p className="text-[13px] text-[var(--muted-foreground)]">Click to select backup file</p>
+                              <p className="text-[11px] text-gray-400 mt-0.5">.tar.gz, .tgz, or .bak — max 500 MB</p>
+                            </>
+                          )}
+                          {niosUploadStatus === 'uploading' && (
+                            <><Loader2 className="w-6 h-6 text-blue-500 animate-spin mb-1" /><p className="text-[13px] text-blue-600">Parsing backup...</p></>
+                          )}
+                          {niosUploadStatus === 'done' && (
+                            <><CheckCircle2 className="w-6 h-6 text-green-500 mb-1" /><p className="text-[13px] text-green-700" style={{ fontWeight: 500 }}>Upload successful — {niosMembers.length} Grid Member{niosMembers.length !== 1 ? 's' : ''} found</p></>
+                          )}
+                          {niosUploadStatus === 'error' && (
+                            <><AlertCircle className="w-5 h-5 text-red-500 mb-1" /><p className="text-[13px] text-red-700">{niosUploadError || 'Upload failed'}</p></>
+                          )}
+                        </label>
+
+                        {/* Member checkbox list */}
+                        {niosMembers.length > 0 && (
+                          <div className="mt-4">
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="text-[13px]" style={{ fontWeight: 500 }}>Grid Members</span>
+                              <button
+                                className="text-[12px] text-blue-600 hover:text-blue-800"
+                                onClick={() => {
+                                  if (niosSelectedMembers.size === niosMembers.length) {
+                                    setNiosSelectedMembers(new Set());
+                                  } else {
+                                    setNiosSelectedMembers(new Set(niosMembers.map((m) => m.hostname)));
+                                  }
+                                }}
+                              >
+                                {niosSelectedMembers.size === niosMembers.length ? 'Deselect All' : 'Select All'}
+                              </button>
+                            </div>
+                            <div className="space-y-1 max-h-40 overflow-y-auto">
+                              {niosMembers.map((member) => {
+                                const checked = niosSelectedMembers.has(member.hostname);
+                                return (
+                                  <label key={member.hostname} className="flex items-center gap-2 py-1 cursor-pointer">
+                                    <input
+                                      type="checkbox"
+                                      checked={checked}
+                                      onChange={() => {
+                                        setNiosSelectedMembers((prev) => {
+                                          const next = new Set(prev);
+                                          if (next.has(member.hostname)) next.delete(member.hostname);
+                                          else next.add(member.hostname);
+                                          return next;
+                                        });
+                                      }}
+                                      className="w-4 h-4 accent-[var(--infoblox-orange)]"
+                                    />
+                                    <span className="text-[13px] flex-1">{member.hostname}</span>
+                                    <span className={`text-[11px] px-2 py-0.5 rounded-full ${
+                                      member.role === 'Master' ? 'bg-blue-100 text-blue-700' :
+                                      member.role === 'Candidate' ? 'bg-purple-100 text-purple-700' :
+                                      'bg-gray-100 text-gray-600'
+                                    }`}>{member.role}</span>
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  }
+
                   const currentAuthId = selectedAuthMethod[provId];
                   const currentAuth = provider.authMethods.find((m) => m.id === currentAuthId) || provider.authMethods[0];
                   const hasFields = currentAuth.fields.length > 0;
@@ -917,6 +1064,7 @@ export function Wizard() {
                               azure: ['device-code', 'certificate', 'az-cli'],
                               gcp: [],
                               ad: [],
+                              nios: [],
                             };
                             const isComingSoon = COMING_SOON[provId]?.includes(method.id) ?? false;
                             return (
@@ -1596,6 +1744,326 @@ export function Wizard() {
                   })()}
                 </div>
               </div>
+
+              {/* Top Consumer Cards (FE-03) */}
+              {(() => {
+                const consumerCards = [
+                  {
+                    key: 'dns',
+                    label: 'Top 5 DNS Consumers',
+                    filter: (f: FindingRow) => /dns|zone/i.test(f.item) && !/unsupported/i.test(f.item),
+                    expanded: topDnsExpanded,
+                    toggle: () => setTopDnsExpanded((v) => !v),
+                    Icon: Globe,
+                    iconBg: 'bg-blue-50',
+                    iconColor: 'text-blue-600',
+                    barColor: 'bg-blue-500',
+                  },
+                  {
+                    key: 'dhcp',
+                    label: 'Top 5 DHCP Consumers',
+                    filter: (f: FindingRow) => /dhcp|scope|lease|range|reservation/i.test(f.item) && !/unsupported/i.test(f.item),
+                    expanded: topDhcpExpanded,
+                    toggle: () => setTopDhcpExpanded((v) => !v),
+                    Icon: Activity,
+                    iconBg: 'bg-purple-50',
+                    iconColor: 'text-purple-600',
+                    barColor: 'bg-purple-500',
+                  },
+                  {
+                    key: 'ip',
+                    label: 'Top 5 IP / Network Consumers',
+                    filter: (f: FindingRow) => /ip|subnet|network|cidr|address|vnet|vpc/i.test(f.item) && !/dhcp|dns|unsupported/i.test(f.item),
+                    expanded: topIpExpanded,
+                    toggle: () => setTopIpExpanded((v) => !v),
+                    Icon: Gauge,
+                    iconBg: 'bg-green-50',
+                    iconColor: 'text-green-600',
+                    barColor: 'bg-green-500',
+                  },
+                ];
+
+                const visibleCards = consumerCards
+                  .map((card) => {
+                    const items = findings
+                      .filter(card.filter)
+                      .sort((a, b) => b.managementTokens - a.managementTokens)
+                      .slice(0, 5);
+                    return { ...card, items };
+                  })
+                  .filter((card) => card.items.length > 0);
+
+                if (visibleCards.length === 0) return null;
+
+                return (
+                  <div className="mt-6 mb-4">
+                    <div className="text-[13px] text-[var(--muted-foreground)] mb-3" style={{ fontWeight: 600 }}>
+                      Top Consumers
+                    </div>
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                      {visibleCards.map((card) => {
+                        const maxTokens = card.items[0]?.managementTokens ?? 1;
+                        return (
+                          <div key={card.key} className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+                            <button
+                              className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-50 transition-colors"
+                              onClick={card.toggle}
+                              type="button"
+                            >
+                              <div className="flex items-center gap-2">
+                                <span className={`${card.iconBg} ${card.iconColor} rounded-lg p-1.5`}>
+                                  <card.Icon size={14} />
+                                </span>
+                                <span className="text-[12px]" style={{ fontWeight: 600 }}>{card.label}</span>
+                              </div>
+                              {card.expanded
+                                ? <ChevronUp size={14} className="text-gray-400 shrink-0" />
+                                : <ChevronDown size={14} className="text-gray-400 shrink-0" />
+                              }
+                            </button>
+                            {card.expanded && (
+                              <div className="px-4 pb-3">
+                                <div className="space-y-2">
+                                  {card.items.map((item, idx) => {
+                                    const pct = maxTokens > 0 ? (item.managementTokens / maxTokens) * 100 : 0;
+                                    return (
+                                      <div key={`${item.provider}-${item.source}-${item.item}-${idx}`}>
+                                        <div className="flex items-center justify-between mb-0.5">
+                                          <span className="text-[11px] text-gray-700 truncate max-w-[60%]">{item.source}</span>
+                                          <span className="text-[11px] tabular-nums text-gray-500">{item.managementTokens.toLocaleString()} tk</span>
+                                        </div>
+                                        <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                                          <div
+                                            className={`h-full rounded-full ${card.barColor}`}
+                                            style={{ width: `${pct}%` }}
+                                          />
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* NIOS-X Migration Planner (FE-04) */}
+              {selectedProviders.includes('nios') && niosServerMetrics.length > 0 && (() => {
+                const fullUddiTokens = niosServerMetrics.reduce(
+                  (sum, m) => sum + calcServerTokenTier(m.qps, m.lps, m.objectCount, 'nios-x').serverTokens,
+                  0
+                );
+                const currentNiosTokens = scanResults?.totalManagementTokens ?? 0;
+                const hybridTokens = (() => {
+                  const migratedTokens = niosServerMetrics
+                    .filter((m) => niosMigrationMap.has(m.memberName))
+                    .reduce((sum, m) => sum + calcServerTokenTier(m.qps, m.lps, m.objectCount, 'nios-x').serverTokens, 0);
+                  const migratedCount = niosMigrationMap.size;
+                  const totalCount = niosServerMetrics.length;
+                  const remainingNiosTokens = totalCount > 0
+                    ? Math.round(currentNiosTokens * (1 - migratedCount / totalCount))
+                    : 0;
+                  return migratedTokens + remainingNiosTokens;
+                })();
+
+                const scenarios = [
+                  { label: 'Current NIOS', tokens: currentNiosTokens, color: 'border-gray-200', badge: 'bg-gray-100 text-gray-600' },
+                  { label: 'Hybrid', tokens: hybridTokens, color: 'border-blue-200', badge: 'bg-blue-50 text-blue-700' },
+                  { label: 'Full UDDI', tokens: fullUddiTokens, color: 'border-[var(--infoblox-orange)]/30', badge: 'bg-orange-50 text-orange-700' },
+                ];
+
+                return (
+                  <div className="mt-6 mb-4">
+                    <div className="text-[13px] mb-3" style={{ fontWeight: 600 }}>
+                      NIOS-X Migration Planner
+                    </div>
+                    {/* Scenario cards */}
+                    <div className="grid grid-cols-3 gap-3 mb-4">
+                      {scenarios.map((s) => (
+                        <div key={s.label} className={`bg-white rounded-xl border-2 ${s.color} p-4`}>
+                          <div className={`text-[10px] px-2 py-0.5 rounded-full inline-block mb-2 ${s.badge}`} style={{ fontWeight: 600 }}>{s.label}</div>
+                          <div className="text-[22px] text-[var(--infoblox-orange)]" style={{ fontWeight: 700 }}>{s.tokens.toLocaleString()}</div>
+                          <div className="text-[11px] text-[var(--muted-foreground)]">tokens</div>
+                        </div>
+                      ))}
+                    </div>
+                    {/* Member selection table */}
+                    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+                      <table className="w-full text-[12px]">
+                        <thead>
+                          <tr className="border-b border-gray-100 bg-gray-50">
+                            <th className="text-left px-4 py-2 text-[var(--muted-foreground)]" style={{ fontWeight: 500 }}>Migrate</th>
+                            <th className="text-left px-4 py-2 text-[var(--muted-foreground)]" style={{ fontWeight: 500 }}>Member</th>
+                            <th className="text-left px-4 py-2 text-[var(--muted-foreground)]" style={{ fontWeight: 500 }}>Role</th>
+                            <th className="text-right px-4 py-2 text-[var(--muted-foreground)]" style={{ fontWeight: 500 }}>Tier</th>
+                            <th className="text-right px-4 py-2 text-[var(--muted-foreground)]" style={{ fontWeight: 500 }}>Server Tokens</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {niosServerMetrics.map((m) => {
+                            const tier = calcServerTokenTier(m.qps, m.lps, m.objectCount, 'nios-x');
+                            const checked = niosMigrationMap.has(m.memberName);
+                            return (
+                              <tr key={m.memberId} className="border-b border-gray-50 hover:bg-gray-50">
+                                <td className="px-4 py-2.5">
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={() => {
+                                      setNiosMigrationMap((prev) => {
+                                        const next = new Map(prev);
+                                        if (next.has(m.memberName)) next.delete(m.memberName);
+                                        else next.set(m.memberName, 'nios-x');
+                                        return next;
+                                      });
+                                    }}
+                                    className="rounded"
+                                  />
+                                </td>
+                                <td className="px-4 py-2.5 text-gray-800">{m.memberName}</td>
+                                <td className="px-4 py-2.5 text-gray-500">{m.role}</td>
+                                <td className="px-4 py-2.5 text-right text-gray-700">{tier.name}</td>
+                                <td className="px-4 py-2.5 text-right tabular-nums text-gray-700">{tier.serverTokens.toLocaleString()}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Server Token Calculator + XaaS Consolidation (FE-05 + FE-06) */}
+              {selectedProviders.includes('nios') && niosServerMetrics.length > 0 && (() => {
+                // Split members by form factor (default to 'nios-x' if not in map)
+                const niosXMembers = niosServerMetrics.filter(
+                  (m) => (niosMigrationMap.get(m.memberName) ?? 'nios-x') === 'nios-x'
+                );
+                const xaasMembers = niosServerMetrics.filter(
+                  (m) => niosMigrationMap.get(m.memberName) === 'nios-xaas'
+                );
+
+                const xaasInstances = consolidateXaasInstances(xaasMembers);
+
+                const niosXTotal = niosXMembers.reduce(
+                  (sum, m) => sum + calcServerTokenTier(m.qps, m.lps, m.objectCount, 'nios-x').serverTokens, 0
+                );
+                const xaasTotal = xaasInstances.reduce((sum, inst) => sum + inst.totalServerTokens, 0);
+                const grandTotal = niosXTotal + xaasTotal;
+
+                const dash = <span className="text-gray-300">&mdash;</span>;
+
+                return (
+                  <div className="mt-6 mb-4">
+                    <div className="text-[13px] mb-3" style={{ fontWeight: 600 }}>
+                      Server Token Calculator
+                    </div>
+                    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+                      <table className="w-full text-[12px]">
+                        <thead>
+                          <tr className="border-b border-gray-100 bg-gray-50">
+                            <th className="text-left px-4 py-2 text-[var(--muted-foreground)]" style={{ fontWeight: 500 }}>Member</th>
+                            <th className="text-left px-4 py-2 text-[var(--muted-foreground)]" style={{ fontWeight: 500 }}>Role</th>
+                            <th className="text-right px-4 py-2 text-[var(--muted-foreground)]" style={{ fontWeight: 500 }}>QPS</th>
+                            <th className="text-right px-4 py-2 text-[var(--muted-foreground)]" style={{ fontWeight: 500 }}>LPS</th>
+                            <th className="text-left px-4 py-2 text-[var(--muted-foreground)]" style={{ fontWeight: 500 }}>Form Factor</th>
+                            <th className="text-left px-4 py-2 text-[var(--muted-foreground)]" style={{ fontWeight: 500 }}>Tier</th>
+                            <th className="text-right px-4 py-2 text-[var(--muted-foreground)]" style={{ fontWeight: 500 }}>Server Tokens</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {/* NIOS-X on-prem rows */}
+                          {niosXMembers.map((m) => {
+                            const tier = calcServerTokenTier(m.qps, m.lps, m.objectCount, 'nios-x');
+                            const ff = niosMigrationMap.get(m.memberName) ?? 'nios-x';
+                            return (
+                              <tr key={m.memberId} className="border-b border-gray-50 hover:bg-gray-50">
+                                <td className="px-4 py-2.5 text-gray-800">{m.memberName}</td>
+                                <td className="px-4 py-2.5 text-gray-500">{m.role}</td>
+                                <td className="px-4 py-2.5 text-right tabular-nums">{m.qps > 0 ? m.qps.toLocaleString() : dash}</td>
+                                <td className="px-4 py-2.5 text-right tabular-nums">{m.lps > 0 ? m.lps.toLocaleString() : dash}</td>
+                                <td className="px-4 py-2.5">
+                                  <div className="flex gap-1">
+                                    <button
+                                      type="button"
+                                      className={`text-[10px] px-2 py-0.5 rounded-md border transition-colors ${ff === 'nios-x' ? 'bg-blue-50 border-blue-300 text-blue-700' : 'border-gray-200 text-gray-400 hover:border-gray-300'}`}
+                                      onClick={() => setNiosMigrationMap((prev) => { const next = new Map(prev); next.set(m.memberName, 'nios-x'); return next; })}
+                                    >NIOS-X</button>
+                                    <button
+                                      type="button"
+                                      className={`text-[10px] px-2 py-0.5 rounded-md border transition-colors ${ff === 'nios-xaas' ? 'bg-purple-50 border-purple-300 text-purple-700' : 'border-gray-200 text-gray-400 hover:border-gray-300'}`}
+                                      onClick={() => setNiosMigrationMap((prev) => { const next = new Map(prev); next.set(m.memberName, 'nios-xaas'); return next; })}
+                                    >XaaS</button>
+                                  </div>
+                                </td>
+                                <td className="px-4 py-2.5 text-gray-700">{tier.name}</td>
+                                <td className="px-4 py-2.5 text-right tabular-nums text-gray-700">{tier.serverTokens.toLocaleString()}</td>
+                              </tr>
+                            );
+                          })}
+
+                          {/* XaaS Consolidation instance groups (FE-06) */}
+                          {xaasInstances.map((inst, instIdx) => (
+                            <Fragment key={`xaas-inst-${instIdx}`}>
+                              {/* Instance header row */}
+                              <tr className="bg-purple-50 border-b border-purple-100">
+                                <td colSpan={4} className="px-4 py-2 text-purple-700 text-[11px]" style={{ fontWeight: 600 }}>
+                                  XaaS Instance {instIdx + 1} — {inst.tier.name} tier
+                                  {inst.extraConnections > 0 && (
+                                    <span className="ml-2 text-purple-500">
+                                      (+{inst.extraConnections} extra connections &times; {XAAS_EXTRA_CONNECTION_COST} tk = {inst.extraTokens.toLocaleString()} tk)
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="px-4 py-2 text-purple-700 text-[11px]" style={{ fontWeight: 600 }}>XaaS</td>
+                                <td className="px-4 py-2 text-purple-700 text-[11px]">{inst.tier.name}</td>
+                                <td className="px-4 py-2 text-right tabular-nums text-purple-700 text-[11px]" style={{ fontWeight: 600 }}>{inst.totalServerTokens.toLocaleString()}</td>
+                              </tr>
+                              {/* Member sub-rows */}
+                              {inst.members.map((m) => (
+                                <tr key={m.memberId} className="border-b border-gray-50 bg-purple-50/30 hover:bg-purple-50/60">
+                                  <td className="pl-8 pr-4 py-2 text-gray-700 text-[11px]">{m.memberName}</td>
+                                  <td className="px-4 py-2 text-gray-500 text-[11px]">{m.role}</td>
+                                  <td className="px-4 py-2 text-right tabular-nums text-[11px]">{m.qps > 0 ? m.qps.toLocaleString() : dash}</td>
+                                  <td className="px-4 py-2 text-right tabular-nums text-[11px]">{m.lps > 0 ? m.lps.toLocaleString() : dash}</td>
+                                  <td className="px-4 py-2">
+                                    <div className="flex gap-1">
+                                      <button
+                                        type="button"
+                                        className="text-[10px] px-2 py-0.5 rounded-md border border-gray-200 text-gray-400 hover:border-gray-300 transition-colors"
+                                        onClick={() => setNiosMigrationMap((prev) => { const next = new Map(prev); next.set(m.memberName, 'nios-x'); return next; })}
+                                      >NIOS-X</button>
+                                      <button
+                                        type="button"
+                                        className="text-[10px] px-2 py-0.5 rounded-md border bg-purple-50 border-purple-300 text-purple-700 transition-colors"
+                                        onClick={() => setNiosMigrationMap((prev) => { const next = new Map(prev); next.set(m.memberName, 'nios-xaas'); return next; })}
+                                      >XaaS</button>
+                                    </div>
+                                  </td>
+                                  <td className="px-4 py-2 text-gray-400 text-[11px]">—</td>
+                                  <td className="px-4 py-2 text-right tabular-nums text-gray-400 text-[11px]">—</td>
+                                </tr>
+                              ))}
+                            </Fragment>
+                          ))}
+
+                          {/* Grand total row */}
+                          <tr className="bg-gray-50 border-t-2 border-gray-200">
+                            <td colSpan={6} className="px-4 py-3 text-[12px]" style={{ fontWeight: 600 }}>Total Server Tokens</td>
+                            <td className="px-4 py-3 text-right tabular-nums text-[var(--infoblox-orange)] text-[14px]" style={{ fontWeight: 700 }}>{grandTotal.toLocaleString()}</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* 3 category columns with per-source breakdown */}
               {(() => {

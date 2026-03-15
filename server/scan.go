@@ -1,17 +1,30 @@
 package server
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"context"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
+	"io"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/infoblox/uddi-go-token-calculator/internal/orchestrator"
+	"github.com/infoblox/uddi-go-token-calculator/internal/scanner/nios"
 	"github.com/infoblox/uddi-go-token-calculator/internal/session"
 )
+
+// niosBackupTokens maps opaque upload tokens to temp file paths.
+// Entries are removed when HandleStartScan consumes them via LoadAndDelete.
+var niosBackupTokens sync.Map
 
 // ScanHandler holds the dependencies required by the scan HTTP handlers.
 type ScanHandler struct {
@@ -81,12 +94,14 @@ func (h *ScanHandler) HandleStartScan(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, ScanStartResponse{ScanID: req.SessionID})
 }
 
-// HandleScanEvents handles GET /api/v1/scan/{scanId}/events.
+// HandleGetScanStatus handles GET /api/v1/scan/{scanId}/status.
 //
-// It streams SSE events from the session broker until the broker is closed
-// (scan complete) or the client disconnects. A heartbeat is sent every 15 s
-// to keep the connection alive through proxies.
-func (h *ScanHandler) HandleScanEvents(w http.ResponseWriter, r *http.Request) {
+// Returns a polling-friendly JSON snapshot of the scan progress.
+// Returns 404 for an unknown scanId.
+// Returns status="running" with progress=0 while the scan is in progress.
+// Returns status="complete" with progress=100 once the scan finishes.
+// The providers slice is empty for Phase 9; Phase 10 will populate per-provider progress.
+func (h *ScanHandler) HandleGetScanStatus(w http.ResponseWriter, r *http.Request) {
 	scanID := chi.URLParam(r, "scanId")
 
 	sess, ok := h.store.Get(scanID)
@@ -95,46 +110,198 @@ func (h *ScanHandler) HandleScanEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "streaming not supported", http.StatusInternalServerError)
+	resp := ScanStatusResponse{
+		ScanID:    scanID,
+		Providers: []ProviderScanStatus{},
+	}
+
+	if sess.State == session.ScanStateComplete {
+		resp.Status = "complete"
+		resp.Progress = 100
+	} else {
+		resp.Status = "running"
+		resp.Progress = 0
+	}
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// HandleUploadNiosBackup handles POST /api/v1/providers/nios/upload.
+//
+// Accepts a multipart form upload with a "file" field containing a .tar.gz, .tgz, or .bak
+// NIOS backup file (max 500 MB). Parses the embedded onedb.xml to extract Grid Member
+// hostnames and service roles. Writes the file to os.TempDir and returns an opaque
+// BackupToken that the frontend must pass back in the scan-start request.
+func HandleUploadNiosBackup(w http.ResponseWriter, r *http.Request) {
+	// Limit the entire request body to 500 MB before parsing.
+	r.Body = http.MaxBytesReader(w, r.Body, 500<<20)
+
+	if err := r.ParseMultipartForm(500 << 20); err != nil {
+		if strings.Contains(err.Error(), "request body too large") || strings.Contains(err.Error(), "http: request body too large") {
+			http.Error(w, "file too large (max 500 MB)", http.StatusRequestEntityTooLarge)
+			return
+		}
+		writeJSON(w, http.StatusBadRequest, NiosUploadResponse{Valid: false, Error: "failed to parse multipart form: " + err.Error(), Members: []NiosGridMember{}})
 		return
 	}
 
-	// Set SSE headers before writing any body.
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("X-Accel-Buffering", "no")
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, NiosUploadResponse{Valid: false, Error: "missing file field", Members: []NiosGridMember{}})
+		return
+	}
+	defer file.Close()
 
-	ch := sess.Broker.Subscribe()
-	defer sess.Broker.Unsubscribe(ch)
+	name := strings.ToLower(header.Filename)
+	if !strings.HasSuffix(name, ".tar.gz") && !strings.HasSuffix(name, ".tgz") && !strings.HasSuffix(name, ".bak") {
+		writeJSON(w, http.StatusOK, NiosUploadResponse{Valid: false, Error: "unsupported file type: must be .tar.gz, .tgz, or .bak", Members: []NiosGridMember{}})
+		return
+	}
 
-	ticker := time.NewTicker(15 * time.Second)
-	defer ticker.Stop()
+	members, err := parseNiosBackup(file)
+	if err != nil {
+		writeJSON(w, http.StatusOK, NiosUploadResponse{Valid: false, Error: err.Error(), Members: []NiosGridMember{}})
+		return
+	}
+
+	// Seek the multipart file back to the start so we can write it to a temp file.
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		writeJSON(w, http.StatusInternalServerError, NiosUploadResponse{Valid: false, Error: "failed to seek uploaded file: " + err.Error(), Members: []NiosGridMember{}})
+		return
+	}
+
+	// Write to temp file so the NIOS scanner can do two-pass streaming later.
+	tmp, err := os.CreateTemp("", "nios-backup-*.tar.gz")
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, NiosUploadResponse{Valid: false, Error: "failed to create temp file: " + err.Error(), Members: []NiosGridMember{}})
+		return
+	}
+	if _, err := io.Copy(tmp, file); err != nil {
+		tmp.Close()
+		os.Remove(tmp.Name())
+		writeJSON(w, http.StatusInternalServerError, NiosUploadResponse{Valid: false, Error: "failed to write temp file: " + err.Error(), Members: []NiosGridMember{}})
+		return
+	}
+	tmp.Close()
+
+	// Generate an opaque token keyed by upload timestamp.
+	token := fmt.Sprintf("%d", time.Now().UnixNano())
+	niosBackupTokens.Store(token, tmp.Name())
+
+	writeJSON(w, http.StatusOK, NiosUploadResponse{
+		Valid:       true,
+		Members:     members,
+		BackupToken: token,
+	})
+}
+
+// parseNiosBackup reads a gzip+tar archive (regardless of extension) and extracts
+// Grid Member information from the embedded onedb.xml file.
+func parseNiosBackup(r io.Reader) ([]NiosGridMember, error) {
+	gz, err := gzip.NewReader(r)
+	if err != nil {
+		return nil, fmt.Errorf("not a valid gzip archive: %w", err)
+	}
+	defer gz.Close()
+
+	tr := tar.NewReader(gz)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("error reading archive: %w", err)
+		}
+
+		if filepath.Base(hdr.Name) != "onedb.xml" {
+			continue
+		}
+
+		// Found onedb.xml — parse it.
+		return parseOneDBXML(tr)
+	}
+
+	return nil, fmt.Errorf("no onedb.xml found in backup")
+}
+
+// parseOneDBXML extracts Grid Member records from a NIOS onedb.xml stream.
+// Uses token-based XML parsing to collect PROPERTY elements (NAME/VALUE attributes)
+// for each OBJECT. Member objects are identified by __type=".com.infoblox.one.virtual_node".
+func parseOneDBXML(r io.Reader) ([]NiosGridMember, error) {
+	var members []NiosGridMember
+
+	decoder := xml.NewDecoder(r)
+	var currentProps map[string]string
+	inObject := false
 
 	for {
-		select {
-		case event, open := <-ch:
-			if !open {
-				// Broker was closed — scan is done. Exit the loop.
-				return
-			}
-			data, err := json.Marshal(event)
-			if err != nil {
-				continue
-			}
-			fmt.Fprintf(w, "data: %s\n\n", data)
-			flusher.Flush()
+		tok, err := decoder.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("XML parse error: %w", err)
+		}
 
-		case <-ticker.C:
-			fmt.Fprintf(w, "data: {\"type\":\"heartbeat\"}\n\n")
-			flusher.Flush()
-
-		case <-r.Context().Done():
-			return
+		switch t := tok.(type) {
+		case xml.StartElement:
+			switch t.Name.Local {
+			case "OBJECT":
+				inObject = true
+				currentProps = make(map[string]string)
+			case "PROPERTY":
+				if !inObject {
+					continue
+				}
+				var name, value string
+				for _, attr := range t.Attr {
+					switch attr.Name.Local {
+					case "NAME":
+						name = attr.Value
+					case "VALUE":
+						value = attr.Value
+					}
+				}
+				if name != "" {
+					currentProps[name] = value
+				}
+			}
+		case xml.EndElement:
+			if t.Name.Local == "OBJECT" && inObject {
+				inObject = false
+				if m, ok := objectToMember(currentProps); ok {
+					members = append(members, m)
+				}
+				currentProps = nil
+			}
 		}
 	}
+
+	return members, nil
+}
+
+// objectToMember converts a PROPERTY map from an OBJECT element into a NiosGridMember if it
+// represents a Grid Member (virtual_node). Returns (member, true) on success, (_, false) otherwise.
+func objectToMember(props map[string]string) (NiosGridMember, bool) {
+	if props == nil {
+		return NiosGridMember{}, false
+	}
+
+	// Only process objects with __type = ".com.infoblox.one.virtual_node".
+	if props["__type"] != ".com.infoblox.one.virtual_node" {
+		return NiosGridMember{}, false
+	}
+
+	hostname := props["host_name"]
+	if hostname == "" {
+		return NiosGridMember{}, false
+	}
+
+	// Use service-based roles (not structural Master/Candidate/Regular).
+	role := nios.ExportedExtractServiceRole(props)
+
+	return NiosGridMember{Hostname: hostname, Role: role}, true
 }
 
 // HandleScanResults handles GET /api/v1/scan/{scanId}/results.
@@ -188,6 +355,16 @@ func (h *ScanHandler) HandleScanResults(w http.ResponseWriter, r *http.Request) 
 		completedAt = sess.CompletedAt.Format(time.RFC3339)
 	}
 
+	// Decode NiosServerMetricsJSON if a NIOS scan was performed.
+	var niosMetrics []NiosServerMetric
+	if len(sess.NiosServerMetricsJSON) > 0 {
+		if err := json.Unmarshal(sess.NiosServerMetricsJSON, &niosMetrics); err != nil {
+			// Non-fatal: log to stderr and continue without metrics.
+			fmt.Fprintf(os.Stderr, "server: failed to decode NiosServerMetricsJSON: %v\n", err)
+			niosMetrics = nil
+		}
+	}
+
 	writeJSON(w, http.StatusOK, ScanResultsResponse{
 		ScanID:                scanID,
 		CompletedAt:           completedAt,
@@ -198,6 +375,7 @@ func (h *ScanHandler) HandleScanResults(w http.ResponseWriter, r *http.Request) 
 		AssetTokens:           sess.TokenResult.AssetTokens,
 		Findings:              findings,
 		Errors:                errors,
+		NiosServerMetrics:     niosMetrics, // nil → omitted by omitempty
 	})
 }
 
@@ -238,14 +416,25 @@ func (h *ScanHandler) HandleCloneSession(w http.ResponseWriter, r *http.Request)
 
 // toOrchestratorProviders converts the HTTP request provider list to the
 // orchestrator's ScanProviderRequest slice.
+// For NIOS providers, resolves the BackupToken to a temp file path via niosBackupTokens.
 func toOrchestratorProviders(specs []ScanProviderSpec) []orchestrator.ScanProviderRequest {
 	reqs := make([]orchestrator.ScanProviderRequest, 0, len(specs))
 	for _, s := range specs {
-		reqs = append(reqs, orchestrator.ScanProviderRequest{
+		req := orchestrator.ScanProviderRequest{
 			Provider:      s.Provider,
 			Subscriptions: s.Subscriptions,
 			SelectionMode: s.SelectionMode,
-		})
+		}
+
+		// For NIOS provider: resolve the backup token to a temp file path.
+		if s.Provider == "nios" && s.BackupToken != "" {
+			if pathVal, ok := niosBackupTokens.LoadAndDelete(s.BackupToken); ok {
+				req.BackupPath = pathVal.(string)
+			}
+			req.SelectedMembers = s.SelectedMembers
+		}
+
+		reqs = append(reqs, req)
 	}
 	return reqs
 }

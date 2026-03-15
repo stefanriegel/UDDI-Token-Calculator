@@ -21,9 +21,13 @@ type ScanStartRequest struct {
 }
 
 type ScanProviderSpec struct {
-	Provider      string   `json:"provider"`
-	Subscriptions []string `json:"subscriptions"`
-	SelectionMode string   `json:"selectionMode"` // "include" | "exclude"
+	Provider        string   `json:"provider"`
+	Subscriptions   []string `json:"subscriptions"`
+	SelectionMode   string   `json:"selectionMode"`             // "include" | "exclude"
+	SelectedMembers []string `json:"selectedMembers,omitempty"` // NIOS: selected Grid Member hostnames
+	// BackupToken is the opaque token returned by HandleUploadNiosBackup.
+	// HandleStartScan resolves it to a temp file path via niosBackupTokens sync.Map.
+	BackupToken string `json:"backupToken,omitempty"`
 }
 
 // ScanStartResponse is returned immediately by POST /api/v1/scan.
@@ -82,6 +86,52 @@ type CloneSessionResponse struct {
 	SessionID string `json:"sessionId"`
 }
 
+// ProviderScanStatus is per-provider progress snapshot for the polling endpoint.
+type ProviderScanStatus struct {
+	Provider   string `json:"provider"`
+	Progress   int    `json:"progress"`   // 0–100
+	Status     string `json:"status"`     // "pending" | "running" | "complete" | "error"
+	ItemsFound int    `json:"itemsFound"` // items discovered so far
+}
+
+// ScanStatusResponse is the body for GET /api/v1/scan/{scanId}/status.
+type ScanStatusResponse struct {
+	ScanID    string               `json:"scanId"`
+	Status    string               `json:"status"`    // "running" | "complete"
+	Progress  int                  `json:"progress"`  // 0–100 overall (100 = complete)
+	Providers []ProviderScanStatus `json:"providers"`
+}
+
+// NiosGridMember is one Grid Member returned by the upload endpoint.
+type NiosGridMember struct {
+	Hostname string `json:"hostname"`
+	Role     string `json:"role"` // "Master" | "Candidate" | "Regular"
+}
+
+// NiosUploadResponse is the body for POST /api/v1/providers/nios/upload.
+type NiosUploadResponse struct {
+	Valid        bool             `json:"valid"`
+	Error        string           `json:"error,omitempty"`
+	GridName     string           `json:"gridName,omitempty"`
+	NiosVersion  string           `json:"niosVersion,omitempty"`
+	Members      []NiosGridMember `json:"members"`
+	// BackupToken is the opaque token the frontend must pass back in the scan-start
+	// request body as ScanProviderSpec.BackupToken. HandleStartScan resolves it to
+	// the temp file path via the server-side niosBackupTokens sync.Map.
+	BackupToken  string           `json:"backupToken,omitempty"`
+}
+
+// NiosServerMetric is per-Grid-Member performance data returned in the results
+// when the NIOS provider was included in a scan. See API_CONTRACT.md §6.
+type NiosServerMetric struct {
+	MemberID    string `json:"memberId"`
+	MemberName  string `json:"memberName"`
+	Role        string `json:"role"`
+	QPS         int    `json:"qps"`
+	LPS         int    `json:"lps"`
+	ObjectCount int    `json:"objectCount"`
+}
+
 // ScanResultsResponse is the body for GET /api/v1/scan/{id}/results.
 type ScanResultsResponse struct {
 	ScanID                string                  `json:"scanId"`
@@ -93,4 +143,7 @@ type ScanResultsResponse struct {
 	AssetTokens           int                     `json:"assetTokens"`
 	Findings              []FindingRowResponse    `json:"findings"`
 	Errors                []ProviderErrorResponse `json:"errors"`
+	// NiosServerMetrics is populated when the nios provider was scanned.
+	// Omitted from the response when NIOS was not included in the scan.
+	NiosServerMetrics []NiosServerMetric `json:"niosServerMetrics,omitempty"`
 }

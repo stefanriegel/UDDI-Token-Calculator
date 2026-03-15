@@ -21,12 +21,18 @@ import (
 
 // ScanProviderRequest describes a single provider to be scanned.
 type ScanProviderRequest struct {
-	// Provider is the provider identifier ("aws", "azure", "gcp", "ad").
+	// Provider is the provider identifier ("aws", "azure", "gcp", "ad", "nios").
 	Provider string
 	// Subscriptions is the list of account/subscription/project IDs to scan.
 	Subscriptions []string
 	// SelectionMode is "include" or "exclude" (passed through to the scanner).
 	SelectionMode string
+	// BackupPath is the temp file path for the NIOS backup archive.
+	// Set by HandleStartScan after resolving the BackupToken from niosBackupTokens.
+	BackupPath string
+	// SelectedMembers is the list of NIOS Grid Member hostnames selected for scanning.
+	// Empty means all members are included.
+	SelectedMembers []string
 }
 
 // OrchestratorResult holds the aggregated output of a completed scan.
@@ -123,6 +129,16 @@ func (o *Orchestrator) Run(ctx context.Context, sess *session.Session, providers
 				mu.Lock()
 				findings = append(findings, rows...)
 				mu.Unlock()
+
+				// After a successful NIOS scan, type-assert to NiosResultScanner
+				// to retrieve per-member metrics JSON and store it in the session.
+				// NiosResultScanner is defined in internal/scanner/provider.go to
+				// avoid an import cycle with internal/scanner/nios.
+				if nrs, ok := s.(scanner.NiosResultScanner); ok {
+					if encoded := nrs.GetNiosServerMetricsJSON(); len(encoded) > 0 {
+						sess.SetNiosServerMetricsJSON(encoded)
+					}
+				}
 			}
 
 			// Always publish provider_complete with duration.
@@ -198,6 +214,11 @@ func buildScanRequest(p ScanProviderRequest, sess *session.Session) scanner.Scan
 			req.Credentials["password"] = sess.AD.Password
 			req.Credentials["domain"] = sess.AD.Domain
 		}
+	case scanner.ProviderNIOS:
+		// BackupPath and SelectedMembers are set directly on ScanProviderRequest
+		// by HandleStartScan after resolving the BackupToken from niosBackupTokens.
+		req.Credentials["backup_path"] = p.BackupPath
+		req.Credentials["selected_members"] = strings.Join(p.SelectedMembers, ",")
 	}
 
 	return req
