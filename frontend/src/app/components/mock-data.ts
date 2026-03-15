@@ -57,8 +57,9 @@ export const PROVIDERS: ProviderOption[] = [
         name: 'Access Key & Secret',
         description: 'Programmatic IAM user credentials (least recommended)',
         fields: [
-          { key: 'accessKeyId', label: 'Access Key ID', placeholder: 'AKIA...' },
+          { key: 'accessKeyId', label: 'Access Key ID', placeholder: 'AKIA... or ASIA...' },
           { key: 'secretAccessKey', label: 'Secret Access Key', placeholder: '********', secret: true },
+          { key: 'sessionToken', label: 'Session Token (optional)', placeholder: 'Required for temporary STS credentials', secret: true },
           { key: 'region', label: 'Default Region', placeholder: 'us-east-1' },
         ],
       },

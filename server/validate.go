@@ -140,6 +140,7 @@ func storeCredentials(sess *session.Session, provider, authMethod string, creds 
 			AuthMethod:      authMethod,
 			AccessKeyID:     creds["accessKeyId"],
 			SecretAccessKey: creds["secretAccessKey"],
+			SessionToken:    creds["sessionToken"],
 			Region:          creds["region"],
 			ProfileName:     creds["profileName"],
 			RoleARN:         creds["roleArn"],
@@ -188,7 +189,7 @@ func realAWSValidator(ctx context.Context, creds map[string]string) ([]Subscript
 
 	cfg, err := awsconfig.LoadDefaultConfig(ctx,
 		awsconfig.WithCredentialsProvider(
-			credentials.NewStaticCredentialsProvider(accessKeyID, secretAccessKey, ""),
+			credentials.NewStaticCredentialsProvider(accessKeyID, secretAccessKey, creds["sessionToken"]),
 		),
 		awsconfig.WithRegion(region),
 	)

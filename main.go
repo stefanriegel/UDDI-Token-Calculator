@@ -12,7 +12,7 @@ import (
 
 	"github.com/pkg/browser"
 
-	awsstub "github.com/infoblox/uddi-go-token-calculator/internal/scanner/aws"
+	awsscanner "github.com/infoblox/uddi-go-token-calculator/internal/scanner/aws"
 	azurestub "github.com/infoblox/uddi-go-token-calculator/internal/scanner/azure"
 	gcpstub "github.com/infoblox/uddi-go-token-calculator/internal/scanner/gcp"
 	adstub "github.com/infoblox/uddi-go-token-calculator/internal/scanner/ad"
@@ -43,11 +43,12 @@ func main() {
 		log.Fatalf("static handler init: %v", err)
 	}
 
-	// 3. Create the session store and orchestrator with all four stub scanners.
-	//    Stub scanners are replaced phase-by-phase (3=AWS, 4=Azure, 5=GCP, 6=AD).
+	// 3. Create the session store and orchestrator.
+	//    AWS scanner is the real implementation (Phase 3).
+	//    Azure, GCP, AD stubs are replaced in Phases 4, 5, 6 respectively.
 	store := session.NewStore()
 	orch := orchestrator.New(map[string]scanner.Scanner{
-		scanner.ProviderAWS:   &awsstub.Stub{},
+		scanner.ProviderAWS:   awsscanner.New(),
 		scanner.ProviderAzure: &azurestub.Stub{},
 		scanner.ProviderGCP:   &gcpstub.Stub{},
 		scanner.ProviderAD:    &adstub.Stub{},

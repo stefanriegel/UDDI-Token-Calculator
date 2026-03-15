@@ -41,6 +41,9 @@ type Event struct {
 	Provider string
 	// Resource is the resource type being reported (e.g. "vpc", "subnet").
 	Resource string
+	// Region is the AWS region this event applies to
+	// (empty for global resources and non-AWS providers).
+	Region string
 	// Count is the number of resources discovered for this event.
 	Count int
 	// Status is "done" or "error".
