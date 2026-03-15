@@ -7,12 +7,13 @@ import {
   type ScanStatusResponse,
   checkForUpdate,
   applySelfUpdate,
+  restartApp,
   type UpdateCheckResponse,
 } from './api-client';
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected';
 
-export type UpdateStatus = 'idle' | 'checking' | 'updating' | 'done' | 'error';
+export type UpdateStatus = 'idle' | 'checking' | 'updating' | 'done' | 'restarting' | 'error';
 
 interface BackendState {
   status: ConnectionStatus;
@@ -25,6 +26,7 @@ interface BackendState {
   updateError: string | null;
   checkUpdate: () => void;
   applyUpdate: () => void;
+  restartAfterUpdate: () => void;
 }
 
 export function useBackendConnection(): BackendState {
@@ -67,6 +69,32 @@ export function useBackendConnection(): BackendState {
     }
   }, []);
 
+  const doRestart = useCallback(async () => {
+    setUpdateStatus('restarting');
+    setUpdateError(null);
+    try {
+      await restartApp();
+    } catch {
+      // Expected — the server shuts down so the request may fail
+    }
+    // Poll health endpoint until the new process is up, then reload
+    const maxAttempts = 30; // 15 seconds
+    for (let i = 0; i < maxAttempts; i++) {
+      await new Promise(r => setTimeout(r, 500));
+      try {
+        await checkHealth();
+        // Server is back — reload the page to pick up any new frontend assets
+        window.location.reload();
+        return;
+      } catch {
+        // Not ready yet, keep polling
+      }
+    }
+    // If we get here, the server didn't come back
+    setUpdateError('Server did not restart in time. Please relaunch the application manually.');
+    setUpdateStatus('error');
+  }, []);
+
   const ping = useCallback(async () => {
     try {
       const h = await checkHealth();
@@ -103,6 +131,7 @@ export function useBackendConnection(): BackendState {
     updateError,
     checkUpdate: doCheckUpdate,
     applyUpdate: doApplyUpdate,
+    restartAfterUpdate: doRestart,
   };
 }
 

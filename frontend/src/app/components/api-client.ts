@@ -280,6 +280,7 @@ export interface SelfUpdateResponse {
   success: boolean;
   error?: string;
   message?: string;
+  restartPending?: boolean;
 }
 
 export async function checkForUpdate(): Promise<UpdateCheckResponse> {
@@ -291,6 +292,12 @@ export async function checkForUpdate(): Promise<UpdateCheckResponse> {
 export async function applySelfUpdate(): Promise<SelfUpdateResponse> {
   const res = await fetch(apiUrl('/update/apply'), { method: 'POST', signal: AbortSignal.timeout(120000) });
   if (!res.ok) throw new Error(`Self-update failed: ${res.status}`);
+  return res.json();
+}
+
+export async function restartApp(): Promise<{ success: boolean; error?: string }> {
+  const res = await fetch(apiUrl('/update/restart'), { method: 'POST', signal: AbortSignal.timeout(10000) });
+  if (!res.ok) throw new Error(`Restart request failed: ${res.status}`);
   return res.json();
 }
 

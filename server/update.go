@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/infoblox/uddi-go-token-calculator/internal/version"
@@ -389,8 +391,9 @@ func HandleSelfUpdate(w http.ResponseWriter, r *http.Request) {
 	cacheMu.Unlock()
 
 	json.NewEncoder(w).Encode(SelfUpdateResponse{
-		Success: true,
-		Message: fmt.Sprintf("Updated to %s. Please restart the application.", result.LatestVersion),
+		Success:        true,
+		Message:        fmt.Sprintf("Updated to %s. Press 'Restart Now' to apply.", result.LatestVersion),
+		RestartPending: true,
 	})
 }
 
@@ -399,4 +402,45 @@ func isHomebrewManaged(execPath string) bool {
 	// Homebrew symlinks: /opt/homebrew/bin/x -> ../Cellar/x/version/bin/x
 	// or: /usr/local/bin/x -> ../Cellar/x/version/bin/x
 	return strings.Contains(execPath, "/Cellar/")
+}
+
+// HandleRestart handles POST /api/v1/update/restart.
+// It sends a success response, then re-execs the process after a short delay
+// so the new binary takes effect without manual restart.
+func HandleRestart(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	execPath, err := os.Executable()
+	if err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   fmt.Sprintf("Cannot determine executable path: %v", err),
+		})
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "Restarting...",
+	})
+
+	// Flush the response before exiting
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
+
+	// Give the HTTP response time to reach the client, then re-exec
+	go func() {
+		time.Sleep(500 * time.Millisecond)
+
+		// Re-exec the current binary with the same arguments.
+		// Since HandleSelfUpdate already replaced the binary on disk,
+		// this launches the new version.
+		if err := syscall.Exec(execPath, os.Args, os.Environ()); err != nil {
+			// Exec replaces the process — if we get here it failed.
+			// Fall back to a clean exit so the user can relaunch manually.
+			log.Printf("restart exec failed: %v — exiting so user can relaunch", err)
+			os.Exit(0)
+		}
+	}()
 }
