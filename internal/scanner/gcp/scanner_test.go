@@ -4,7 +4,10 @@ package gcp
 import (
 	"context"
 	"errors"
+	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
 	"cloud.google.com/go/compute/apiv1/computepb"
 	"google.golang.org/api/googleapi"
@@ -12,6 +15,7 @@ import (
 	"golang.org/x/oauth2"
 
 	"github.com/infoblox/uddi-go-token-calculator/internal/calculator"
+	"github.com/infoblox/uddi-go-token-calculator/internal/checkpoint"
 	"github.com/infoblox/uddi-go-token-calculator/internal/scanner"
 )
 
@@ -214,6 +218,98 @@ func TestScan_MultiSubscriptionDispatch(t *testing.T) {
 	// because per-project failures are non-fatal.
 	if err != nil {
 		t.Fatalf("expected nil error from fan-out with cancelled ctx, got: %v", err)
+	}
+}
+
+// TestScanAllProjects_CheckpointResume verifies that scanAllProjects skips
+// projects that were already completed in a prior checkpoint and prepends
+// their saved findings.
+func TestScanAllProjects_CheckpointResume(t *testing.T) {
+	// Save and restore the real scanOneProjectFunc.
+	origFn := scanOneProjectFunc
+	t.Cleanup(func() { scanOneProjectFunc = origFn })
+
+	// Track which project IDs are actually scanned.
+	var mu sync.Mutex
+	scannedIDs := make(map[string]bool)
+	scanOneProjectFunc = func(ctx context.Context, projectID string, ts oauth2.TokenSource, opts []option.ClientOption, publish func(scanner.Event)) []calculator.FindingRow {
+		mu.Lock()
+		scannedIDs[projectID] = true
+		mu.Unlock()
+		return []calculator.FindingRow{
+			{Provider: "gcp", Source: projectID, Item: "vpc_network", Count: 3},
+		}
+	}
+
+	// Pre-populate checkpoint with proj-a already completed.
+	cpDir := t.TempDir()
+	cpPath := filepath.Join(cpDir, "checkpoint-gcp.json")
+	cp := checkpoint.New(cpPath, "", "gcp")
+	_ = cp.AddUnit(checkpoint.CompletedUnit{
+		ID:          "proj-a",
+		Name:        "proj-a",
+		CompletedAt: time.Now(),
+		Findings: []calculator.FindingRow{
+			{Provider: "gcp", Source: "proj-a", Item: "vpc_network", Count: 7},
+			{Provider: "gcp", Source: "proj-a", Item: "subnet", Count: 12},
+		},
+	})
+
+	ctx := context.Background()
+	staticTS := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "test"})
+	projects := []string{"proj-a", "proj-b", "proj-c"}
+
+	var events []scanner.Event
+	var eventMu sync.Mutex
+	publish := func(e scanner.Event) {
+		eventMu.Lock()
+		events = append(events, e)
+		eventMu.Unlock()
+	}
+
+	findings, err := scanAllProjects(ctx, staticTS, projects, 2, cpPath, publish)
+	if err != nil {
+		t.Fatalf("scanAllProjects: %v", err)
+	}
+
+	// (a) proj-a should NOT have been scanned (it was in the checkpoint).
+	if scannedIDs["proj-a"] {
+		t.Error("proj-a was scanned but should have been skipped (already in checkpoint)")
+	}
+
+	// (b) proj-b and proj-c should have been scanned.
+	if !scannedIDs["proj-b"] {
+		t.Error("proj-b was not scanned")
+	}
+	if !scannedIDs["proj-c"] {
+		t.Error("proj-c was not scanned")
+	}
+
+	// (c) Findings should include pre-loaded checkpoint data + fresh scans.
+	if len(findings) < 4 {
+		t.Errorf("expected at least 4 findings (2 from checkpoint + 2 from scanning), got %d", len(findings))
+	}
+
+	// Verify pre-loaded findings are present.
+	foundCheckpointed := false
+	for _, f := range findings {
+		if f.Source == "proj-a" && f.Item == "subnet" && f.Count == 12 {
+			foundCheckpointed = true
+		}
+	}
+	if !foundCheckpointed {
+		t.Error("checkpoint findings for proj-a not found in results")
+	}
+
+	// (d) Verify checkpoint_loaded event was published.
+	hasLoaded := false
+	for _, e := range events {
+		if e.Type == "checkpoint_loaded" {
+			hasLoaded = true
+		}
+	}
+	if !hasLoaded {
+		t.Error("expected checkpoint_loaded event")
 	}
 }
 

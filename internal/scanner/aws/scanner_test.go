@@ -4,11 +4,14 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
 	awssdk "github.com/aws/aws-sdk-go-v2/aws"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/infoblox/uddi-go-token-calculator/internal/calculator"
+	"github.com/infoblox/uddi-go-token-calculator/internal/checkpoint"
 	"github.com/infoblox/uddi-go-token-calculator/internal/scanner"
 )
 
@@ -195,4 +198,135 @@ func TestScanOrgFanOut(t *testing.T) {
 	// The actual AWS API calls would fail without real credentials,
 	// but the refactored function signature is what we're validating.
 	var _ func(context.Context, awssdk.Config, string, int, func(scanner.Event)) ([]calculator.FindingRow, error) = scanOneAccount
+}
+
+// TestScanOrg_CheckpointResume verifies that scanOrg skips accounts that were
+// already completed in a prior checkpoint and prepends their saved findings.
+func TestScanOrg_CheckpointResume(t *testing.T) {
+	// Save and restore the real functions.
+	origDiscover := discoverAccountsFunc
+	origGetID := getAccountIDFunc
+	origScanOne := scanOneAccountFunc
+	t.Cleanup(func() {
+		discoverAccountsFunc = origDiscover
+		getAccountIDFunc = origGetID
+		scanOneAccountFunc = origScanOne
+	})
+
+	// Stub: always return management account "111".
+	getAccountIDFunc = func(ctx context.Context, cfg awssdk.Config) (string, error) {
+		return "111", nil
+	}
+
+	// Stub: three accounts in org.
+	discoverAccountsFunc = func(ctx context.Context, cfg awssdk.Config) ([]AccountInfo, error) {
+		return []AccountInfo{
+			{ID: "111", Name: "Management"},
+			{ID: "222", Name: "Child-A"},
+			{ID: "333", Name: "Child-B"},
+		}, nil
+	}
+
+	// Track which accounts are actually scanned.
+	var mu sync.Mutex
+	scannedIDs := make(map[string]bool)
+	scanOneAccountFunc = func(ctx context.Context, cfg awssdk.Config, accountName string, maxWorkers int, publish func(scanner.Event)) ([]calculator.FindingRow, error) {
+		// Extract account ID from the account name for tracking.
+		// Management → "111", Child-A → "222", Child-B → "333"
+		id := ""
+		switch accountName {
+		case "Management":
+			id = "111"
+		case "Child-A":
+			id = "222"
+		case "Child-B":
+			id = "333"
+		}
+		mu.Lock()
+		scannedIDs[id] = true
+		mu.Unlock()
+		return []calculator.FindingRow{
+			{Provider: "aws", Source: accountName, Item: "vpc", Count: 1},
+		}, nil
+	}
+
+	// Pre-populate checkpoint with account "222" already completed.
+	cpDir := t.TempDir()
+	cpPath := filepath.Join(cpDir, "checkpoint-aws.json")
+	cp := checkpoint.New(cpPath, "", "aws")
+	_ = cp.AddUnit(checkpoint.CompletedUnit{
+		ID:          "222",
+		Name:        "Child-A",
+		CompletedAt: time.Now(),
+		Findings: []calculator.FindingRow{
+			{Provider: "aws", Source: "Child-A", Item: "vpc", Count: 5},
+			{Provider: "aws", Source: "Child-A", Item: "subnet", Count: 10},
+		},
+	})
+
+	// Set up minimal AWS config.
+	tmpDir := t.TempDir()
+	credFile := filepath.Join(tmpDir, "credentials")
+	os.WriteFile(credFile, []byte("[default]\naws_access_key_id = AKIAIOSFODNN7EXAMPLE\naws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\n"), 0600)
+	t.Setenv("AWS_SHARED_CREDENTIALS_FILE", credFile)
+	t.Setenv("AWS_CONFIG_FILE", filepath.Join(tmpDir, "config"))
+
+	ctx := context.Background()
+	baseCfg, err := buildConfig(ctx, map[string]string{
+		"auth_method":       "access_key",
+		"access_key_id":     "AKIAIOSFODNN7EXAMPLE",
+		"secret_access_key": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+		"region":            "us-east-1",
+	})
+	if err != nil {
+		t.Fatalf("buildConfig: %v", err)
+	}
+
+	var events []scanner.Event
+	var eventMu sync.Mutex
+	publish := func(e scanner.Event) {
+		eventMu.Lock()
+		events = append(events, e)
+		eventMu.Unlock()
+	}
+
+	s := New()
+	findings, err := s.scanOrg(ctx, baseCfg, map[string]string{}, 2, cpPath, publish)
+	if err != nil {
+		t.Fatalf("scanOrg: %v", err)
+	}
+
+	// (a) Account 222 should NOT have been scanned (it was in the checkpoint).
+	if scannedIDs["222"] {
+		t.Error("account 222 was scanned but should have been skipped (already in checkpoint)")
+	}
+
+	// (b) Accounts 111 and 333 should have been scanned.
+	if !scannedIDs["111"] {
+		t.Error("account 111 was not scanned")
+	}
+	if !scannedIDs["333"] {
+		t.Error("account 333 was not scanned")
+	}
+
+	// (c) Findings should include pre-loaded checkpoint data (2 rows from 222) + fresh scans (1 each from 111 and 333).
+	if len(findings) < 4 {
+		t.Errorf("expected at least 4 findings (2 from checkpoint + 2 from scanning), got %d", len(findings))
+	}
+
+	// (d) Verify checkpoint_loaded event was published.
+	hasLoaded := false
+	for _, e := range events {
+		if e.Type == "checkpoint_loaded" {
+			hasLoaded = true
+		}
+	}
+	if !hasLoaded {
+		t.Error("expected checkpoint_loaded event")
+	}
+
+	// (e) Checkpoint file should be cleaned up after full success.
+	if _, err := os.Stat(cpPath); !os.IsNotExist(err) {
+		t.Error("checkpoint file should have been deleted after successful full scan")
+	}
 }

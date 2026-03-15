@@ -7,11 +7,14 @@ package azure
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/infoblox/uddi-go-token-calculator/internal/calculator"
+	"github.com/infoblox/uddi-go-token-calculator/internal/checkpoint"
 	"github.com/infoblox/uddi-go-token-calculator/internal/scanner"
 )
 
@@ -191,7 +194,7 @@ func TestScanAllSubscriptions_FanOut(t *testing.T) {
 	}
 
 	// No real credential needed — the stub ignores it.
-	findings, err := scanAllSubscriptions(ctx, nil, subscriptions, 2, publish)
+	findings, err := scanAllSubscriptions(ctx, nil, subscriptions, 2, "", publish)
 	if err != nil {
 		t.Fatalf("scanAllSubscriptions returned unexpected error: %v", err)
 	}
@@ -341,5 +344,96 @@ func TestExtractResourceGroupsFromVNetIDs(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestScanAllSubscriptions_CheckpointResume verifies that scanAllSubscriptions
+// skips subscriptions that were already completed in a prior checkpoint and
+// prepends their saved findings.
+func TestScanAllSubscriptions_CheckpointResume(t *testing.T) {
+	// Save and restore the real scanSubscriptionFunc.
+	origFn := scanSubscriptionFunc
+	t.Cleanup(func() { scanSubscriptionFunc = origFn })
+
+	// Track which subscription IDs are actually scanned.
+	var mu sync.Mutex
+	scannedIDs := make(map[string]bool)
+	scanSubscriptionFunc = func(ctx context.Context, cred azcore.TokenCredential, subID, displayName string, publish func(scanner.Event)) ([]calculator.FindingRow, error) {
+		mu.Lock()
+		scannedIDs[subID] = true
+		mu.Unlock()
+		return []calculator.FindingRow{
+			{Provider: "azure", Source: displayName, Item: "vnet", Count: 2},
+		}, nil
+	}
+
+	// Pre-populate checkpoint with sub-1 already completed.
+	cpDir := t.TempDir()
+	cpPath := filepath.Join(cpDir, "checkpoint-azure.json")
+	cp := checkpoint.New(cpPath, "", "azure")
+	_ = cp.AddUnit(checkpoint.CompletedUnit{
+		ID:          "sub-1",
+		Name:        "sub-1",
+		CompletedAt: time.Now(),
+		Findings: []calculator.FindingRow{
+			{Provider: "azure", Source: "sub-1", Item: "vnet", Count: 5},
+			{Provider: "azure", Source: "sub-1", Item: "subnet", Count: 10},
+		},
+	})
+
+	ctx := context.Background()
+	subscriptions := []string{"sub-1", "sub-2", "sub-3"}
+
+	var events []scanner.Event
+	var eventMu sync.Mutex
+	publish := func(e scanner.Event) {
+		eventMu.Lock()
+		events = append(events, e)
+		eventMu.Unlock()
+	}
+
+	findings, err := scanAllSubscriptions(ctx, nil, subscriptions, 2, cpPath, publish)
+	if err != nil {
+		t.Fatalf("scanAllSubscriptions: %v", err)
+	}
+
+	// (a) sub-1 should NOT have been scanned (it was in the checkpoint).
+	if scannedIDs["sub-1"] {
+		t.Error("sub-1 was scanned but should have been skipped (already in checkpoint)")
+	}
+
+	// (b) sub-2 and sub-3 should have been scanned.
+	if !scannedIDs["sub-2"] {
+		t.Error("sub-2 was not scanned")
+	}
+	if !scannedIDs["sub-3"] {
+		t.Error("sub-3 was not scanned")
+	}
+
+	// (c) Findings should include pre-loaded checkpoint data (2 rows from sub-1) + fresh scans.
+	if len(findings) < 4 {
+		t.Errorf("expected at least 4 findings (2 from checkpoint + 2 from scanning), got %d", len(findings))
+	}
+
+	// Verify pre-loaded findings are present.
+	foundCheckpointed := false
+	for _, f := range findings {
+		if f.Source == "sub-1" && f.Item == "subnet" && f.Count == 10 {
+			foundCheckpointed = true
+		}
+	}
+	if !foundCheckpointed {
+		t.Error("checkpoint findings for sub-1 not found in results")
+	}
+
+	// (d) Verify checkpoint_loaded event was published.
+	hasLoaded := false
+	for _, e := range events {
+		if e.Type == "checkpoint_loaded" {
+			hasLoaded = true
+		}
+	}
+	if !hasLoaded {
+		t.Error("expected checkpoint_loaded event")
 	}
 }

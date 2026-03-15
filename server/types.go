@@ -36,6 +36,8 @@ type ScanProviderSpec struct {
 	// RequestTimeout is the per-request timeout in seconds for this provider.
 	// 0 means use the provider's default timeout.
 	RequestTimeout int `json:"requestTimeout,omitempty"`
+	// CheckpointPath is the file path for checkpoint persistence. Empty means no checkpointing.
+	CheckpointPath string `json:"checkpointPath,omitempty"`
 }
 
 // ScanStartResponse is returned immediately by POST /api/v1/scan.

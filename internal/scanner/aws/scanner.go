@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	awssdk "github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
@@ -18,6 +19,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sso"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/infoblox/uddi-go-token-calculator/internal/calculator"
+	"github.com/infoblox/uddi-go-token-calculator/internal/checkpoint"
 	"github.com/infoblox/uddi-go-token-calculator/internal/cloudutil"
 	"github.com/infoblox/uddi-go-token-calculator/internal/scanner"
 )
@@ -55,7 +57,7 @@ func (s *Scanner) Scan(ctx context.Context, req scanner.ScanRequest, publish fun
 
 	// Org mode: fan out per-account.
 	if creds["org_enabled"] == "true" {
-		return s.scanOrg(ctx, baseCfg, creds, req.MaxWorkers, publish)
+		return s.scanOrg(ctx, baseCfg, creds, req.MaxWorkers, req.CheckpointPath, publish)
 	}
 
 	// Single-account mode (existing behavior).
@@ -66,6 +68,19 @@ func (s *Scanner) Scan(ctx context.Context, req scanner.ScanRequest, publish fun
 	accountName := getAccountName(ctx, baseCfg, accountID)
 	return scanOneAccount(ctx, baseCfg, accountName, req.MaxWorkers, publish)
 }
+
+// discoverAccountsFunc is the function used by scanOrg to discover org accounts.
+// It defaults to DiscoverAccounts and can be swapped in tests.
+var discoverAccountsFunc = DiscoverAccounts
+
+// getAccountIDFunc is the function used by scanOrg to get the management account ID.
+// It defaults to getAccountID and can be swapped in tests.
+var getAccountIDFunc = getAccountID
+
+// scanOneAccountFunc is the function used by scanOrg to scan a single account.
+// It defaults to scanOneAccount and can be swapped in tests to inject failures
+// or stub results.
+var scanOneAccountFunc = scanOneAccount
 
 // scanOneAccount runs the full scan for a single AWS account:
 // Route53 globally + all enabled regions in parallel.
@@ -92,20 +107,22 @@ func scanOneAccount(ctx context.Context, cfg awssdk.Config, accountName string, 
 // It discovers all org accounts, identifies the management account, then scans
 // each account concurrently: management uses base credentials, child accounts
 // use AssumeRole. Per-account failures are non-fatal.
-func (s *Scanner) scanOrg(ctx context.Context, baseCfg awssdk.Config, creds map[string]string, maxWorkers int, publish func(scanner.Event)) ([]calculator.FindingRow, error) {
+// When checkpointPath is non-empty and there are multiple accounts, completed
+// accounts are loaded from a prior checkpoint and skipped on resume.
+func (s *Scanner) scanOrg(ctx context.Context, baseCfg awssdk.Config, creds map[string]string, maxWorkers int, checkpointPath string, publish func(scanner.Event)) ([]calculator.FindingRow, error) {
 	orgRoleName := creds["org_role_name"]
 	if orgRoleName == "" {
 		orgRoleName = "OrganizationAccountAccessRole"
 	}
 
 	// Discover management account ID.
-	mgmtAccountID, err := getAccountID(ctx, baseCfg)
+	mgmtAccountID, err := getAccountIDFunc(ctx, baseCfg)
 	if err != nil {
 		return nil, fmt.Errorf("aws org: get management account id: %w", err)
 	}
 
 	// Discover all org accounts.
-	accounts, err := DiscoverAccounts(ctx, baseCfg)
+	accounts, err := discoverAccountsFunc(ctx, baseCfg)
 	if err != nil {
 		return nil, fmt.Errorf("aws org: discover accounts: %w", err)
 	}
@@ -117,6 +134,32 @@ func (s *Scanner) scanOrg(ctx context.Context, baseCfg awssdk.Config, creds map[
 		Message:  fmt.Sprintf("discovered %d accounts in organization", len(accounts)),
 	})
 
+	// ── Checkpoint: load prior state ──
+	var cp *checkpoint.Checkpoint
+	completed := make(map[string]bool)
+	var findings []calculator.FindingRow
+
+	if checkpointPath != "" && len(accounts) > 1 {
+		if state, loadErr := checkpoint.Load(checkpointPath); loadErr != nil {
+			publish(scanner.Event{
+				Type:     "checkpoint_error",
+				Provider: scanner.ProviderAWS,
+				Message:  fmt.Sprintf("failed to load checkpoint, starting fresh: %v", loadErr),
+			})
+		} else if state != nil {
+			for _, u := range state.CompletedUnits {
+				completed[u.ID] = true
+				findings = append(findings, u.Findings...)
+			}
+			publish(scanner.Event{
+				Type:     "checkpoint_loaded",
+				Provider: scanner.ProviderAWS,
+				Message:  fmt.Sprintf("resuming from checkpoint: %d accounts already complete", len(state.CompletedUnits)),
+			})
+		}
+		cp = checkpoint.New(checkpointPath, "", scanner.ProviderAWS)
+	}
+
 	// Fan out per-account with semaphore.
 	accountWorkers := maxConcurrentAccounts
 	if maxWorkers > 0 {
@@ -125,9 +168,8 @@ func (s *Scanner) scanOrg(ctx context.Context, baseCfg awssdk.Config, creds map[
 	sem := cloudutil.NewSemaphore(accountWorkers)
 
 	var (
-		mu       sync.Mutex
-		wg       sync.WaitGroup
-		findings []calculator.FindingRow
+		mu sync.Mutex
+		wg sync.WaitGroup
 	)
 
 	for _, acct := range accounts {
@@ -144,6 +186,17 @@ func (s *Scanner) scanOrg(ctx context.Context, baseCfg awssdk.Config, creds map[
 			accountName := acct.Name
 			if accountName == "" {
 				accountName = "Account " + acct.ID
+			}
+
+			// ── Checkpoint: skip completed accounts ──
+			if completed[acct.ID] {
+				publish(scanner.Event{
+					Type:     "account_progress",
+					Provider: scanner.ProviderAWS,
+					Status:   "skipped",
+					Message:  fmt.Sprintf("skipping already-completed account %s (%s)", accountName, acct.ID),
+				})
+				return
 			}
 
 			publish(scanner.Event{
@@ -174,7 +227,7 @@ func (s *Scanner) scanOrg(ctx context.Context, baseCfg awssdk.Config, creds map[
 				}
 			}
 
-			rows, scanErr := scanOneAccount(ctx, accountCfg, accountName, 0, publish)
+			rows, scanErr := scanOneAccountFunc(ctx, accountCfg, accountName, 0, publish)
 
 			mu.Lock()
 			findings = append(findings, rows...)
@@ -194,11 +247,39 @@ func (s *Scanner) scanOrg(ctx context.Context, baseCfg awssdk.Config, creds map[
 					Status:   "complete",
 					Message:  fmt.Sprintf("completed account %s (%s): %d findings", accountName, acct.ID, len(rows)),
 				})
+
+				// ── Checkpoint: save after each successful account ──
+				if cp != nil {
+					if saveErr := cp.AddUnit(checkpoint.CompletedUnit{
+						ID:          acct.ID,
+						Name:        accountName,
+						CompletedAt: time.Now(),
+						Findings:    rows,
+					}); saveErr != nil {
+						publish(scanner.Event{
+							Type:     "checkpoint_error",
+							Provider: scanner.ProviderAWS,
+							Message:  fmt.Sprintf("failed to save checkpoint: %v", saveErr),
+						})
+					} else {
+						publish(scanner.Event{
+							Type:     "checkpoint_saved",
+							Provider: scanner.ProviderAWS,
+							Message:  checkpointPath,
+						})
+					}
+				}
 			}
 		}()
 	}
 
 	wg.Wait()
+
+	// ── Checkpoint: clean up on full success ──
+	if cp != nil && checkpointPath != "" {
+		_ = checkpoint.Delete(checkpointPath)
+	}
+
 	return findings, nil
 }
 

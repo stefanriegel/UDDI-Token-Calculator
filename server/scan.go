@@ -511,6 +511,7 @@ func toOrchestratorProviders(specs []ScanProviderSpec) []orchestrator.ScanProvid
 			SelectionMode:  s.SelectionMode,
 			MaxWorkers:     s.MaxWorkers,
 			RequestTimeout: s.RequestTimeout,
+			CheckpointPath: s.CheckpointPath,
 		}
 
 		// For NIOS provider: dispatch based on Mode field.

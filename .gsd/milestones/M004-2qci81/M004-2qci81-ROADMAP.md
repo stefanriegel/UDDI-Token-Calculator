@@ -67,7 +67,7 @@ This milestone is complete only when all are true:
   > After this: User authenticates once, tool auto-discovers all tenant subscriptions, scans them concurrently with configurable parallelism, shows combined results with expanded resource types
 - [x] **S04: GCP Multi-Project Org Discovery + Expanded Resources** `risk:medium` `depends:[S01]`
   > After this: User authenticates with org-level SA, tool discovers all projects via Resource Manager folder traversal, scans in parallel with expanded resource coverage
-- [ ] **S05: Checkpoint/Resume for Long Scans** `risk:medium` `depends:[S01]`
+- [x] **S05: Checkpoint/Resume for Long Scans** `risk:medium` `depends:[S01]`
   > After this: Interrupted 50+ account scan can resume from checkpoint file without re-scanning completed accounts/subscriptions/projects
 - [ ] **S06: DNS Record Type Breakdown** `risk:low` `depends:[S01]`
   > After this: Results show per-type DNS record counts (A, AAAA, CNAME, MX, TXT, SRV, etc.) with supported/unsupported split across all three cloud providers

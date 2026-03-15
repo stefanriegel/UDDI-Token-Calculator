@@ -41,6 +41,8 @@ type ScanProviderRequest struct {
 	// RequestTimeout is the per-request timeout in seconds for this provider.
 	// 0 means use the provider's default timeout.
 	RequestTimeout int
+	// CheckpointPath is the file path for checkpoint persistence. Empty means no checkpointing.
+	CheckpointPath string
 }
 
 // OrchestratorResult holds the aggregated output of a completed scan.
@@ -216,6 +218,7 @@ func buildScanRequest(p ScanProviderRequest, sess *session.Session) scanner.Scan
 		Credentials:    make(map[string]string),
 		MaxWorkers:     p.MaxWorkers,
 		RequestTimeout: p.RequestTimeout,
+		CheckpointPath: p.CheckpointPath,
 	}
 
 	switch p.Provider {
