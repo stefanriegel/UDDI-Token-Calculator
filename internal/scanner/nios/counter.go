@@ -100,7 +100,7 @@ func (mr *memberResolver) resolveIPMember(ip string) string {
 }
 
 // buildCIDREntries parses networkMemberMap keys into cidrEntry slice sorted by
-// prefix length descending (longest match first). Called from buildMemberResolver.
+// prefix length descending (longest match first).
 func buildCIDREntries(networkMemberMap map[string]string) []cidrEntry {
 	entries := make([]cidrEntry, 0, len(networkMemberMap))
 	for key, hostname := range networkMemberMap {
@@ -172,15 +172,9 @@ func (cr *countResult) addMemberDDI(hostname, family string, delta int) {
 	acc.ddiCount += delta
 }
 
-// countObjects processes a slice of parsed objects and produces per-member DDI/IP counts.
-//
-// Parameters:
-//   - objects: slice of parsedObject from XML streaming (pass 2)
-//   - vnodeMap: map from vnode_id string to member hostname (built in pass 1)
-//   - gmHostname: hostname of the Grid Master (used as fallback for unresolvable vnode_ids)
-//   - resolver: member attribution resolver (built in pass 1.5); may be nil
-func countObjects(objects []parsedObject, vnodeMap map[string]string, gmHostname string, resolver *memberResolver) countResult {
-	result := countResult{
+// newCountResult creates an initialized countResult ready for processObject calls.
+func newCountResult() countResult {
+	return countResult{
 		memberAccs:     make(map[string]*memberAcc),
 		memberDDI:      make(map[string]map[string]int),
 		familyCounts:   make(map[string]int),
@@ -188,195 +182,190 @@ func countObjects(objects []parsedObject, vnodeMap map[string]string, gmHostname
 		discoveryIPSet: make(map[string]struct{}),
 		unresolvedDDI:  make(map[string]int),
 	}
+}
 
-	for _, obj := range objects {
-		switch obj.Family {
-		case NiosFamilyLease:
-			state := obj.Props["binding_state"]
-			ip := strings.TrimSpace(obj.Props["ip_address"])
+// processObject processes a single parsed object and updates the countResult in place.
+// This enables stream counting without collecting all objects into a slice first.
+func (result *countResult) processObject(family string, props map[string]string, vnodeID string, vnodeMap map[string]string, gmHostname string, resolver *memberResolver) {
+	switch family {
+	case NiosFamilyLease:
+		state := props["binding_state"]
+		ip := strings.TrimSpace(props["ip_address"])
 
-			// Resolve member hostname via vnodeMap; fall back to GM.
-			memberHost := gmHostname
-			if obj.VnodeID != "" {
-				if h, ok := vnodeMap[obj.VnodeID]; ok {
+		// Resolve member hostname via vnodeMap; fall back to GM.
+		memberHost := gmHostname
+		if vnodeID != "" {
+			if h, ok := vnodeMap[vnodeID]; ok {
+				memberHost = h
+			}
+		}
+
+		// Always count raw lease rows (all binding_states).
+		result.gridLeaseCount++
+		if memberHost != "" {
+			acc := result.getOrCreateAcc(memberHost)
+			acc.leaseCount++
+		}
+
+		// Only active leases contribute to IP sets.
+		if state == "active" && ip != "" {
+			result.globalIPSet[ip] = struct{}{}
+			if memberHost != "" {
+				acc := result.getOrCreateAcc(memberHost)
+				acc.leaseIPSet[ip] = struct{}{}
+				acc.memberIPSet[ip] = struct{}{}
+			}
+		}
+
+	case NiosFamilyFixedAddress:
+		ip := strings.TrimSpace(props["ip_address"])
+		if ip != "" {
+			result.globalIPSet[ip] = struct{}{}
+			memberHost := resolver.resolveIPMember(ip)
+			if memberHost == "" {
+				memberHost = gmHostname
+			}
+			if memberHost != "" {
+				acc := result.getOrCreateAcc(memberHost)
+				acc.memberIPSet[ip] = struct{}{}
+			}
+		}
+
+	case NiosFamilyHostAddress:
+		ip := strings.TrimSpace(props["address"])
+		if ip != "" {
+			result.globalIPSet[ip] = struct{}{}
+			memberHost := resolver.resolveIPMember(ip)
+			if memberHost == "" {
+				memberHost = gmHostname
+			}
+			if memberHost != "" {
+				acc := result.getOrCreateAcc(memberHost)
+				acc.memberIPSet[ip] = struct{}{}
+			}
+		}
+
+	case NiosFamilyNetwork:
+		delta := 1
+		result.familyCounts[NiosFamilyNetwork] += delta
+		result.gridDDI += delta
+
+		networkKey := strings.TrimSpace(props["address"])
+		cidrVal := strings.TrimSpace(props["cidr"])
+		nwView := props["network_view"]
+
+		var fullCIDR string
+		if strings.Contains(cidrVal, "/") {
+			fullCIDR = cidrVal
+		} else if networkKey != "" && cidrVal != "" {
+			fullCIDR = networkKey + "/" + cidrVal
+		}
+
+		if networkKey != "" && cidrVal != "" && nwView != "" {
+			lookupKey := networkKey + "/" + cidrVal + "/" + nwView
+			if memberHost := resolver.resolveNetworkMember(lookupKey); memberHost != "" {
+				result.addMemberDDI(memberHost, NiosFamilyNetwork, delta)
+			} else {
+				result.unresolvedDDI[NiosFamilyNetwork] += delta
+			}
+		} else {
+			result.unresolvedDDI[NiosFamilyNetwork] += delta
+		}
+
+		if fullCIDR != "" {
+			if netIP, ipNet, err := net.ParseCIDR(fullCIDR); err == nil {
+				networkAddr := netIP.Mask(ipNet.Mask).String()
+				result.globalIPSet[networkAddr] = struct{}{}
+				mask := ipNet.Mask
+				broadcast := make(net.IP, len(ipNet.IP))
+				for i := range ipNet.IP {
+					broadcast[i] = ipNet.IP[i] | ^mask[i]
+				}
+				bcastStr := broadcast.String()
+				result.globalIPSet[bcastStr] = struct{}{}
+
+				nwMemberHost := ""
+				if networkKey != "" && cidrVal != "" && nwView != "" {
+					lookupKey := networkKey + "/" + cidrVal + "/" + nwView
+					nwMemberHost = resolver.resolveNetworkMember(lookupKey)
+				}
+				if nwMemberHost == "" {
+					nwMemberHost = gmHostname
+				}
+				if nwMemberHost != "" {
+					acc := result.getOrCreateAcc(nwMemberHost)
+					acc.memberIPSet[networkAddr] = struct{}{}
+					acc.memberIPSet[bcastStr] = struct{}{}
+				}
+			}
+		}
+
+	case NiosFamilyHostObject:
+		aliases := strings.TrimSpace(props["aliases"])
+		delta := 2
+		if aliases != "" {
+			delta = 3
+		}
+		result.familyCounts[NiosFamilyHostObject] += delta
+		result.gridDDI += delta
+
+		zone := props["zone"]
+		if memberHost := resolver.resolveDNSMember(zone); memberHost != "" {
+			result.addMemberDDI(memberHost, NiosFamilyHostObject, delta)
+		} else {
+			result.unresolvedDDI[NiosFamilyHostObject] += delta
+		}
+
+	case NiosFamilyDiscoveryData:
+		ip := strings.TrimSpace(props["ip_address"])
+		if ip != "" {
+			result.globalIPSet[ip] = struct{}{}
+			result.discoveryIPSet[ip] = struct{}{}
+			memberHost := resolver.resolveIPMember(ip)
+			if memberHost == "" {
+				memberHost = gmHostname
+			}
+			if memberHost != "" {
+				acc := result.getOrCreateAcc(memberHost)
+				acc.memberIPSet[ip] = struct{}{}
+			}
+		}
+
+	default:
+		if _, isDDI := DDIFamilies[family]; isDDI {
+			delta := 1
+			result.familyCounts[family] += delta
+			result.gridDDI += delta
+
+			zone := props["zone"]
+			memberProp := props["member"]
+
+			memberHost := ""
+			if zone != "" {
+				memberHost = resolver.resolveDNSMember(zone)
+			}
+			if memberHost == "" && memberProp != "" {
+				if h, ok := vnodeMap[memberProp]; ok {
 					memberHost = h
 				}
 			}
 
-			// Always count raw lease rows (all binding_states).
-			result.gridLeaseCount++
 			if memberHost != "" {
-				acc := result.getOrCreateAcc(memberHost)
-				acc.leaseCount++
-			}
-
-			// Only active leases contribute to IP sets.
-			if state == "active" && ip != "" {
-				result.globalIPSet[ip] = struct{}{}
-				if memberHost != "" {
-					acc := result.getOrCreateAcc(memberHost)
-					acc.leaseIPSet[ip] = struct{}{}
-					acc.memberIPSet[ip] = struct{}{}
-				}
-			}
-
-		case NiosFamilyFixedAddress:
-			ip := strings.TrimSpace(obj.Props["ip_address"])
-			if ip != "" {
-				result.globalIPSet[ip] = struct{}{}
-				// Attribute to member via CIDR containment; fallback to GM.
-				memberHost := resolver.resolveIPMember(ip)
-				if memberHost == "" {
-					memberHost = gmHostname
-				}
-				if memberHost != "" {
-					acc := result.getOrCreateAcc(memberHost)
-					acc.memberIPSet[ip] = struct{}{}
-				}
-			}
-
-		case NiosFamilyHostAddress:
-			ip := strings.TrimSpace(obj.Props["address"])
-			if ip != "" {
-				result.globalIPSet[ip] = struct{}{}
-				// Attribute to member via CIDR containment; fallback to GM.
-				memberHost := resolver.resolveIPMember(ip)
-				if memberHost == "" {
-					memberHost = gmHostname
-				}
-				if memberHost != "" {
-					acc := result.getOrCreateAcc(memberHost)
-					acc.memberIPSet[ip] = struct{}{}
-				}
-			}
-
-		case NiosFamilyNetwork:
-			delta := 1
-			result.familyCounts[NiosFamilyNetwork] += delta
-			result.gridDDI += delta
-
-			// Attribute to member via networkMemberMap.
-			// Real backups: address="10.0.0.0", cidr="24", network_view="0"
-			// Network key in dhcp_member: "10.0.0.0/24/0"
-			networkKey := strings.TrimSpace(obj.Props["address"])
-			cidrVal := strings.TrimSpace(obj.Props["cidr"])
-			nwView := obj.Props["network_view"]
-
-			// Build the CIDR for IP parsing. Handle both formats:
-			// - Full CIDR in cidr field: "10.0.1.0/24" (test fixtures)
-			// - Prefix-only cidr: "24" with separate address field (real backups)
-			var fullCIDR string
-			if strings.Contains(cidrVal, "/") {
-				fullCIDR = cidrVal
-			} else if networkKey != "" && cidrVal != "" {
-				fullCIDR = networkKey + "/" + cidrVal
-			}
-
-			// Build dhcp_member lookup key: "address/cidr/view"
-			if networkKey != "" && cidrVal != "" && nwView != "" {
-				lookupKey := networkKey + "/" + cidrVal + "/" + nwView
-				if memberHost := resolver.resolveNetworkMember(lookupKey); memberHost != "" {
-					result.addMemberDDI(memberHost, NiosFamilyNetwork, delta)
-				} else {
-					result.unresolvedDDI[NiosFamilyNetwork] += delta
-				}
+				result.addMemberDDI(memberHost, family, delta)
 			} else {
-				result.unresolvedDDI[NiosFamilyNetwork] += delta
-			}
-
-			// Add network+broadcast addresses to global IP set and member IP set.
-			if fullCIDR != "" {
-				if netIP, ipNet, err := net.ParseCIDR(fullCIDR); err == nil {
-					networkAddr := netIP.Mask(ipNet.Mask).String()
-					result.globalIPSet[networkAddr] = struct{}{}
-					mask := ipNet.Mask
-					broadcast := make(net.IP, len(ipNet.IP))
-					for i := range ipNet.IP {
-						broadcast[i] = ipNet.IP[i] | ^mask[i]
-					}
-					bcastStr := broadcast.String()
-					result.globalIPSet[bcastStr] = struct{}{}
-
-					// Attribute network+broadcast IPs to the network's resolved member.
-					nwMemberHost := ""
-					if networkKey != "" && cidrVal != "" && nwView != "" {
-						lookupKey := networkKey + "/" + cidrVal + "/" + nwView
-						nwMemberHost = resolver.resolveNetworkMember(lookupKey)
-					}
-					if nwMemberHost == "" {
-						nwMemberHost = gmHostname
-					}
-					if nwMemberHost != "" {
-						acc := result.getOrCreateAcc(nwMemberHost)
-						acc.memberIPSet[networkAddr] = struct{}{}
-						acc.memberIPSet[bcastStr] = struct{}{}
-					}
-				}
-			}
-
-		case NiosFamilyHostObject:
-			aliases := strings.TrimSpace(obj.Props["aliases"])
-			delta := 2
-			if aliases != "" {
-				delta = 3
-			}
-			result.familyCounts[NiosFamilyHostObject] += delta
-			result.gridDDI += delta
-
-			// Attribute HOST_OBJECT to member via its zone.
-			zone := obj.Props["zone"]
-			if memberHost := resolver.resolveDNSMember(zone); memberHost != "" {
-				result.addMemberDDI(memberHost, NiosFamilyHostObject, delta)
-			} else {
-				result.unresolvedDDI[NiosFamilyHostObject] += delta
-			}
-
-		case NiosFamilyDiscoveryData:
-			ip := strings.TrimSpace(obj.Props["ip_address"])
-			if ip != "" {
-				result.globalIPSet[ip] = struct{}{}
-				result.discoveryIPSet[ip] = struct{}{}
-				// Attribute to member via CIDR containment; fallback to GM.
-				memberHost := resolver.resolveIPMember(ip)
-				if memberHost == "" {
-					memberHost = gmHostname
-				}
-				if memberHost != "" {
-					acc := result.getOrCreateAcc(memberHost)
-					acc.memberIPSet[ip] = struct{}{}
-				}
-			}
-
-		default:
-			if _, isDDI := DDIFamilies[obj.Family]; isDDI {
-				delta := 1
-				result.familyCounts[obj.Family] += delta
-				result.gridDDI += delta
-
-				// DNS records have a "zone" property for member resolution.
-				zone := obj.Props["zone"]
-				// DHCP ranges may have a "member" property (oid → vnodeMap).
-				memberProp := obj.Props["member"]
-
-				memberHost := ""
-				if zone != "" {
-					memberHost = resolver.resolveDNSMember(zone)
-				}
-				if memberHost == "" && memberProp != "" {
-					if h, ok := vnodeMap[memberProp]; ok {
-						memberHost = h
-					}
-				}
-
-				if memberHost != "" {
-					result.addMemberDDI(memberHost, obj.Family, delta)
-				} else {
-					result.unresolvedDDI[obj.Family] += delta
-				}
+				result.unresolvedDDI[family] += delta
 			}
 		}
 	}
+}
 
+// countObjects processes a slice of parsed objects and produces per-member DDI/IP counts.
+// Kept for backward compatibility with tests; delegates to processObject per item.
+func countObjects(objects []parsedObject, vnodeMap map[string]string, gmHostname string, resolver *memberResolver) countResult {
+	result := newCountResult()
+	for _, obj := range objects {
+		result.processObject(obj.Family, obj.Props, obj.VnodeID, vnodeMap, gmHostname, resolver)
+	}
 	return result
 }
 

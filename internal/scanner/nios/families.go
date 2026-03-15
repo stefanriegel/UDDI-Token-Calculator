@@ -31,7 +31,8 @@ const (
 	NiosFamilyDTCServer        = "dtc_server"
 	NiosFamilyDTCMonitor       = "dtc_monitor"
 	NiosFamilyDTCTopology      = "dtc_topology"
-	NiosFamilyDiscoveryData    = "discovery_data"
+	NiosFamilyDiscoveryData      = "discovery_data"
+	NiosFamilyDNSRecordAlias     = "dns_record_alias"
 )
 
 // XMLTypeToFamily maps the __type PROPERTY VALUE strings found in onedb.xml
@@ -59,6 +60,9 @@ var XMLTypeToFamily = map[string]string{
 	".com.infoblox.dns.zone":              NiosFamilyDNSZone,
 	".com.infoblox.dns.network_view":      NiosFamilyNetworkView,
 	".com.infoblox.one.virtual_node":      NiosFamilyMember,
+
+	// DNS alias record — similar to CNAME, counts as DDI.
+	".com.infoblox.dns.alias_record": NiosFamilyDNSRecordAlias,
 
 	// Discovery data — Active IP source (not DDI, not member-scoped).
 	".com.infoblox.dns.discovery_data": NiosFamilyDiscoveryData,
@@ -136,6 +140,7 @@ var DDIFamilies = map[string]struct{}{
 	NiosFamilyDTCServer:        {},
 	NiosFamilyDTCMonitor:       {},
 	NiosFamilyDTCTopology:      {},
+	NiosFamilyDNSRecordAlias:   {},
 }
 
 // MemberScopedFamilies is the set of families whose objects carry a vnode_id

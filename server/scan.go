@@ -2,6 +2,7 @@ package server
 
 import (
 	"archive/tar"
+	"bufio"
 	"compress/gzip"
 	"context"
 	"encoding/json"
@@ -171,36 +172,85 @@ func (h *ScanHandler) HandleUploadNiosBackup(w http.ResponseWriter, r *http.Requ
 	defer file.Close()
 
 	name := strings.ToLower(header.Filename)
-	if !strings.HasSuffix(name, ".tar.gz") && !strings.HasSuffix(name, ".tgz") && !strings.HasSuffix(name, ".bak") {
-		writeJSON(w, http.StatusOK, NiosUploadResponse{Valid: false, Error: "unsupported file type: must be .tar.gz, .tgz, or .bak", Members: []NiosGridMember{}})
+	isXML := strings.HasSuffix(name, ".xml")
+	isArchive := strings.HasSuffix(name, ".tar.gz") || strings.HasSuffix(name, ".tgz") || strings.HasSuffix(name, ".bak")
+	if !isXML && !isArchive {
+		writeJSON(w, http.StatusOK, NiosUploadResponse{Valid: false, Error: "unsupported file type: must be .tar.gz, .tgz, .bak, or .xml", Members: []NiosGridMember{}})
 		return
 	}
 
-	members, err := parseNiosBackup(file)
-	if err != nil {
-		writeJSON(w, http.StatusOK, NiosUploadResponse{Valid: false, Error: err.Error(), Members: []NiosGridMember{}})
-		return
-	}
-
-	// Seek the multipart file back to the start so we can write it to a temp file.
-	if _, err := file.Seek(0, io.SeekStart); err != nil {
-		writeJSON(w, http.StatusInternalServerError, NiosUploadResponse{Valid: false, Error: "failed to seek uploaded file: " + err.Error(), Members: []NiosGridMember{}})
-		return
-	}
-
-	// Write to temp file so the NIOS scanner can do two-pass streaming later.
-	tmp, err := os.CreateTemp("", "nios-backup-*.tar.gz")
+	// Write onedb.xml to a temp file while parsing members simultaneously.
+	// For archives: extract onedb.xml from gzip+tar (single decompression).
+	// For raw .xml: copy directly (no decompression needed).
+	tmp, err := os.CreateTemp("", "nios-onedb-*.xml")
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, NiosUploadResponse{Valid: false, Error: "failed to create temp file: " + err.Error(), Members: []NiosGridMember{}})
 		return
 	}
-	if _, err := io.Copy(tmp, file); err != nil {
-		tmp.Close()
-		os.Remove(tmp.Name())
-		writeJSON(w, http.StatusInternalServerError, NiosUploadResponse{Valid: false, Error: "failed to write temp file: " + err.Error(), Members: []NiosGridMember{}})
-		return
+
+	var members []NiosGridMember
+	var parseErr error
+
+	if isXML {
+		// Raw onedb.xml upload — TeeReader to temp + parse in one pass.
+		bw := bufio.NewWriterSize(tmp, 256<<10)
+		tee := io.TeeReader(file, bw)
+		members, parseErr = parseOneDBXML(tee)
+		if flushErr := bw.Flush(); flushErr != nil && parseErr == nil {
+			parseErr = flushErr
+		}
+	} else {
+		// Archive upload — decompress, find onedb.xml, extract + parse.
+		gz, gzErr := gzip.NewReader(file)
+		if gzErr != nil {
+			tmp.Close()
+			os.Remove(tmp.Name())
+			writeJSON(w, http.StatusOK, NiosUploadResponse{Valid: false, Error: "not a valid gzip archive: " + gzErr.Error(), Members: []NiosGridMember{}})
+			return
+		}
+
+		tr := tar.NewReader(gz)
+		foundXML := false
+		for {
+			hdr, err := tr.Next()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				gz.Close()
+				tmp.Close()
+				os.Remove(tmp.Name())
+				writeJSON(w, http.StatusOK, NiosUploadResponse{Valid: false, Error: "error reading archive: " + err.Error(), Members: []NiosGridMember{}})
+				return
+			}
+			if filepath.Base(hdr.Name) != "onedb.xml" {
+				continue
+			}
+			foundXML = true
+			bw := bufio.NewWriterSize(tmp, 256<<10)
+			tee := io.TeeReader(tr, bw)
+			members, parseErr = parseOneDBXML(tee)
+			if flushErr := bw.Flush(); flushErr != nil && parseErr == nil {
+				parseErr = flushErr
+			}
+			gz.Close()
+			break
+		}
+
+		if !foundXML {
+			tmp.Close()
+			os.Remove(tmp.Name())
+			writeJSON(w, http.StatusOK, NiosUploadResponse{Valid: false, Error: "no onedb.xml found in backup", Members: []NiosGridMember{}})
+			return
+		}
 	}
 	tmp.Close()
+
+	if parseErr != nil {
+		os.Remove(tmp.Name())
+		writeJSON(w, http.StatusOK, NiosUploadResponse{Valid: false, Error: parseErr.Error(), Members: []NiosGridMember{}})
+		return
+	}
 
 	// Generate an opaque token keyed by upload timestamp.
 	token := fmt.Sprintf("%d", time.Now().UnixNano())
@@ -233,36 +283,6 @@ func (h *ScanHandler) HandleUploadNiosBackup(w http.ResponseWriter, r *http.Requ
 		Members:     members,
 		BackupToken: token,
 	})
-}
-
-// parseNiosBackup reads a gzip+tar archive (regardless of extension) and extracts
-// Grid Member information from the embedded onedb.xml file.
-func parseNiosBackup(r io.Reader) ([]NiosGridMember, error) {
-	gz, err := gzip.NewReader(r)
-	if err != nil {
-		return nil, fmt.Errorf("not a valid gzip archive: %w", err)
-	}
-	defer gz.Close()
-
-	tr := tar.NewReader(gz)
-	for {
-		hdr, err := tr.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return nil, fmt.Errorf("error reading archive: %w", err)
-		}
-
-		if filepath.Base(hdr.Name) != "onedb.xml" {
-			continue
-		}
-
-		// Found onedb.xml — parse it.
-		return parseOneDBXML(tr)
-	}
-
-	return nil, fmt.Errorf("no onedb.xml found in backup")
 }
 
 // parseOneDBXML extracts Grid Member records from a NIOS onedb.xml stream.
