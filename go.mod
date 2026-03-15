@@ -26,7 +26,7 @@ require (
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c
 	github.com/xuri/excelize/v2 v2.10.1
 	golang.org/x/oauth2 v0.36.0
-	google.golang.org/api v0.270.0
+	google.golang.org/api v0.271.0
 	google.golang.org/protobuf v1.36.11
 )
 
