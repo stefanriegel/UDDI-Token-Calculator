@@ -70,10 +70,13 @@ func (s *Store) CloneSession(oldID string) (*Session, bool) {
 		StartedAt: time.Now(),
 		Broker:    broker.New(),
 		// Share credential structs — pointer copy preserves live token objects.
-		AWS:   old.AWS,
-		Azure: old.Azure,
-		GCP:   old.GCP,
-		AD:    old.AD,
+		AWS:         old.AWS,
+		Azure:       old.Azure,
+		GCP:         old.GCP,
+		AD:          old.AD,
+		Bluecat:     old.Bluecat,
+		EfficientIP: old.EfficientIP,
+		NiosWAPI:    old.NiosWAPI,
 	}
 	s.m.Store(newSess.ID, newSess)
 	return newSess, true

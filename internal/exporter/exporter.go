@@ -15,10 +15,13 @@ import (
 
 // providerDisplayNames maps internal provider keys to display names used as sheet titles.
 var providerDisplayNames = map[string]string{
-	"aws":   "AWS",
-	"azure": "Azure",
-	"gcp":   "GCP",
-	"ad":    "AD",
+	"aws":         "AWS",
+	"azure":       "Azure",
+	"gcp":         "GCP",
+	"ad":          "AD",
+	"nios":        "NIOS",
+	"bluecat":     "Bluecat",
+	"efficientip": "EfficientIP",
 }
 
 // providerDisplayName returns the human-readable name for a provider key.
@@ -26,7 +29,7 @@ func providerDisplayName(provider string) string {
 	if name, ok := providerDisplayNames[provider]; ok {
 		return name
 	}
-	return "Unknown"
+	return provider
 }
 
 // findingsByProvider filters findings to those matching the given provider key.
@@ -70,8 +73,8 @@ func Build(w io.Writer, sess *session.Session) error {
 		return err
 	}
 
-	// Sheets 3-6 — Per-provider (conditional).
-	for _, p := range []string{"aws", "azure", "gcp", "ad"} {
+	// Sheets 3+ — Per-provider (conditional).
+	for _, p := range []string{"aws", "azure", "gcp", "ad", "nios", "bluecat", "efficientip"} {
 		rows := findingsByProvider(sess.TokenResult.Findings, p)
 		if len(rows) == 0 {
 			continue
@@ -178,7 +181,7 @@ func buildSummarySheet(f *excelize.File, headerStyle int, sess *session.Session)
 	}
 
 	row := 10
-	for _, p := range []string{"aws", "azure", "gcp", "ad"} {
+	for _, p := range []string{"aws", "azure", "gcp", "ad", "nios", "bluecat", "efficientip"} {
 		if total, ok := providerTotals[p]; ok {
 			cell, _ := excelize.CoordinatesToCellName(1, row)
 			if err := sw.SetRow(cell, []interface{}{providerDisplayName(p), total}); err != nil {

@@ -16,6 +16,8 @@ import (
 
 	awsscanner "github.com/infoblox/uddi-go-token-calculator/internal/scanner/aws"
 	azurescanner "github.com/infoblox/uddi-go-token-calculator/internal/scanner/azure"
+	bluecatscanner "github.com/infoblox/uddi-go-token-calculator/internal/scanner/bluecat"
+	efficientipscanner "github.com/infoblox/uddi-go-token-calculator/internal/scanner/efficientip"
 	gcpscanner "github.com/infoblox/uddi-go-token-calculator/internal/scanner/gcp"
 	adscanner "github.com/infoblox/uddi-go-token-calculator/internal/scanner/ad"
 	niosscanner "github.com/infoblox/uddi-go-token-calculator/internal/scanner/nios"
@@ -52,11 +54,14 @@ func main() {
 	//    GCP scanner is the real Phase 5 implementation. AD real implementation added in Phase 6.
 	store := session.NewStore()
 	orch := orchestrator.New(map[string]scanner.Scanner{
-		scanner.ProviderAWS:   awsscanner.New(),
-		scanner.ProviderAzure: azurescanner.New(),
-		scanner.ProviderGCP:   gcpscanner.New(),
-		scanner.ProviderAD:    adscanner.New(),
-		scanner.ProviderNIOS:  niosscanner.New(),
+		scanner.ProviderAWS:         awsscanner.New(),
+		scanner.ProviderAzure:       azurescanner.New(),
+		scanner.ProviderGCP:         gcpscanner.New(),
+		scanner.ProviderAD:          adscanner.New(),
+		scanner.ProviderNIOS:        niosscanner.New(),
+		"nios-wapi":                 niosscanner.NewWAPI(),
+		scanner.ProviderBluecat:     bluecatscanner.New(),
+		scanner.ProviderEfficientIP: efficientipscanner.New(),
 	})
 
 	// 4. Build the chi router (health endpoint + scan lifecycle + static fallback).

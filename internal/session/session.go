@@ -78,6 +78,36 @@ type ADCredentials struct {
 	Domain     string
 }
 
+// BluecatCredentials holds Bluecat Address Manager authentication material.
+// No json tags — credentials must never be accidentally serialized.
+type BluecatCredentials struct {
+	URL              string
+	Username         string
+	Password         string
+	SkipTLS          bool
+	ConfigurationIDs []string // optional config ID filter
+}
+
+// EfficientIPCredentials holds EfficientIP SOLIDserver authentication material.
+// No json tags — credentials must never be accidentally serialized.
+type EfficientIPCredentials struct {
+	URL      string
+	Username string
+	Password string
+	SkipTLS  bool
+	SiteIDs  []string // optional site ID filter
+}
+
+// NiosWAPICredentials holds NIOS WAPI live scanner authentication material.
+// No json tags — credentials must never be accidentally serialized.
+type NiosWAPICredentials struct {
+	URL             string
+	Username        string
+	Password        string
+	SkipTLS         bool
+	ExplicitVersion string // optional WAPI version override
+}
+
 // ProviderError records a per-resource-type failure that occurred during a scan.
 // The scan continues for all other providers after an individual error (RES-01).
 type ProviderError struct {
@@ -103,10 +133,13 @@ type Session struct {
 	StartedAt   time.Time
 	CompletedAt *time.Time
 
-	AWS   *AWSCredentials
-	Azure *AzureCredentials
-	GCP   *GCPCredentials
-	AD    *ADCredentials
+	AWS         *AWSCredentials
+	Azure       *AzureCredentials
+	GCP         *GCPCredentials
+	AD          *ADCredentials
+	Bluecat     *BluecatCredentials
+	EfficientIP *EfficientIPCredentials
+	NiosWAPI    *NiosWAPICredentials
 
 	Errors []ProviderError
 	Broker *broker.Broker
@@ -178,6 +211,9 @@ func (s *Session) ZeroCreds() {
 	s.Azure = nil
 	s.GCP = nil
 	s.AD = nil
+	s.Bluecat = nil
+	s.EfficientIP = nil
+	s.NiosWAPI = nil
 }
 
 // safeSession is a sanitized view of Session used for JSON marshaling.

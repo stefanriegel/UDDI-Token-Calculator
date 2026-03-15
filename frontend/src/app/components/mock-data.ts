@@ -4,8 +4,10 @@ import awsLogo from '../../assets/logos/aws.svg';
 import azureLogo from '../../assets/logos/azure.svg';
 import gcpLogo from '../../assets/logos/gcp.svg';
 import microsoftLogo from '../../assets/logos/microsoft.svg';
+import bluecatLogo from '../../assets/logos/bluecat.svg';
+import efficientipLogo from '../../assets/logos/efficientip.svg';
 
-export type ProviderType = 'aws' | 'azure' | 'gcp' | 'microsoft' | 'nios';
+export type ProviderType = 'aws' | 'azure' | 'gcp' | 'microsoft' | 'nios' | 'bluecat' | 'efficientip';
 
 /**
  * Map frontend provider IDs to backend API provider IDs.
@@ -17,6 +19,8 @@ export const BACKEND_PROVIDER_ID: Record<ProviderType, string> = {
   gcp: 'gcp',
   microsoft: 'ad',
   nios: 'nios',
+  bluecat: 'bluecat',
+  efficientip: 'efficientip',
 };
 
 /**
@@ -24,6 +28,7 @@ export const BACKEND_PROVIDER_ID: Record<ProviderType, string> = {
  */
 export function toFrontendProvider(backendId: string): ProviderType {
   if (backendId === 'ad') return 'microsoft';
+  // bluecat and efficientip use identical IDs on both sides
   return backendId as ProviderType;
 }
 
@@ -36,6 +41,8 @@ export const PROVIDER_LOGOS: Record<ProviderType, string> = {
   gcp: gcpLogo,
   microsoft: microsoftLogo,
   nios: niosGridLogo,
+  bluecat: bluecatLogo,
+  efficientip: efficientipLogo,
 };
 
 export interface CredentialField {
@@ -250,9 +257,9 @@ export const PROVIDERS: ProviderOption[] = [
   {
     id: 'nios',
     name: 'NIOS',
-    fullName: 'Infoblox NIOS Grid Backup',
+    fullName: 'Infoblox NIOS Grid',
     color: '#00a5e5',
-    description: 'Upload a NIOS Grid backup (tar.gz) to extract DNS, DHCP, and IPAM objects',
+    description: 'Upload a Grid backup or connect via WAPI to extract DNS, DHCP, and IPAM objects',
     subscriptionLabel: 'Grid Members',
     isFileUpload: true,
     authMethods: [
@@ -261,6 +268,57 @@ export const PROVIDERS: ProviderOption[] = [
         name: 'Grid Backup Upload',
         description: 'Upload a NIOS Grid backup file (.tar.gz) exported from the Grid Master. The backup will be parsed locally to extract DDI configuration.',
         fields: [],
+      },
+      {
+        id: 'wapi',
+        name: 'Live API (WAPI)',
+        description: 'Connect directly to the NIOS Grid Manager via the Web API (WAPI) to discover DDI objects in real-time.',
+        fields: [
+          { key: 'wapi_url', label: 'Grid Manager URL', placeholder: 'https://grid-manager.example.com' },
+          { key: 'wapi_username', label: 'Username', placeholder: 'admin' },
+          { key: 'wapi_password', label: 'Password', placeholder: '', secret: true },
+          { key: 'wapi_version', label: 'WAPI Version (optional)', placeholder: 'auto-detect' },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'bluecat',
+    name: 'BlueCat',
+    fullName: 'BlueCat Address Manager',
+    color: '#0065A3',
+    description: 'DNS zones, IP blocks, networks, and DHCP ranges',
+    subscriptionLabel: 'Configurations',
+    authMethods: [
+      {
+        id: 'credentials',
+        name: 'API Credentials',
+        description: 'BlueCat Address Manager URL and credentials',
+        fields: [
+          { key: 'bluecat_url', label: 'BlueCat URL', placeholder: 'https://bluecat.example.com' },
+          { key: 'bluecat_username', label: 'Username', placeholder: 'admin' },
+          { key: 'bluecat_password', label: 'Password', placeholder: '', secret: true },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'efficientip',
+    name: 'EfficientIP',
+    fullName: 'EfficientIP SOLIDserver',
+    color: '#00A651',
+    description: 'DNS views, IP subnets, pools, and DHCP scopes',
+    subscriptionLabel: 'Sites',
+    authMethods: [
+      {
+        id: 'credentials',
+        name: 'API Credentials',
+        description: 'EfficientIP SOLIDserver URL and credentials',
+        fields: [
+          { key: 'efficientip_url', label: 'SOLIDserver URL', placeholder: 'https://solidserver.example.com' },
+          { key: 'efficientip_username', label: 'Username', placeholder: 'admin' },
+          { key: 'efficientip_password', label: 'Password', placeholder: '', secret: true },
+        ],
       },
     ],
   },
@@ -366,6 +424,12 @@ export const MOCK_SUBSCRIPTIONS: Record<ProviderType, { id: string; name: string
     { id: 'nios-dhcp-west', name: 'dhcp-west-01.corp.example.com (DHCP)', selected: false },
     { id: 'nios-ipam', name: 'ipam-01.corp.example.com (IPAM)', selected: true },
     { id: 'nios-reporting', name: 'reporting-01.corp.example.com (Reporting)', selected: false },
+  ],
+  bluecat: [
+    { id: 'bluecat-1', name: 'BlueCat Instance', selected: true },
+  ],
+  efficientip: [
+    { id: 'efficientip-1', name: 'EfficientIP Instance', selected: true },
   ],
 };
 
@@ -574,6 +638,23 @@ export function generateMockFindings(selectedProviders: ProviderType[]): Finding
       row('nios', 'ipam-01.corp.example.com', 'DDI Object', 'IP Networks', 86),
       row('nios', 'ipam-01.corp.example.com', 'DDI Object', 'IP Ranges', 24),
       row('nios', 'ipam-01.corp.example.com', 'DDI Object', 'Network Containers', 12),
+    ],
+    bluecat: [
+      row('bluecat', 'BlueCat Instance', 'DDI Object', 'DNS Zones', 34),
+      row('bluecat', 'BlueCat Instance', 'DDI Object', 'DNS Resource Records', 2480),
+      row('bluecat', 'BlueCat Instance', 'DDI Object', 'IP4 Blocks', 12),
+      row('bluecat', 'BlueCat Instance', 'DDI Object', 'IP4 Networks', 86),
+      row('bluecat', 'BlueCat Instance', 'DDI Object', 'DHCP Ranges', 42),
+      row('bluecat', 'BlueCat Instance', 'DDI Object', 'MAC Addresses', 156),
+    ],
+    efficientip: [
+      row('efficientip', 'EfficientIP Instance', 'DDI Object', 'DNS Views', 4),
+      row('efficientip', 'EfficientIP Instance', 'DDI Object', 'DNS Zones', 28),
+      row('efficientip', 'EfficientIP Instance', 'DDI Object', 'DNS Resource Records', 1840),
+      row('efficientip', 'EfficientIP Instance', 'DDI Object', 'IP Subnets', 64),
+      row('efficientip', 'EfficientIP Instance', 'DDI Object', 'IP Pools', 32),
+      row('efficientip', 'EfficientIP Instance', 'DDI Object', 'DHCP Scopes', 48),
+      row('efficientip', 'EfficientIP Instance', 'DDI Object', 'DHCP Ranges', 38),
     ],
   };
 

@@ -30,11 +30,15 @@ import {
   Github,
   X,
   Plus,
+  Shield,
 } from 'lucide-react';
 import { useBackendConnection } from './use-backend';
 import {
   validateCredentials as apiValidate,
   uploadNiosBackup as apiUploadNios,
+  validateBluecat as apiValidateBluecat,
+  validateEfficientip as apiValidateEfficientip,
+  validateNiosWapi as apiValidateNiosWapi,
   startScan as apiStartScan,
   getScanStatus as apiGetScanStatus,
   getScanResults as apiGetScanResults,
@@ -171,6 +175,8 @@ export function Wizard() {
     gcp: {},
     microsoft: {},
     nios: {},
+    bluecat: {},
+    efficientip: {},
   });
   const [credentialStatus, setCredentialStatus] = useState<Record<ProviderType, 'idle' | 'validating' | 'valid' | 'error'>>({
     aws: 'idle',
@@ -178,6 +184,8 @@ export function Wizard() {
     gcp: 'idle',
     microsoft: 'idle',
     nios: 'idle',
+    bluecat: 'idle',
+    efficientip: 'idle',
   });
   const [subscriptions, setSubscriptions] = useState<
     Record<ProviderType, { id: string; name: string; selected: boolean }[]>
@@ -187,14 +195,16 @@ export function Wizard() {
     gcp: [],
     microsoft: [],
     nios: [],
+    bluecat: [],
+    efficientip: [],
   });
   const [scanProgress, setScanProgress] = useState(0);
   const [providerScanProgress, setProviderScanProgress] = useState<Record<ProviderType, number>>({
-    aws: 0, azure: 0, gcp: 0, microsoft: 0, nios: 0,
+    aws: 0, azure: 0, gcp: 0, microsoft: 0, nios: 0, bluecat: 0, efficientip: 0,
   });
   const [findings, setFindings] = useState<FindingRow[]>([]);
   const [credentialError, setCredentialError] = useState<Record<ProviderType, string>>({
-    aws: '', azure: '', gcp: '', microsoft: '', nios: '',
+    aws: '', azure: '', gcp: '', microsoft: '', nios: '', bluecat: '', efficientip: '',
   });
   const [scanError, setScanError] = useState<string>('');
   const scanIntervalsRef = useRef<ReturnType<typeof setInterval>[]>([]);
@@ -205,9 +215,11 @@ export function Wizard() {
     gcp: 'browser-oauth',
     microsoft: 'kerberos',
     nios: 'backup-upload',
+    bluecat: 'credentials',
+    efficientip: 'credentials',
   });
   const [sourceSearch, setSourceSearch] = useState<Record<ProviderType, string>>({
-    aws: '', azure: '', gcp: '', microsoft: '', nios: '',
+    aws: '', azure: '', gcp: '', microsoft: '', nios: '', bluecat: '', efficientip: '',
   });
   // Top consumer expandable cards
   const [topDnsExpanded, setTopDnsExpanded] = useState(false);
@@ -223,10 +235,11 @@ export function Wizard() {
 
   // Selection mode: 'include' = checked items will be scanned; 'exclude' = checked items will be SKIPPED
   const [selectionMode, setSelectionMode] = useState<Record<ProviderType, 'include' | 'exclude'>>({
-    aws: 'include', azure: 'include', gcp: 'include', microsoft: 'include', nios: 'include',
+    aws: 'include', azure: 'include', gcp: 'include', microsoft: 'include', nios: 'include', bluecat: 'include', efficientip: 'include',
   });
 
   // NIOS-specific state
+  const [niosMode, setNiosMode] = useState<'backup' | 'wapi'>('backup');
   const [niosUploadedFile, setNiosUploadedFile] = useState<File | null>(null);
   const [niosDragOver, setNiosDragOver] = useState(false);
   // NIOS-X migration planner: which NIOS sources (grid members) to migrate, with per-member form factor
@@ -303,16 +316,17 @@ export function Wizard() {
     clearScanIntervals();
     setCurrentStep('providers');
     setSelectedProviders([]);
-    setCredentials({ aws: {}, azure: {}, gcp: {}, microsoft: {}, nios: {} });
-    setCredentialStatus({ aws: 'idle', azure: 'idle', gcp: 'idle', microsoft: 'idle', nios: 'idle' });
-    setSubscriptions({ aws: [], azure: [], gcp: [], microsoft: [], nios: [] });
+    setCredentials({ aws: {}, azure: {}, gcp: {}, microsoft: {}, nios: {}, bluecat: {}, efficientip: {} });
+    setCredentialStatus({ aws: 'idle', azure: 'idle', gcp: 'idle', microsoft: 'idle', nios: 'idle', bluecat: 'idle', efficientip: 'idle' });
+    setSubscriptions({ aws: [], azure: [], gcp: [], microsoft: [], nios: [], bluecat: [], efficientip: [] });
     setScanProgress(0);
-    setProviderScanProgress({ aws: 0, azure: 0, gcp: 0, microsoft: 0, nios: 0 });
+    setProviderScanProgress({ aws: 0, azure: 0, gcp: 0, microsoft: 0, nios: 0, bluecat: 0, efficientip: 0 });
     setFindings([]);
-    setCredentialError({ aws: '', azure: '', gcp: '', microsoft: '', nios: '' });
+    setCredentialError({ aws: '', azure: '', gcp: '', microsoft: '', nios: '', bluecat: '', efficientip: '' });
     setScanError('');
-    setSourceSearch({ aws: '', azure: '', gcp: '', microsoft: '', nios: '' });
-    setSelectionMode({ aws: 'include', azure: 'include', gcp: 'include', microsoft: 'include', nios: 'include' });
+    setSourceSearch({ aws: '', azure: '', gcp: '', microsoft: '', nios: '', bluecat: '', efficientip: '' });
+    setSelectionMode({ aws: 'include', azure: 'include', gcp: 'include', microsoft: 'include', nios: 'include', bluecat: 'include', efficientip: 'include' });
+    setNiosMode('backup');
     setNiosUploadedFile(null);
     setNiosDragOver(false);
     setNiosMigrationMap(new Map());
@@ -350,15 +364,14 @@ export function Wizard() {
       return;
     }
 
-    // Real API call — NIOS uses file upload, others use JSON credentials
+    // Real API call — dispatch per provider/mode
     try {
-      if (providerId === 'nios' && niosUploadedFile) {
+      if (providerId === 'nios' && niosMode === 'backup' && niosUploadedFile) {
+        // NIOS Backup upload
         const result = await apiUploadNios(niosUploadedFile);
         if (result.valid) {
           setCredentialStatus((prev) => ({ ...prev, nios: 'valid' }));
-          // Store backupToken for later scan request
           if (result.backupToken) setBackupToken(result.backupToken);
-          // Convert NiosGridMember[] to subscription items
           setSubscriptions((prev) => ({
             ...prev,
             nios: result.members.map((m, i) => ({
@@ -371,8 +384,54 @@ export function Wizard() {
           setCredentialStatus((prev) => ({ ...prev, nios: 'error' }));
           setCredentialError((prev) => ({ ...prev, nios: result.error || 'Failed to parse backup' }));
         }
+      } else if (providerId === 'nios' && niosMode === 'wapi') {
+        // NIOS WAPI live API
+        const creds = credentials.nios || {};
+        const result = await apiValidateNiosWapi(creds);
+        if (result.valid) {
+          setCredentialStatus((prev) => ({ ...prev, nios: 'valid' }));
+          setSubscriptions((prev) => ({
+            ...prev,
+            nios: result.members.map((m, i) => ({
+              id: `nios-${i}`,
+              name: `${m.hostname} (${m.role})`,
+              selected: true,
+            })),
+          }));
+        } else {
+          setCredentialStatus((prev) => ({ ...prev, nios: 'error' }));
+          setCredentialError((prev) => ({ ...prev, nios: result.error || 'WAPI validation failed' }));
+        }
+      } else if (providerId === 'bluecat') {
+        // BlueCat API
+        const creds = credentials.bluecat || {};
+        const result = await apiValidateBluecat(creds);
+        if (result.valid) {
+          setCredentialStatus((prev) => ({ ...prev, bluecat: 'valid' }));
+          setSubscriptions((prev) => ({
+            ...prev,
+            bluecat: result.subscriptions.map((s) => ({ ...s, selected: true })),
+          }));
+        } else {
+          setCredentialStatus((prev) => ({ ...prev, bluecat: 'error' }));
+          setCredentialError((prev) => ({ ...prev, bluecat: result.error || 'Validation failed' }));
+        }
+      } else if (providerId === 'efficientip') {
+        // EfficientIP API
+        const creds = credentials.efficientip || {};
+        const result = await apiValidateEfficientip(creds);
+        if (result.valid) {
+          setCredentialStatus((prev) => ({ ...prev, efficientip: 'valid' }));
+          setSubscriptions((prev) => ({
+            ...prev,
+            efficientip: result.subscriptions.map((s) => ({ ...s, selected: true })),
+          }));
+        } else {
+          setCredentialStatus((prev) => ({ ...prev, efficientip: 'error' }));
+          setCredentialError((prev) => ({ ...prev, efficientip: result.error || 'Validation failed' }));
+        }
       } else {
-        // Map frontend provider ID to backend ID for the API call
+        // Generic provider validation (AWS, Azure, GCP, MS DHCP/DNS)
         const backendId = BACKEND_PROVIDER_ID[providerId];
         const authMethod = selectedAuthMethod[providerId];
         const creds = credentials[providerId] || {};
@@ -395,14 +454,14 @@ export function Wizard() {
         [providerId]: err?.message || 'Connection error -- is the backend running?',
       }));
     }
-  }, [backend.isDemo, selectedAuthMethod, credentials, niosUploadedFile]);
+  }, [backend.isDemo, selectedAuthMethod, credentials, niosUploadedFile, niosMode]);
 
-  // Auto-parse NIOS backup when file is selected/dropped
+  // Auto-parse NIOS backup when file is selected/dropped (backup mode only)
   useEffect(() => {
-    if (niosUploadedFile && credentialStatus.nios !== 'validating' && credentialStatus.nios !== 'valid') {
+    if (niosMode === 'backup' && niosUploadedFile && credentialStatus.nios !== 'validating' && credentialStatus.nios !== 'valid') {
       validateCredential('nios');
     }
-  }, [niosUploadedFile]);
+  }, [niosUploadedFile, niosMode]);
 
   // Toggle subscription selection
   const toggleSubscription = (providerId: ProviderType, subId: string) => {
@@ -429,7 +488,7 @@ export function Wizard() {
     clearScanIntervals();
     setScanProgress(0);
     setScanError('');
-    const initProgress: Record<ProviderType, number> = { aws: 0, azure: 0, gcp: 0, microsoft: 0, nios: 0 };
+    const initProgress: Record<ProviderType, number> = { aws: 0, azure: 0, gcp: 0, microsoft: 0, nios: 0, bluecat: 0, efficientip: 0 };
     setProviderScanProgress(initProgress);
     setFindings([]);
 
@@ -490,6 +549,7 @@ export function Wizard() {
               selectionMode: 'include' | 'exclude';
               backupToken?: string;
               selectedMembers?: string[];
+              mode?: 'backup' | 'wapi';
             } = {
               provider: backendId,
               subscriptions: Array.from(getEffectiveSelected(provId)),
@@ -497,7 +557,10 @@ export function Wizard() {
             };
             // NIOS-specific fields
             if (provId === 'nios') {
-              entry.backupToken = backupToken;
+              entry.mode = niosMode;
+              if (niosMode === 'backup') {
+                entry.backupToken = backupToken;
+              }
               // Extract hostnames from subscription names (format: "hostname (role)")
               entry.selectedMembers = (subscriptions.nios || [])
                 .filter((s) => s.selected)
@@ -875,7 +938,7 @@ export function Wizard() {
                       }`}
                       style={{ fontWeight: isCurrent ? 600 : 400 }}
                     >
-                      {step.id === 'credentials' && isNiosOnly ? 'Upload Backup' : step.label}
+                      {step.id === 'credentials' && isNiosOnly && niosMode === 'backup' ? 'Upload Backup' : step.label}
                     </span>
                   </div>
                   {i < STEPS.length - 1 && (
@@ -955,10 +1018,10 @@ export function Wizard() {
           {currentStep === 'credentials' && (
             <div>
               <h2 className="text-[18px] mb-1" style={{ fontWeight: 600 }}>
-                {isNiosOnly ? 'Upload NIOS Grid Backup' : 'Choose authentication method'}
+                {isNiosOnly && niosMode === 'backup' ? 'Upload NIOS Grid Backup' : 'Choose authentication method'}
               </h2>
               <p className="text-[13px] text-[var(--muted-foreground)] mb-6">
-                {isNiosOnly
+                {isNiosOnly && niosMode === 'backup'
                   ? 'Upload a NIOS Grid backup file (.tar.gz, .tgz, or .bak) exported from the Grid Master. The backup will be parsed locally to extract DDI configuration.'
                   : 'Configure credentials for each selected provider. Credentials are sent only to your local Go backend — never to external servers.'}
               </p>
@@ -1015,6 +1078,16 @@ export function Wizard() {
                                   if (status === 'valid' || status === 'error') {
                                     setCredentialStatus((prev) => ({ ...prev, [provId]: 'idle' }));
                                   }
+                                  // NIOS mode toggle: clear stale state when switching between backup and WAPI
+                                  if (provId === 'nios') {
+                                    const newMode = method.id === 'wapi' ? 'wapi' : 'backup';
+                                    setNiosMode(newMode as 'backup' | 'wapi');
+                                    setBackupToken('');
+                                    setNiosUploadedFile(null);
+                                    setSubscriptions((prev) => ({ ...prev, nios: [] }));
+                                    setCredentialStatus((prev) => ({ ...prev, nios: 'idle' }));
+                                    setCredentialError((prev) => ({ ...prev, nios: '' }));
+                                  }
                                 }}
                                 className={`px-3 py-1.5 rounded-lg text-[12px] transition-all border ${
                                   isSelected
@@ -1039,8 +1112,8 @@ export function Wizard() {
                           </p>
                         </div>
 
-                        {/* NIOS file upload dropzone */}
-                        {provider.isFileUpload ? (
+                        {/* NIOS backup mode: file upload dropzone */}
+                        {provId === 'nios' && niosMode === 'backup' ? (
                           <div>
                             <div
                               onDragOver={(e) => { e.preventDefault(); setNiosDragOver(true); }}
@@ -1239,6 +1312,97 @@ export function Wizard() {
                                 </div>
                               );
                             })}
+
+                            {/* TLS skip-verify checkbox — shown for NIOS WAPI, Bluecat, EfficientIP */}
+                            {(provId === 'bluecat' || provId === 'efficientip' || (provId === 'nios' && niosMode === 'wapi')) && (
+                              <div className="mt-1">
+                                <label className="flex items-start gap-2 cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={credentials[provId]?.skip_tls === 'true'}
+                                    onChange={(e) =>
+                                      setCredentials((prev) => ({
+                                        ...prev,
+                                        [provId]: {
+                                          ...prev[provId],
+                                          skip_tls: e.target.checked ? 'true' : '',
+                                        },
+                                      }))
+                                    }
+                                    className="mt-0.5 rounded border-[var(--border)] text-[var(--infoblox-orange)] focus:ring-[var(--infoblox-orange)]"
+                                  />
+                                  <div>
+                                    <span className="text-[12px] text-[var(--foreground)]" style={{ fontWeight: 500 }}>
+                                      Skip TLS certificate verification
+                                    </span>
+                                    {credentials[provId]?.skip_tls === 'true' && (
+                                      <p className="text-[11px] text-amber-600 mt-0.5 flex items-center gap-1">
+                                        <Shield className="w-3 h-3" />
+                                        Connections will not be verified. Use only for trusted self-signed deployments.
+                                      </p>
+                                    )}
+                                  </div>
+                                </label>
+                              </div>
+                            )}
+
+                            {/* Advanced section — Bluecat: Configuration IDs */}
+                            {provId === 'bluecat' && (
+                              <details className="mt-2">
+                                <summary className="text-[12px] text-[var(--muted-foreground)] cursor-pointer hover:text-[var(--foreground)] select-none" style={{ fontWeight: 500 }}>
+                                  Advanced Options
+                                </summary>
+                                <div className="mt-2 pl-1">
+                                  <label className="block text-[12px] text-[var(--muted-foreground)] mb-1">
+                                    Configuration IDs
+                                  </label>
+                                  <input
+                                    type="text"
+                                    placeholder="Leave empty to scan all configurations"
+                                    value={credentials.bluecat?.configuration_ids || ''}
+                                    onChange={(e) =>
+                                      setCredentials((prev) => ({
+                                        ...prev,
+                                        bluecat: { ...prev.bluecat, configuration_ids: e.target.value },
+                                      }))
+                                    }
+                                    className="w-full px-3 py-2 bg-[var(--input-background)] border border-[var(--border)] rounded-lg text-[13px] focus:outline-none focus:ring-2 focus:ring-[var(--infoblox-blue)]/30 focus:border-[var(--infoblox-blue)]"
+                                  />
+                                  <p className="text-[11px] text-[var(--muted-foreground)] mt-1">
+                                    Comma-separated list of configuration IDs to restrict scanning scope
+                                  </p>
+                                </div>
+                              </details>
+                            )}
+
+                            {/* Advanced section — EfficientIP: Site IDs */}
+                            {provId === 'efficientip' && (
+                              <details className="mt-2">
+                                <summary className="text-[12px] text-[var(--muted-foreground)] cursor-pointer hover:text-[var(--foreground)] select-none" style={{ fontWeight: 500 }}>
+                                  Advanced Options
+                                </summary>
+                                <div className="mt-2 pl-1">
+                                  <label className="block text-[12px] text-[var(--muted-foreground)] mb-1">
+                                    Site IDs
+                                  </label>
+                                  <input
+                                    type="text"
+                                    placeholder="Leave empty to scan all sites"
+                                    value={credentials.efficientip?.site_ids || ''}
+                                    onChange={(e) =>
+                                      setCredentials((prev) => ({
+                                        ...prev,
+                                        efficientip: { ...prev.efficientip, site_ids: e.target.value },
+                                      }))
+                                    }
+                                    className="w-full px-3 py-2 bg-[var(--input-background)] border border-[var(--border)] rounded-lg text-[13px] focus:outline-none focus:ring-2 focus:ring-[var(--infoblox-blue)]/30 focus:border-[var(--infoblox-blue)]"
+                                  />
+                                  <p className="text-[11px] text-[var(--muted-foreground)] mt-1">
+                                    Comma-separated list of site IDs to restrict scanning scope
+                                  </p>
+                                </div>
+                              </details>
+                            )}
                           </div>
                         ) : (
                           <div className="py-2 px-3 bg-green-50 rounded-lg border border-green-100 mb-3">
@@ -1248,44 +1412,49 @@ export function Wizard() {
                           </div>
                         )}
 
-                        {/* Button below dropzone/fields — for file-upload it opens file picker, for others it validates */}
-                        <button
-                          onClick={() => {
-                            if (provider.isFileUpload) {
-                              const input = document.querySelector('input[accept=".tar.gz,.tgz,.bak"]') as HTMLInputElement;
-                              if (input) input.click();
-                            } else {
-                              validateCredential(provId);
-                            }
-                          }}
-                          disabled={status === 'validating' || status === 'valid'}
-                          className={`mt-3 px-4 py-2 rounded-lg text-[13px] transition-colors flex items-center gap-2 ${
-                            status === 'valid'
-                              ? 'bg-green-100 text-green-700 cursor-default'
-                              : status === 'validating'
-                                ? 'bg-gray-100 text-gray-500 cursor-wait'
-                                : status === 'error'
-                                  ? 'bg-red-600 text-white hover:bg-red-700'
-                                  : 'bg-[var(--infoblox-navy)] text-white hover:bg-[var(--infoblox-navy)]/90'
-                          }`}
-                          style={{ fontWeight: 500 }}
-                        >
-                          {status === 'validating' && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                          {status === 'valid' && <CheckCircle2 className="w-3.5 h-3.5" />}
-                          {status === 'error' && <AlertCircle className="w-3.5 h-3.5" />}
-                          {status === 'validating'
-                            ? (provider.isFileUpload ? 'Parsing Backup...' : (hasFields ? 'Validating...' : 'Authenticating...'))
-                            : status === 'valid'
-                              ? 'Verified'
-                              : status === 'error'
-                                ? 'Retry'
-                                : provider.isFileUpload
-                                  ? 'Grid Backup Upload'
-                                  : (hasFields ? 'Validate & Connect' : 'Authenticate via Browser')}
-                          {status === 'idle' && !hasFields && !provider.isFileUpload && <Globe className="w-3.5 h-3.5" />}
-                          {status === 'idle' && provider.isFileUpload && <Upload className="w-3.5 h-3.5" />}
-                        </button>
-                        {status === 'error' && credentialError[provId] && !provider.isFileUpload && (
+                        {/* Action button */}
+                        {(() => {
+                          const isNiosBackup = provId === 'nios' && niosMode === 'backup';
+                          return (
+                            <button
+                              onClick={() => {
+                                if (isNiosBackup) {
+                                  const input = document.querySelector('input[accept=".tar.gz,.tgz,.bak"]') as HTMLInputElement;
+                                  if (input) input.click();
+                                } else {
+                                  validateCredential(provId);
+                                }
+                              }}
+                              disabled={status === 'validating' || status === 'valid'}
+                              className={`mt-3 px-4 py-2 rounded-lg text-[13px] transition-colors flex items-center gap-2 ${
+                                status === 'valid'
+                                  ? 'bg-green-100 text-green-700 cursor-default'
+                                  : status === 'validating'
+                                    ? 'bg-gray-100 text-gray-500 cursor-wait'
+                                    : status === 'error'
+                                      ? 'bg-red-600 text-white hover:bg-red-700'
+                                      : 'bg-[var(--infoblox-navy)] text-white hover:bg-[var(--infoblox-navy)]/90'
+                              }`}
+                              style={{ fontWeight: 500 }}
+                            >
+                              {status === 'validating' && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                              {status === 'valid' && <CheckCircle2 className="w-3.5 h-3.5" />}
+                              {status === 'error' && <AlertCircle className="w-3.5 h-3.5" />}
+                              {status === 'validating'
+                                ? (isNiosBackup ? 'Parsing Backup...' : (hasFields ? 'Validating...' : 'Authenticating...'))
+                                : status === 'valid'
+                                  ? 'Verified'
+                                  : status === 'error'
+                                    ? 'Retry'
+                                    : isNiosBackup
+                                      ? 'Grid Backup Upload'
+                                      : (hasFields ? 'Validate & Connect' : 'Authenticate via Browser')}
+                              {status === 'idle' && !hasFields && !isNiosBackup && <Globe className="w-3.5 h-3.5" />}
+                              {status === 'idle' && isNiosBackup && <Upload className="w-3.5 h-3.5" />}
+                            </button>
+                          );
+                        })()}
+                        {status === 'error' && credentialError[provId] && (
                           <div className="mt-2 flex items-start gap-2 p-2.5 bg-red-50 rounded-lg border border-red-100">
                             <AlertCircle className="w-3.5 h-3.5 text-red-500 mt-0.5 shrink-0" />
                             <p className="text-[12px] text-red-700">{credentialError[provId]}</p>

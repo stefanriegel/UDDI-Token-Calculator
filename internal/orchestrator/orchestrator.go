@@ -21,7 +21,7 @@ import (
 
 // ScanProviderRequest describes a single provider to be scanned.
 type ScanProviderRequest struct {
-	// Provider is the provider identifier ("aws", "azure", "gcp", "ad", "nios").
+	// Provider is the provider identifier ("aws", "azure", "gcp", "ad", "nios", "bluecat", "efficientip").
 	Provider string
 	// Subscriptions is the list of account/subscription/project IDs to scan.
 	Subscriptions []string
@@ -33,6 +33,8 @@ type ScanProviderRequest struct {
 	// SelectedMembers is the list of NIOS Grid Member hostnames selected for scanning.
 	// Empty means all members are included.
 	SelectedMembers []string
+	// Mode selects the NIOS scan mode: "backup" (default) or "wapi" (live WAPI).
+	Mode string
 }
 
 // OrchestratorResult holds the aggregated output of a completed scan.
@@ -70,7 +72,15 @@ func (o *Orchestrator) Run(ctx context.Context, sess *session.Session, providers
 	)
 
 	for _, p := range providers {
-		s, ok := o.scanners[p.Provider]
+		// Determine which scanner key to use. NIOS with mode="wapi" uses
+		// the "nios-wapi" key to dispatch to WAPIScanner instead of the
+		// backup-based scanner registered under "nios".
+		scannerKey := p.Provider
+		if p.Provider == scanner.ProviderNIOS && p.Mode == "wapi" {
+			scannerKey = "nios-wapi"
+		}
+
+		s, ok := o.scanners[scannerKey]
 		if !ok {
 			// Provider not registered — skip silently.
 			continue
@@ -242,10 +252,49 @@ func buildScanRequest(p ScanProviderRequest, sess *session.Session) scanner.Scan
 			req.Credentials["domain"] = sess.AD.Domain
 		}
 	case scanner.ProviderNIOS:
-		// BackupPath and SelectedMembers are set directly on ScanProviderRequest
-		// by HandleStartScan after resolving the BackupToken from niosBackupTokens.
-		req.Credentials["backup_path"] = p.BackupPath
-		req.Credentials["selected_members"] = strings.Join(p.SelectedMembers, ",")
+		if p.Mode == "wapi" {
+			// WAPI live scan: populate credentials from session.NiosWAPI.
+			if sess.NiosWAPI != nil {
+				req.Credentials["wapi_url"] = sess.NiosWAPI.URL
+				req.Credentials["wapi_username"] = sess.NiosWAPI.Username
+				req.Credentials["wapi_password"] = sess.NiosWAPI.Password
+				req.Credentials["wapi_version"] = sess.NiosWAPI.ExplicitVersion
+				if sess.NiosWAPI.SkipTLS {
+					req.Credentials["skip_tls"] = "true"
+				}
+			}
+			// Selected members passed as subscriptions for the WAPI scanner.
+			req.Subscriptions = append([]string(nil), p.SelectedMembers...)
+		} else {
+			// Backup mode: BackupPath and SelectedMembers are set directly on
+			// ScanProviderRequest by HandleStartScan after resolving the BackupToken.
+			req.Credentials["backup_path"] = p.BackupPath
+			req.Credentials["selected_members"] = strings.Join(p.SelectedMembers, ",")
+		}
+	case scanner.ProviderBluecat:
+		if sess.Bluecat != nil {
+			req.Credentials["bluecat_url"] = sess.Bluecat.URL
+			req.Credentials["bluecat_username"] = sess.Bluecat.Username
+			req.Credentials["bluecat_password"] = sess.Bluecat.Password
+			if sess.Bluecat.SkipTLS {
+				req.Credentials["skip_tls"] = "true"
+			}
+			if len(sess.Bluecat.ConfigurationIDs) > 0 {
+				req.Credentials["configuration_ids"] = strings.Join(sess.Bluecat.ConfigurationIDs, ",")
+			}
+		}
+	case scanner.ProviderEfficientIP:
+		if sess.EfficientIP != nil {
+			req.Credentials["efficientip_url"] = sess.EfficientIP.URL
+			req.Credentials["efficientip_username"] = sess.EfficientIP.Username
+			req.Credentials["efficientip_password"] = sess.EfficientIP.Password
+			if sess.EfficientIP.SkipTLS {
+				req.Credentials["skip_tls"] = "true"
+			}
+			if len(sess.EfficientIP.SiteIDs) > 0 {
+				req.Credentials["site_ids"] = strings.Join(sess.EfficientIP.SiteIDs, ",")
+			}
+		}
 	}
 
 	return req
