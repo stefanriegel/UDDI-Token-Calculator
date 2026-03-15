@@ -118,3 +118,8 @@
 - "SupportedDNSTypes extracted to cloudutil/dns.go — bluecat/efficientip can optionally import it later but S06 scope is cloud providers only"
 - "Per-type DNS progress events publish one aggregate dns_record event (sum of all types) for backward-compatible progress reporting"
 - "Azure extractAzureDNSType uses strings.LastIndex (not path.Base) — avoids importing path package for single-use case; handles both public and private DNS RecordSet.Type format identically"
+- "AWS org auth method injects orgEnabled: 'true' into credentials dict in wizard.tsx validateCredential() — not a form field, programmatic injection only, because backend reads creds['orgEnabled'] == 'true' to set session flag"
+- "Azure subscriptions changed from selected: false to selected: true after validate — multi-subscription scanning available since S03, manual selection of 50+ subscriptions is poor UX"
+- "Org-discovered accounts/projects use selected: true (matching NIOS/Bluecat/EfficientIP auto-select pattern) — org mode purpose is 'scan everything'"
+- "formatItemLabel helper converts dns_record_X → 'DNS Record (X)' for human-readable display — applied to all f.item rendering points including CSV/HTML export"
+- "maxWorkers exposed via optional <details> Advanced Options section following existing Bluecat/EfficientIP pattern — 0 means use provider default"

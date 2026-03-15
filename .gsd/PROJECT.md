@@ -3,7 +3,7 @@
 ## Current State
 
 **Last completed milestone:** M003 — Auth Method Completion (v2.1, shipped 2026-03-14)
-**In progress:** M004-2qci81 — Enterprise-Scale Cloud Scanning (S01 ✅ retry/backoff + configurable params, S02 ✅ AWS multi-account org scanning + 12 expanded resource types, S03 ✅ Azure multi-subscription parallel scanning + 8 expanded resource types, S04 ✅ GCP multi-project org discovery + 7 expanded resource types, S05 ✅ checkpoint/resume for long scans, S06 ✅ DNS record type breakdown)
+**In progress:** M004-2qci81 — Enterprise-Scale Cloud Scanning — ALL 7 SLICES COMPLETE (S01 ✅ retry/backoff + configurable params, S02 ✅ AWS multi-account org scanning + 12 expanded resource types, S03 ✅ Azure multi-subscription parallel scanning + 8 expanded resource types, S04 ✅ GCP multi-project org discovery + 7 expanded resource types, S05 ✅ checkpoint/resume for long scans, S06 ✅ DNS record type breakdown, S07 ✅ frontend UI extensions for multi-account scanning)
 
 All 9 backend auth methods across AWS, Azure, GCP, and AD are implemented with validators, session storage, orchestrator wiring, and scanner credential routing. No "Coming soon" stubs or silent fallthrough errors remain. Five auth methods still need frontend credential forms (AZ-AUTH-01, AZ-AUTH-03, AD-AUTH-01, GCP-AUTH-01, GCP-AUTH-02).
 
@@ -101,4 +101,4 @@ A pre-sales engineer can hand this `.exe` to any customer and get an accurate to
 | Session clone for re-scan | SSO credential objects (azcore.TokenCredential) shared by pointer — prevents second browser popup | ✓ Good |
 
 ---
-*Last updated: 2026-03-15 after M004-2qci81/S06 (DNS Record Type Breakdown) completed*
+*Last updated: 2026-03-15 after M004-2qci81/S07 (Frontend UI Extensions for Multi-Account Scanning) completed — all 7 slices done*

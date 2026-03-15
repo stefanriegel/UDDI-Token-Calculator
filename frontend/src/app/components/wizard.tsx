@@ -83,6 +83,15 @@ const STEPS: { id: Step; label: string }[] = [
   { id: 'results', label: 'Results & Export' },
 ];
 
+/** Format raw item identifiers for display. Converts `dns_record_a` → `DNS Record (A)`, etc. */
+function formatItemLabel(item: string): string {
+  if (item.startsWith('dns_record_')) {
+    const suffix = item.slice('dns_record_'.length);
+    return `DNS Record (${suffix.toUpperCase()})`;
+  }
+  return item;
+}
+
 /** Inline component: add/remove list for server addresses (replaces comma-separated text input). */
 function ServerListInput({
   servers,
@@ -222,6 +231,10 @@ export function Wizard() {
   });
   const [sourceSearch, setSourceSearch] = useState<Record<ProviderType, string>>({
     aws: '', azure: '', gcp: '', microsoft: '', nios: '', bluecat: '', efficientip: '',
+  });
+  const [advancedOptions, setAdvancedOptions] = useState<Record<ProviderType, { maxWorkers: number }>>({
+    aws: { maxWorkers: 0 }, azure: { maxWorkers: 0 }, gcp: { maxWorkers: 0 },
+    microsoft: { maxWorkers: 0 }, nios: { maxWorkers: 0 }, bluecat: { maxWorkers: 0 }, efficientip: { maxWorkers: 0 },
   });
   // Top consumer expandable cards
   const [topDnsExpanded, setTopDnsExpanded] = useState(false);
@@ -438,13 +451,26 @@ export function Wizard() {
         // Generic provider validation (AWS, Azure, GCP, MS DHCP/DNS)
         const backendId = BACKEND_PROVIDER_ID[providerId];
         const authMethod = selectedAuthMethod[providerId];
-        const creds = credentials[providerId] || {};
+        const creds = { ...(credentials[providerId] || {}) };
+
+        // AWS org mode: inject orgEnabled flag required by backend contract
+        if (providerId === 'aws' && authMethod === 'org') {
+          creds.orgEnabled = 'true';
+        }
+
         const result = await apiValidate(backendId, authMethod, creds);
         if (result.valid) {
           setCredentialStatus((prev) => ({ ...prev, [providerId]: 'valid' }));
+
+          // Auto-select subscriptions for org-discovered accounts and Azure multi-subscription
+          const autoSelect =
+            (providerId === 'aws' && authMethod === 'org') ||
+            (providerId === 'gcp' && authMethod === 'org') ||
+            providerId === 'azure';
+
           setSubscriptions((prev) => ({
             ...prev,
-            [providerId]: result.subscriptions.map((s) => ({ ...s, selected: false })),
+            [providerId]: result.subscriptions.map((s) => ({ ...s, selected: autoSelect })),
           }));
         } else {
           setCredentialStatus((prev) => ({ ...prev, [providerId]: 'error' }));
@@ -554,11 +580,17 @@ export function Wizard() {
               backupToken?: string;
               selectedMembers?: string[];
               mode?: 'backup' | 'wapi';
+              maxWorkers?: number;
             } = {
               provider: backendId,
               subscriptions: Array.from(getEffectiveSelected(provId)),
               selectionMode: selectionMode[provId],
             };
+            // Max workers concurrency control
+            const mw = advancedOptions[provId]?.maxWorkers;
+            if (mw && mw > 0) {
+              entry.maxWorkers = mw;
+            }
             // NIOS-specific fields
             if (provId === 'nios') {
               entry.mode = niosMode;
@@ -712,7 +744,7 @@ export function Wizard() {
     const header = 'Provider,Source,Token Category,Item,Count,Tokens/Unit,Management Tokens';
     const rows = findings.map(
       (f) =>
-        `${PROVIDERS.find((p) => p.id === f.provider)?.name},${f.source},${f.category},${f.item},${f.count},${f.tokensPerUnit},${f.managementTokens}`
+        `${PROVIDERS.find((p) => p.id === f.provider)?.name},${f.source},${f.category},${formatItemLabel(f.item)},${f.count},${f.tokensPerUnit},${f.managementTokens}`
     );
     let summary = `\n\nTotal Management Tokens,,,,,,${totalTokens}`;
     if (selectedProviders.includes('nios') && niosMigrationMap.size > 0) {
@@ -781,7 +813,7 @@ export function Wizard() {
     html += '<table border="1" cellpadding="4" cellspacing="0">';
     html += '<tr style="background:#002B49;color:white"><th>Provider</th><th>Source</th><th>Token Category</th><th>Item</th><th>Count</th><th>Tokens/Unit</th><th>Management Tokens</th></tr>';
     findings.forEach((f) => {
-      html += `<tr><td>${PROVIDERS.find((p) => p.id === f.provider)?.name}</td><td>${f.source}</td><td>${f.category}</td><td>${f.item}</td><td>${f.count}</td><td>${f.tokensPerUnit}</td><td>${f.managementTokens}</td></tr>`;
+      html += `<tr><td>${PROVIDERS.find((p) => p.id === f.provider)?.name}</td><td>${f.source}</td><td>${f.category}</td><td>${formatItemLabel(f.item)}</td><td>${f.count}</td><td>${f.tokensPerUnit}</td><td>${f.managementTokens}</td></tr>`;
     });
     html += `<tr style="background:#f5f5f5;font-weight:bold"><td colspan="6">Total Management Tokens</td><td>${totalTokens.toLocaleString()}</td></tr>`;
     html += '</table>';
@@ -1440,6 +1472,37 @@ export function Wizard() {
                                   />
                                   <p className="text-[11px] text-[var(--muted-foreground)] mt-1">
                                     Comma-separated list of site IDs to restrict scanning scope
+                                  </p>
+                                </div>
+                              </details>
+                            )}
+
+                            {/* Advanced section — Cloud providers: Max Workers */}
+                            {(provId === 'aws' || provId === 'azure' || provId === 'gcp') && (
+                              <details className="mt-2">
+                                <summary className="text-[12px] text-[var(--muted-foreground)] cursor-pointer hover:text-[var(--foreground)] select-none" style={{ fontWeight: 500 }}>
+                                  Advanced Options
+                                </summary>
+                                <div className="mt-2 pl-1">
+                                  <label className="block text-[12px] text-[var(--muted-foreground)] mb-1">
+                                    Max Concurrent Workers
+                                  </label>
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    max={100}
+                                    placeholder="0"
+                                    value={advancedOptions[provId]?.maxWorkers || ''}
+                                    onChange={(e) =>
+                                      setAdvancedOptions((prev) => ({
+                                        ...prev,
+                                        [provId]: { ...prev[provId], maxWorkers: parseInt(e.target.value) || 0 },
+                                      }))
+                                    }
+                                    className="w-full px-3 py-2 bg-[var(--input-background)] border border-[var(--border)] rounded-lg text-[13px] focus:outline-none focus:ring-2 focus:ring-[var(--infoblox-blue)]/30 focus:border-[var(--infoblox-blue)]"
+                                  />
+                                  <p className="text-[11px] text-[var(--muted-foreground)] mt-1">
+                                    0 = use provider default
                                   </p>
                                 </div>
                               </details>
@@ -2118,7 +2181,7 @@ export function Wizard() {
                                             <span className="truncate max-w-[220px]">{f.source}</span>
                                           </div>
                                         </td>
-                                        <td className="py-2 pr-3">{f.item}</td>
+                                        <td className="py-2 pr-3">{formatItemLabel(f.item)}</td>
                                         <td className="py-2 pr-3 text-right tabular-nums">{f.count.toLocaleString()}</td>
                                         <td className="py-2 text-right">
                                           <div className="flex items-center justify-end gap-2">
@@ -3046,7 +3109,7 @@ export function Wizard() {
                                 {f.category}
                               </span>
                             </td>
-                            <td className="px-4 py-2.5">{f.item}</td>
+                            <td className="px-4 py-2.5">{formatItemLabel(f.item)}</td>
                             <td className="px-4 py-2.5 text-right tabular-nums whitespace-nowrap min-w-[80px]">
                               {f.count.toLocaleString()}
                             </td>

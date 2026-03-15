@@ -54,7 +54,7 @@ User can authenticate via Kerberos protocol with username, password, realm, and 
 - Source: inferred
 - Primary Slice: M004-2qci81/S02
 
-User can enter org master credentials + role name to discover and scan all child accounts in an AWS Organization. Backend implemented in M004-2qci81/S02: DiscoverAccounts with Organizations ListAccounts, multi-account fan-out with per-account AssumeRole, management account detection, per-account failure tolerance. Frontend org credential form pending S07.
+User can enter org master credentials + role name to discover and scan all child accounts in an AWS Organization. Backend implemented in M004-2qci81/S02: DiscoverAccounts with Organizations ListAccounts, multi-account fan-out with per-account AssumeRole, management account detection, per-account failure tolerance. Frontend org credential form with orgEnabled injection completed in M004-2qci81/S07.
 
 ### AWS-RES-01 — AWS scanner counts 19 resource types (5 original + 9 EC2 expanded + 3 Route53/Resolver expanded + 2 original Route53) with correct token categories
 

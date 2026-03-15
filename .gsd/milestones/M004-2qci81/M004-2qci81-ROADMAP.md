@@ -71,7 +71,7 @@ This milestone is complete only when all are true:
   > After this: Interrupted 50+ account scan can resume from checkpoint file without re-scanning completed accounts/subscriptions/projects
 - [x] **S06: DNS Record Type Breakdown** `risk:low` `depends:[S01]`
   > After this: Results show per-type DNS record counts (A, AAAA, CNAME, MX, TXT, SRV, etc.) with supported/unsupported split across all three cloud providers
-- [ ] **S07: Frontend UI Extensions for Multi-Account Scanning** `risk:low` `depends:[S02,S03,S04]`
+- [x] **S07: Frontend UI Extensions for Multi-Account Scanning** `risk:low` `depends:[S02,S03,S04]`
   > After this: Credential forms include AWS org ID + role name, Azure subscription auto-select with checkboxes, GCP project discovery with selection — all wired to backend multi-account scanning
 
 ## Boundary Map
