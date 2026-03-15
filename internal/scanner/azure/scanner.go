@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
@@ -16,8 +17,12 @@ import (
 	armprivatedns "github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/privatedns/armprivatedns"
 	armsubscriptions "github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armsubscriptions"
 	"github.com/infoblox/uddi-go-token-calculator/internal/calculator"
+	"github.com/infoblox/uddi-go-token-calculator/internal/cloudutil"
 	"github.com/infoblox/uddi-go-token-calculator/internal/scanner"
 )
+
+// maxConcurrentSubscriptions is the default concurrency for multi-subscription fan-out.
+const maxConcurrentSubscriptions = 5
 
 // Scanner implements scanner.Scanner for Azure.
 type Scanner struct{}
@@ -37,13 +42,19 @@ func (s *Scanner) Scan(ctx context.Context, req scanner.ScanRequest, publish fun
 		return nil, fmt.Errorf("azure: build credential: %w", err)
 	}
 
-	var allFindings []calculator.FindingRow
-
 	subscriptions := req.Subscriptions
 	if len(subscriptions) == 0 {
 		return nil, errors.New("azure: no subscriptions selected")
 	}
 
+	return scanAllSubscriptions(ctx, cred, subscriptions, req.MaxWorkers, publish)
+}
+
+// scanAllSubscriptions fans out scanning across all subscriptions concurrently.
+// Concurrency is limited by maxConcurrentSubscriptions (default 5), overridden
+// by maxWorkers when non-zero. Per-subscription failures are non-fatal: an error
+// event is published and remaining subscriptions continue.
+func scanAllSubscriptions(ctx context.Context, cred azcore.TokenCredential, subscriptions []string, maxWorkers int, publish func(scanner.Event)) ([]calculator.FindingRow, error) {
 	// Resolve subscription display names for human-readable Source fields.
 	subNames := make(map[string]string, len(subscriptions))
 	if subClient, err := armsubscriptions.NewClient(cred, nil); err == nil {
@@ -54,21 +65,68 @@ func (s *Scanner) Scan(ctx context.Context, req scanner.ScanRequest, publish fun
 		}
 	}
 
+	// Determine concurrency limit.
+	workers := maxConcurrentSubscriptions
+	if maxWorkers > 0 {
+		workers = maxWorkers
+	}
+	sem := cloudutil.NewSemaphore(workers)
+
+	var (
+		mu       sync.Mutex
+		wg       sync.WaitGroup
+		findings []calculator.FindingRow
+	)
+
 	for _, subID := range subscriptions {
+		subID := subID // capture
 		displayName := subNames[subID]
 		if displayName == "" {
 			displayName = subID // fallback to UUID if lookup failed
 		}
-		findings, err := scanSubscription(ctx, cred, subID, displayName, publish)
-		if err != nil {
-			// Return partial findings + error so the orchestrator records the error
-			// but keeps any findings from already-scanned subscriptions.
-			return allFindings, fmt.Errorf("azure: subscription %s: %w", subID, err)
-		}
-		allFindings = append(allFindings, findings...)
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			if err := sem.Acquire(ctx); err != nil {
+				return
+			}
+			defer sem.Release()
+
+			publish(scanner.Event{
+				Type:     "subscription_progress",
+				Provider: scanner.ProviderAzure,
+				Status:   "scanning",
+				Message:  fmt.Sprintf("scanning subscription %s (%s)", displayName, subID),
+			})
+
+			rows, scanErr := scanSubscriptionFunc(ctx, cred, subID, displayName, publish)
+
+			mu.Lock()
+			findings = append(findings, rows...)
+			mu.Unlock()
+
+			if scanErr != nil {
+				publish(scanner.Event{
+					Type:     "subscription_progress",
+					Provider: scanner.ProviderAzure,
+					Status:   "error",
+					Message:  fmt.Sprintf("scan failed for subscription %s (%s): %v", displayName, subID, scanErr),
+				})
+			} else {
+				publish(scanner.Event{
+					Type:     "subscription_progress",
+					Provider: scanner.ProviderAzure,
+					Status:   "complete",
+					Message:  fmt.Sprintf("completed subscription %s (%s): %d findings", displayName, subID, len(rows)),
+				})
+			}
+		}()
 	}
 
-	return allFindings, nil
+	wg.Wait()
+	return findings, nil
 }
 
 // buildCredential creates an Azure TokenCredential from the credentials map.
@@ -126,6 +184,11 @@ func buildCredential(creds map[string]string, cached azcore.TokenCredential) (az
 	}
 }
 
+// scanSubscriptionFunc is the function used by scanAllSubscriptions to scan
+// a single subscription. It defaults to scanSubscription and can be swapped
+// in tests to inject failures or stub results.
+var scanSubscriptionFunc = scanSubscription
+
 // scanSubscription discovers all Azure resources in a single subscription.
 // Each resource type is isolated: on error, an error event is emitted and
 // scanning continues to the next resource type (partial results are preserved).
@@ -133,7 +196,7 @@ func scanSubscription(ctx context.Context, cred azcore.TokenCredential, subID st
 	var findings []calculator.FindingRow
 
 	// ── VNets and subnets ─────────────────────────────────────────────────────
-	vnetCount, subnetCount, err := countVNetsAndSubnets(ctx, cred, subID)
+	vnetCount, subnetCount, vnetIDs, err := countVNetsAndSubnets(ctx, cred, subID)
 	if err != nil {
 		publish(scanner.Event{
 			Type:     "error",
@@ -253,8 +316,8 @@ func scanSubscription(ctx context.Context, cred azcore.TokenCredential, subID st
 		})
 	}
 
-	// ── Load Balancers ────────────────────────────────────────────────────────
-	lbCount, gwCount, err := countLBsAndGateways(ctx, cred, subID)
+	// ── Load Balancers, Application Gateways, and LB Frontend IPs ───────────
+	lbCount, gwCount, lbFrontendIPCount, err := countLBsAndGateways(ctx, cred, subID)
 	if err != nil {
 		publish(scanner.Event{
 			Type:     "error",
@@ -297,32 +360,244 @@ func scanSubscription(ctx context.Context, cred azcore.TokenCredential, subID st
 			TokensPerUnit:    calculator.TokensPerManagedAsset,
 			ManagementTokens: gwCount / calculator.TokensPerManagedAsset,
 		})
+
+		publish(scanner.Event{
+			Type:     "resource_progress",
+			Provider: scanner.ProviderAzure,
+			Resource: "lb_frontend_ip",
+			Count:    lbFrontendIPCount,
+			Status:   "done",
+		})
+		findings = append(findings, calculator.FindingRow{
+			Provider:         scanner.ProviderAzure,
+			Source:           displayName,
+			Category:         calculator.CategoryActiveIPs,
+			Item:             "lb_frontend_ip",
+			Count:            lbFrontendIPCount,
+			TokensPerUnit:    calculator.TokensPerActiveIP,
+			ManagementTokens: lbFrontendIPCount / calculator.TokensPerActiveIP,
+		})
+	}
+
+	// ── Public IPs ───────────────────────────────────────────────────────────
+	publicIPCount, err := countPublicIPs(ctx, cred, subID)
+	if err != nil {
+		publish(scanner.Event{
+			Type:     "error",
+			Provider: scanner.ProviderAzure,
+			Resource: "public_ip",
+			Status:   "error",
+			Message:  err.Error(),
+		})
+	} else {
+		publish(scanner.Event{
+			Type:     "resource_progress",
+			Provider: scanner.ProviderAzure,
+			Resource: "public_ip",
+			Count:    publicIPCount,
+			Status:   "done",
+		})
+		findings = append(findings, calculator.FindingRow{
+			Provider:         scanner.ProviderAzure,
+			Source:           displayName,
+			Category:         calculator.CategoryDDIObjects,
+			Item:             "public_ip",
+			Count:            publicIPCount,
+			TokensPerUnit:    calculator.TokensPerDDIObject,
+			ManagementTokens: publicIPCount / calculator.TokensPerDDIObject,
+		})
+	}
+
+	// ── NAT Gateways ─────────────────────────────────────────────────────────
+	natGWCount, err := countNATGateways(ctx, cred, subID)
+	if err != nil {
+		publish(scanner.Event{
+			Type:     "error",
+			Provider: scanner.ProviderAzure,
+			Resource: "nat_gateway",
+			Status:   "error",
+			Message:  err.Error(),
+		})
+	} else {
+		publish(scanner.Event{
+			Type:     "resource_progress",
+			Provider: scanner.ProviderAzure,
+			Resource: "nat_gateway",
+			Count:    natGWCount,
+			Status:   "done",
+		})
+		findings = append(findings, calculator.FindingRow{
+			Provider:         scanner.ProviderAzure,
+			Source:           displayName,
+			Category:         calculator.CategoryManagedAssets,
+			Item:             "nat_gateway",
+			Count:            natGWCount,
+			TokensPerUnit:    calculator.TokensPerManagedAsset,
+			ManagementTokens: natGWCount / calculator.TokensPerManagedAsset,
+		})
+	}
+
+	// ── Azure Firewalls ──────────────────────────────────────────────────────
+	firewallCount, err := countAzureFirewalls(ctx, cred, subID)
+	if err != nil {
+		publish(scanner.Event{
+			Type:     "error",
+			Provider: scanner.ProviderAzure,
+			Resource: "azure_firewall",
+			Status:   "error",
+			Message:  err.Error(),
+		})
+	} else {
+		publish(scanner.Event{
+			Type:     "resource_progress",
+			Provider: scanner.ProviderAzure,
+			Resource: "azure_firewall",
+			Count:    firewallCount,
+			Status:   "done",
+		})
+		findings = append(findings, calculator.FindingRow{
+			Provider:         scanner.ProviderAzure,
+			Source:           displayName,
+			Category:         calculator.CategoryManagedAssets,
+			Item:             "azure_firewall",
+			Count:            firewallCount,
+			TokensPerUnit:    calculator.TokensPerManagedAsset,
+			ManagementTokens: firewallCount / calculator.TokensPerManagedAsset,
+		})
+	}
+
+	// ── Private Endpoints ────────────────────────────────────────────────────
+	privateEndpointCount, err := countPrivateEndpoints(ctx, cred, subID)
+	if err != nil {
+		publish(scanner.Event{
+			Type:     "error",
+			Provider: scanner.ProviderAzure,
+			Resource: "private_endpoint",
+			Status:   "error",
+			Message:  err.Error(),
+		})
+	} else {
+		publish(scanner.Event{
+			Type:     "resource_progress",
+			Provider: scanner.ProviderAzure,
+			Resource: "private_endpoint",
+			Count:    privateEndpointCount,
+			Status:   "done",
+		})
+		findings = append(findings, calculator.FindingRow{
+			Provider:         scanner.ProviderAzure,
+			Source:           displayName,
+			Category:         calculator.CategoryManagedAssets,
+			Item:             "private_endpoint",
+			Count:            privateEndpointCount,
+			TokensPerUnit:    calculator.TokensPerManagedAsset,
+			ManagementTokens: privateEndpointCount / calculator.TokensPerManagedAsset,
+		})
+	}
+
+	// ── Route Tables ─────────────────────────────────────────────────────────
+	routeTableCount, err := countRouteTables(ctx, cred, subID)
+	if err != nil {
+		publish(scanner.Event{
+			Type:     "error",
+			Provider: scanner.ProviderAzure,
+			Resource: "route_table",
+			Status:   "error",
+			Message:  err.Error(),
+		})
+	} else {
+		publish(scanner.Event{
+			Type:     "resource_progress",
+			Provider: scanner.ProviderAzure,
+			Resource: "route_table",
+			Count:    routeTableCount,
+			Status:   "done",
+		})
+		findings = append(findings, calculator.FindingRow{
+			Provider:         scanner.ProviderAzure,
+			Source:           displayName,
+			Category:         calculator.CategoryDDIObjects,
+			Item:             "route_table",
+			Count:            routeTableCount,
+			TokensPerUnit:    calculator.TokensPerDDIObject,
+			ManagementTokens: routeTableCount / calculator.TokensPerDDIObject,
+		})
+	}
+
+	// ── VNet Gateways and Gateway IPs ────────────────────────────────────────
+	vnetGWCount, vnetGWIPCount, err := countVNetGatewayIPs(ctx, cred, subID, vnetIDs)
+	if err != nil {
+		publish(scanner.Event{
+			Type:     "error",
+			Provider: scanner.ProviderAzure,
+			Resource: "vnet_gateway",
+			Status:   "error",
+			Message:  err.Error(),
+		})
+	} else {
+		publish(scanner.Event{
+			Type:     "resource_progress",
+			Provider: scanner.ProviderAzure,
+			Resource: "vnet_gateway",
+			Count:    vnetGWCount,
+			Status:   "done",
+		})
+		findings = append(findings, calculator.FindingRow{
+			Provider:         scanner.ProviderAzure,
+			Source:           displayName,
+			Category:         calculator.CategoryManagedAssets,
+			Item:             "vnet_gateway",
+			Count:            vnetGWCount,
+			TokensPerUnit:    calculator.TokensPerManagedAsset,
+			ManagementTokens: vnetGWCount / calculator.TokensPerManagedAsset,
+		})
+
+		publish(scanner.Event{
+			Type:     "resource_progress",
+			Provider: scanner.ProviderAzure,
+			Resource: "vnet_gateway_ip",
+			Count:    vnetGWIPCount,
+			Status:   "done",
+		})
+		findings = append(findings, calculator.FindingRow{
+			Provider:         scanner.ProviderAzure,
+			Source:           displayName,
+			Category:         calculator.CategoryActiveIPs,
+			Item:             "vnet_gateway_ip",
+			Count:            vnetGWIPCount,
+			TokensPerUnit:    calculator.TokensPerActiveIP,
+			ManagementTokens: vnetGWIPCount / calculator.TokensPerActiveIP,
+		})
 	}
 
 	return findings, nil
 }
 
-// countVNetsAndSubnets lists all Virtual Networks and counts their subnets.
-func countVNetsAndSubnets(ctx context.Context, cred azcore.TokenCredential, subID string) (vnets, subnets int, err error) {
+// countVNetsAndSubnets lists all Virtual Networks, counts their subnets, and
+// collects VNet resource IDs (needed by countVNetGatewayIPs for RG extraction).
+func countVNetsAndSubnets(ctx context.Context, cred azcore.TokenCredential, subID string) (vnets, subnets int, vnetIDs []string, err error) {
 	client, err := armnetwork.NewVirtualNetworksClient(subID, cred, nil)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, nil, err
 	}
 
 	pager := client.NewListAllPager(nil)
 	for pager.More() {
 		page, err := pager.NextPage(ctx)
 		if err != nil {
-			return vnets, subnets, err
+			return vnets, subnets, vnetIDs, err
 		}
 		for _, vnet := range page.Value {
 			vnets++
+			if vnet.ID != nil {
+				vnetIDs = append(vnetIDs, *vnet.ID)
+			}
 			if vnet.Properties != nil && vnet.Properties.Subnets != nil {
 				subnets += len(vnet.Properties.Subnets)
 			}
 		}
 	}
-	return vnets, subnets, nil
+	return vnets, subnets, vnetIDs, nil
 }
 
 // countDNS lists all public and private DNS zones and counts their record sets.
@@ -430,35 +705,179 @@ func countVMIPs(ctx context.Context, cred azcore.TokenCredential, subID string) 
 }
 
 // countLBsAndGateways lists all Load Balancers and Application Gateways.
-func countLBsAndGateways(ctx context.Context, cred azcore.TokenCredential, subID string) (lbs, gateways int, err error) {
+// It also counts the total number of frontend IP configurations across all LBs.
+func countLBsAndGateways(ctx context.Context, cred azcore.TokenCredential, subID string) (lbs, gateways, lbFrontendIPs int, err error) {
 	lbClient, err := armnetwork.NewLoadBalancersClient(subID, cred, nil)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, 0, err
 	}
 	gwClient, err := armnetwork.NewApplicationGatewaysClient(subID, cred, nil)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, 0, err
 	}
 
 	lbPager := lbClient.NewListAllPager(nil)
 	for lbPager.More() {
 		page, err := lbPager.NextPage(ctx)
 		if err != nil {
-			return lbs, gateways, err
+			return lbs, gateways, lbFrontendIPs, err
 		}
-		lbs += len(page.Value)
+		for _, lb := range page.Value {
+			lbs++
+			if lb.Properties != nil {
+				lbFrontendIPs += len(lb.Properties.FrontendIPConfigurations)
+			}
+		}
 	}
 
 	gwPager := gwClient.NewListAllPager(nil)
 	for gwPager.More() {
 		page, err := gwPager.NextPage(ctx)
 		if err != nil {
-			return lbs, gateways, err
+			return lbs, gateways, lbFrontendIPs, err
 		}
 		gateways += len(page.Value)
 	}
 
-	return lbs, gateways, nil
+	return lbs, gateways, lbFrontendIPs, nil
+}
+
+// countPublicIPs lists all public IP addresses in a subscription.
+func countPublicIPs(ctx context.Context, cred azcore.TokenCredential, subID string) (int, error) {
+	client, err := armnetwork.NewPublicIPAddressesClient(subID, cred, nil)
+	if err != nil {
+		return 0, err
+	}
+
+	count := 0
+	pager := client.NewListAllPager(nil)
+	for pager.More() {
+		page, err := pager.NextPage(ctx)
+		if err != nil {
+			return count, err
+		}
+		count += len(page.Value)
+	}
+	return count, nil
+}
+
+// countNATGateways lists all NAT gateways in a subscription.
+func countNATGateways(ctx context.Context, cred azcore.TokenCredential, subID string) (int, error) {
+	client, err := armnetwork.NewNatGatewaysClient(subID, cred, nil)
+	if err != nil {
+		return 0, err
+	}
+
+	count := 0
+	pager := client.NewListAllPager(nil)
+	for pager.More() {
+		page, err := pager.NextPage(ctx)
+		if err != nil {
+			return count, err
+		}
+		count += len(page.Value)
+	}
+	return count, nil
+}
+
+// countAzureFirewalls lists all Azure Firewalls in a subscription.
+func countAzureFirewalls(ctx context.Context, cred azcore.TokenCredential, subID string) (int, error) {
+	client, err := armnetwork.NewAzureFirewallsClient(subID, cred, nil)
+	if err != nil {
+		return 0, err
+	}
+
+	count := 0
+	pager := client.NewListAllPager(nil)
+	for pager.More() {
+		page, err := pager.NextPage(ctx)
+		if err != nil {
+			return count, err
+		}
+		count += len(page.Value)
+	}
+	return count, nil
+}
+
+// countPrivateEndpoints lists all private endpoints in a subscription.
+func countPrivateEndpoints(ctx context.Context, cred azcore.TokenCredential, subID string) (int, error) {
+	client, err := armnetwork.NewPrivateEndpointsClient(subID, cred, nil)
+	if err != nil {
+		return 0, err
+	}
+
+	count := 0
+	pager := client.NewListBySubscriptionPager(nil)
+	for pager.More() {
+		page, err := pager.NextPage(ctx)
+		if err != nil {
+			return count, err
+		}
+		count += len(page.Value)
+	}
+	return count, nil
+}
+
+// countRouteTables lists all route tables in a subscription.
+func countRouteTables(ctx context.Context, cred azcore.TokenCredential, subID string) (int, error) {
+	client, err := armnetwork.NewRouteTablesClient(subID, cred, nil)
+	if err != nil {
+		return 0, err
+	}
+
+	count := 0
+	pager := client.NewListAllPager(nil)
+	for pager.More() {
+		page, err := pager.NextPage(ctx)
+		if err != nil {
+			return count, err
+		}
+		count += len(page.Value)
+	}
+	return count, nil
+}
+
+// countVNetGatewayIPs iterates VNet gateways per resource group (using RG names
+// extracted from VNet resource IDs) and counts both the gateway objects (Managed
+// Assets) and their IP configurations (Active IPs). This avoids adding armresources
+// as a dependency — VNet IDs are already available from countVNetsAndSubnets.
+func countVNetGatewayIPs(ctx context.Context, cred azcore.TokenCredential, subID string, vnetResourceIDs []string) (gatewayCount, gatewayIPCount int, err error) {
+	// Extract unique RG names from VNet resource IDs.
+	seen := make(map[string]bool, len(vnetResourceIDs))
+	var rgNames []string
+	for _, id := range vnetResourceIDs {
+		rg := resourceGroupFromID(id)
+		if rg != "" && !seen[rg] {
+			seen[rg] = true
+			rgNames = append(rgNames, rg)
+		}
+	}
+
+	if len(rgNames) == 0 {
+		return 0, 0, nil
+	}
+
+	client, err := armnetwork.NewVirtualNetworkGatewaysClient(subID, cred, nil)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	for _, rgName := range rgNames {
+		pager := client.NewListPager(rgName, nil)
+		for pager.More() {
+			page, err := pager.NextPage(ctx)
+			if err != nil {
+				return gatewayCount, gatewayIPCount, err
+			}
+			for _, gw := range page.Value {
+				gatewayCount++
+				if gw.Properties != nil {
+					gatewayIPCount += len(gw.Properties.IPConfigurations)
+				}
+			}
+		}
+	}
+	return gatewayCount, gatewayIPCount, nil
 }
 
 // resourceGroupFromID extracts the resource group name from an Azure resource ID.

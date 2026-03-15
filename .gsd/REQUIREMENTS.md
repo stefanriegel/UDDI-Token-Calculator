@@ -65,6 +65,15 @@ User can enter org master credentials + role name to discover and scan all child
 
 AWS scanner counts 19 resource types: VPCs, subnets, EC2 instances, load balancers, network interfaces (original), elastic IPs, NAT gateways, transit gateways, internet gateways, route tables, security groups, VPN gateways, IPAM pools, VPC CIDR blocks (EC2 expanded), Route53 zones, records (original), health checks, traffic policies, resolver endpoints (Route53/Resolver expanded). Each mapped to correct DDI Objects/Managed Assets category.
 
+### AZ-RES-01 — Azure scanner counts 14 resource types (6 original + 8 expanded) with correct token categories
+
+- Status: active
+- Class: core-capability
+- Source: inferred
+- Primary Slice: M004-2qci81/S03
+
+Azure scanner counts 14 resource types: VNets, subnets, VMs, load balancers, app gateways, NIC IPs (original), public IPs, NAT gateways, Azure firewalls, private endpoints, route tables, LB frontend IPs, VNet gateways, VNet gateway IPs (expanded). Token categories: DDI Objects (public IPs, route tables), Active IPs (NIC IPs, LB frontend IPs, VNet gateway IPs), Managed Assets (VMs, load balancers, app gateways, NAT gateways, Azure firewalls, private endpoints, VNet gateways).
+
 ## Validated
 
 ### NIOS-01 — User can upload a NIOS Grid backup file (`.tar.gz`, `.tgz`, or `.bak`) and receive a list of discovered Grid Members with their roles
