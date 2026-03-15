@@ -74,6 +74,24 @@ AWS scanner counts 19 resource types: VPCs, subnets, EC2 instances, load balance
 
 Azure scanner counts 14 resource types: VNets, subnets, VMs, load balancers, app gateways, NIC IPs (original), public IPs, NAT gateways, Azure firewalls, private endpoints, route tables, LB frontend IPs, VNet gateways, VNet gateway IPs (expanded). Token categories: DDI Objects (public IPs, route tables), Active IPs (NIC IPs, LB frontend IPs, VNet gateway IPs), Managed Assets (VMs, load balancers, app gateways, NAT gateways, Azure firewalls, private endpoints, VNet gateways).
 
+### GCP-ORG-01 — User can authenticate with org-level SA and discover all org projects via Resource Manager folder traversal for parallel scanning
+
+- Status: active
+- Class: core-capability
+- Source: inferred
+- Primary Slice: M004-2qci81/S04
+
+User can authenticate with org-level SA and discover all org projects via Resource Manager v3 SearchProjects + BFS ListFolders folder traversal for parallel scanning. Backend implemented in M004-2qci81/S04: DiscoverProjects with BFS folder traversal, multi-project fan-out with per-project progress, non-fatal per-project errors. Frontend org credential form pending S07.
+
+### GCP-RES-01 — GCP scanner counts 13 resource types (6 original + 7 expanded) with correct token categories
+
+- Status: active
+- Class: core-capability
+- Source: inferred
+- Primary Slice: M004-2qci81/S04
+
+GCP scanner counts 13 resource types: VPC networks, subnets, compute instances, load balancers, network interfaces, DNS zones, DNS records (original), compute addresses, firewalls, cloud routers, VPN gateways (HA), VPN tunnels, GKE cluster CIDRs, secondary subnet ranges (expanded). Each mapped to correct DDI Objects/Managed Assets category.
+
 ## Validated
 
 ### NIOS-01 — User can upload a NIOS Grid backup file (`.tar.gz`, `.tgz`, or `.bak`) and receive a list of discovered Grid Members with their roles

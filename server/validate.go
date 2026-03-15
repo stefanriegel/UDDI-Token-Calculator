@@ -35,6 +35,7 @@ import (
 
 	ad "github.com/infoblox/uddi-go-token-calculator/internal/scanner/ad"
 	awsscanner "github.com/infoblox/uddi-go-token-calculator/internal/scanner/aws"
+	gcpscanner "github.com/infoblox/uddi-go-token-calculator/internal/scanner/gcp"
 	"github.com/infoblox/uddi-go-token-calculator/internal/session"
 )
 
@@ -265,6 +266,7 @@ func storeCredentials(sess *session.Session, provider, authMethod string, creds 
 			ServiceAccountJSON:   creds["serviceAccountJson"],
 			WorkloadIdentityJSON: creds["workloadIdentityJson"],
 			ProjectID:            creds["projectId"],
+			OrgID:                creds["orgId"],
 			CachedTokenSource:    cachedTS,
 		}
 	case "ad":
@@ -892,6 +894,8 @@ func realGCPValidator(ctx context.Context, creds map[string]string) ([]Subscript
 	switch creds["authMethod"] {
 	case "adc":
 		return realGCPADCValidator(ctx, creds)
+	case "org":
+		return realGCPOrgValidator(ctx, creds)
 	case "browser-oauth":
 		return realGCPBrowserOAuth(ctx, creds)
 	case "workload-identity":
@@ -923,6 +927,61 @@ func realGCPValidator(ctx context.Context, creds map[string]string) ([]Subscript
 		ID:   saFields.ProjectID,
 		Name: saFields.ProjectID,
 	}}, nil
+}
+
+// realGCPOrgValidator validates GCP org-mode credentials (service account with
+// org-level permissions), discovers all projects in the organization via Resource
+// Manager folder traversal, and returns them as SubscriptionItems.
+func realGCPOrgValidator(ctx context.Context, creds map[string]string) ([]SubscriptionItem, error) {
+	orgID := creds["orgId"]
+	if orgID == "" {
+		return nil, errors.New("gcp org: orgId is required for org-mode scanning")
+	}
+
+	saJSON := creds["serviceAccountJson"]
+	if saJSON == "" {
+		return nil, errors.New("gcp org: serviceAccountJson is required for org-mode scanning")
+	}
+
+	// Build a token source from the service account JSON — same scopes as single-project
+	// plus cloudplatformprojects.readonly for Resource Manager access.
+	googleCreds, err := google.CredentialsFromJSON(ctx, []byte(saJSON),
+		"https://www.googleapis.com/auth/compute.readonly",
+		"https://www.googleapis.com/auth/ndev.clouddns.readonly",
+		"https://www.googleapis.com/auth/cloudplatformprojects.readonly",
+		"https://www.googleapis.com/auth/cloud-platform.read-only",
+	)
+	if err != nil {
+		return nil, fmt.Errorf("gcp org: invalid service account JSON: %w", err)
+	}
+	ts := googleCreds.TokenSource
+
+	// Cache the token source so the scanner reuses it.
+	cacheKey := fmt.Sprintf("gcpts-%d", time.Now().UnixNano())
+	gcpTokenCacheMu.Lock()
+	gcpTokenCache[cacheKey] = ts
+	gcpTokenCacheMu.Unlock()
+	creds["gcp_token_cache_key"] = cacheKey
+
+	// Discover all projects in the org.
+	projects, err := gcpscanner.DiscoverProjects(ctx, ts, orgID)
+	if err != nil {
+		return nil, fmt.Errorf("gcp org: discover projects: %w", err)
+	}
+
+	if len(projects) == 0 {
+		return nil, fmt.Errorf("gcp org: no active projects found in organization %s", orgID)
+	}
+
+	items := make([]SubscriptionItem, 0, len(projects))
+	for _, p := range projects {
+		name := p.Name
+		if name == "" {
+			name = p.ID
+		}
+		items = append(items, SubscriptionItem{ID: p.ID, Name: name})
+	}
+	return items, nil
 }
 
 // realGCPADCValidator validates using Application Default Credentials (ADC).

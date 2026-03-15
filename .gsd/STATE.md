@@ -1,9 +1,9 @@
 # GSD State
 
 **Active Milestone:** M004-2qci81 — Enterprise-Scale Cloud Scanning
-**Active Slice:** S04 — GCP Multi-Project Org Discovery + Expanded Resources
+**Active Slice:** S05 — Checkpoint/Resume for Long Scans
 **Phase:** planning
-**Requirements Status:** 8 active · 35 validated · 0 deferred · 0 out of scope
+**Requirements Status:** 10 active · 35 validated · 0 deferred · 0 out of scope
 
 ## Milestone Registry
 - ✅ **M001:** MVP (Phases 1-8) — SHIPPED 2026-03-09
@@ -18,4 +18,4 @@
 - None
 
 ## Next Action
-Plan slice S04 (GCP Multi-Project Org Discovery + Expanded Resources).
+Plan slice S05 (Checkpoint/Resume for Long Scans).
