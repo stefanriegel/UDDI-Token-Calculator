@@ -27,7 +27,7 @@ var _ func(context.Context, []option.ClientOption, string) (int, error) = countS
 var _ func(context.Context, []option.ClientOption, string) (int, error) = countInstances
 var _ func(context.Context, []option.ClientOption, string) (int, error) = countInstanceIPs
 var _ func(*computepb.Instance) int = countGCPInstanceIPs
-var _ func(context.Context, oauth2.TokenSource, string) (int, int, error) = countDNS
+var _ func(context.Context, oauth2.TokenSource, string) (int, map[string]int, error) = countDNS
 
 // scanOneProject signature assertion — verifies the extraction from Scan().
 var _ func(context.Context, string, oauth2.TokenSource, []option.ClientOption, func(scanner.Event)) []calculator.FindingRow = scanOneProject
@@ -133,14 +133,14 @@ func TestCountSubnets_Stub(t *testing.T) {
 // Both public and private zones are counted (no visibility filter — GCP-03 requirement).
 // Live behavior is verified in integration tests in Plan 03.
 func TestCountDNSZones_Stub(t *testing.T) {
-	var _ func(context.Context, oauth2.TokenSource, string) (int, int, error) = countDNS
+	var _ func(context.Context, oauth2.TokenSource, string) (int, map[string]int, error) = countDNS
 }
 
-// TestCountDNSRecords_Stub verifies that countDNS returns record count as its second int return.
-// The compile-time signature assertion above covers this: (zoneCount int, recordCount int, err error).
+// TestCountDNSRecords_Stub verifies that countDNS returns per-type record counts as map[string]int.
+// The compile-time signature assertion above covers this: (zoneCount int, typeCounts map[string]int, err error).
 // Live behavior is verified in integration tests in Plan 03.
 func TestCountDNSRecords_Stub(t *testing.T) {
-	var _ func(context.Context, oauth2.TokenSource, string) (int, int, error) = countDNS
+	var _ func(context.Context, oauth2.TokenSource, string) (int, map[string]int, error) = countDNS
 }
 
 // TestBuildTokenSource_OrgMethod verifies buildTokenSource handles auth_method=org

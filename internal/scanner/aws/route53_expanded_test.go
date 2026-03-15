@@ -160,7 +160,7 @@ func TestRoute53ExpandedScanners_NewItemNames(t *testing.T) {
 		"vpc", "subnet", "ec2_instance", "ec2_ip", "load_balancer",
 		"elastic_ip", "nat_gateway", "transit_gateway", "internet_gateway",
 		"route_table", "security_group", "vpn_gateway", "ipam_pool", "vpc_cidr_block",
-		"dns_zone", "dns_record",
+		"dns_zone",
 	}
 
 	seen := make(map[string]bool)

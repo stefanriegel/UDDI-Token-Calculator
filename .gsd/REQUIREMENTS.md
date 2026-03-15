@@ -92,6 +92,15 @@ User can authenticate with org-level SA and discover all org projects via Resour
 
 GCP scanner counts 13 resource types: VPC networks, subnets, compute instances, load balancers, network interfaces, DNS zones, DNS records (original), compute addresses, firewalls, cloud routers, VPN gateways (HA), VPN tunnels, GKE cluster CIDRs, secondary subnet ranges (expanded). Each mapped to correct DDI Objects/Managed Assets category.
 
+### DNS-TYPE-01 — DNS findings show per-record-type counts (A, AAAA, CNAME, MX, TXT, SRV, etc.) across all three cloud providers
+
+- Status: active
+- Class: core-capability
+- Source: M004-2qci81 success criteria
+- Primary Slice: M004-2qci81/S06
+
+All three cloud scanners (AWS Route53, Azure DNS, GCP Cloud DNS) emit per-type DNS record FindingRows (`dns_record_a`, `dns_record_aaaa`, `dns_record_cname`, etc.) instead of a single generic `dns_record` row. Shared `SupportedDNSTypes` set (13 types) in `cloudutil/dns.go`. Backend complete in M004-2qci81/S06. Frontend display of per-type breakdown pending S07.
+
 ## Validated
 
 ### NIOS-01 — User can upload a NIOS Grid backup file (`.tar.gz`, `.tgz`, or `.bak`) and receive a list of discovered Grid Members with their roles
