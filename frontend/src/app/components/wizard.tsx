@@ -653,19 +653,19 @@ export function Wizard() {
     downloadFile(csv, 'ddi-token-assessment.csv', 'text/csv');
   };
 
-  const exportExcel = () => {
-    // Generate a simple HTML table that Excel can open
-    let html = '<html><head><meta charset="UTF-8"></head><body>';
-    html += '<h2>Infoblox Universal DDI - Management Token Assessment</h2>';
-    html += `<p>Generated: ${new Date().toLocaleString()}</p>`;
-    html += '<table border="1" cellpadding="4" cellspacing="0">';
-    html += '<tr style="background:#002B49;color:white"><th>Provider</th><th>Source</th><th>Region</th><th>Token Category</th><th>Item</th><th>Count</th><th>Tokens/Unit</th><th>Management Tokens</th></tr>';
-    findings.forEach((f) => {
-      html += `<tr><td>${PROVIDERS.find((p) => p.id === f.provider)?.name}</td><td>${f.source}</td><td>${f.region || 'global'}</td><td>${f.category}</td><td>${f.item}</td><td>${f.count}</td><td>${f.tokensPerUnit}</td><td>${f.managementTokens}</td></tr>`;
-    });
-    html += `<tr style="background:#f5f5f5;font-weight:bold"><td colspan="7">Total Management Tokens</td><td>${totalTokens.toLocaleString()}</td></tr>`;
-    html += '</table></body></html>';
-    downloadFile(html, 'ddi-token-assessment.xls', 'application/vnd.ms-excel');
+  const exportExcel = async () => {
+    if (!scanId) return;
+    const resp = await fetch(`/api/v1/scan/${scanId}/export`);
+    if (!resp.ok) return;
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'ddi-token-assessment.xlsx';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   };
 
   const downloadFile = (content: string, filename: string, type: string) => {
