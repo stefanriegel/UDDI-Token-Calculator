@@ -12,6 +12,8 @@ import (
 
 	"github.com/pkg/browser"
 
+	"github.com/infoblox/uddi-go-token-calculator/internal/version"
+
 	awsscanner "github.com/infoblox/uddi-go-token-calculator/internal/scanner/aws"
 	azurescanner "github.com/infoblox/uddi-go-token-calculator/internal/scanner/azure"
 	gcpscanner "github.com/infoblox/uddi-go-token-calculator/internal/scanner/gcp"
@@ -34,6 +36,7 @@ func main() {
 
 	port := ln.Addr().(*net.TCPAddr).Port
 	url := fmt.Sprintf("http://127.0.0.1:%d", port)
+	log.Printf("DDI Scanner version %s (%s)", version.Version, version.Commit)
 	log.Printf("DDI Scanner serving at %s", url)
 
 	// 2. Build the static file handler from the embedded filesystem (INFRA-01).

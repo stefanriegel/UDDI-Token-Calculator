@@ -1,0 +1,92 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*.*.*"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # Job 1: Run tests on every push and PR
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: true
+
+      - name: Run tests
+        run: go test ./... -race -count=1
+
+      - name: Run vet
+        run: go vet ./...
+
+  # Job 2: Cross-compile all targets + GoReleaser release (main and tags only)
+  # NOTE: Code signing (DIST-02) is deferred — Azure Artifact Signing is not available
+  # in all regions. Unsigned binaries ship; Windows users see a SmartScreen popup
+  # ("More info → Run anyway"). Signing can be revisited via DigiCert/SignPath.io in v2.
+  release:
+    name: Release
+    needs: test
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # Required for GoReleaser to create GitHub Release
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # GoReleaser needs full git history for version calculation
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: true
+
+      - name: Compute version string
+        id: ver
+        run: echo "summary=$(git describe --tags --long --always)" >> "$GITHUB_OUTPUT"
+
+      - name: Cross-compile release targets
+        run: |
+          VERSION="${{ steps.ver.outputs.summary }}"
+          COMMIT="${GITHUB_SHA:0:8}"
+          LDFLAGS="-s -w \
+            -X github.com/infoblox/uddi-go-token-calculator/internal/version.Version=${VERSION} \
+            -X github.com/infoblox/uddi-go-token-calculator/internal/version.Commit=${COMMIT}"
+
+          # Windows amd64
+          mkdir -p dist/ddi-scanner_windows_amd64
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 \
+            go build -ldflags="${LDFLAGS}" \
+            -o dist/ddi-scanner_windows_amd64/ddi-scanner.exe .
+
+          # macOS arm64 (Apple Silicon — M1/M2/M3)
+          mkdir -p dist/ddi-scanner_darwin_arm64
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 \
+            go build -ldflags="${LDFLAGS}" \
+            -o dist/ddi-scanner_darwin_arm64/ddi-scanner .
+
+      # For main-push builds (not tagged releases): create a snapshot tag so GoReleaser
+      # can produce a GitHub Release. GoReleaser OSS requires a tag — nightly/snapshot
+      # publishing is Pro-only. Tagged releases (v1.0.0) skip this step.
+      - name: Create snapshot tag (main-push builds only)
+        if: github.ref == 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/')
+        run: |
+          git config user.email "ci@github.com"
+          git config user.name "GitHub Actions"
+          SNAP_TAG="snapshot-$(git describe --tags --always --abbrev=8)"
+          git tag "$SNAP_TAG"
+
+      - uses: goreleaser/goreleaser-action@v7
+        with:
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

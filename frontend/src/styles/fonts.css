@@ -1,24 +1,12 @@
 /*
- * Inter font — loaded from Google Fonts CDN for convenience.
+ * System font stack — no external CDN required.
  *
- * FOR AIR-GAPPED / OFFLINE DEPLOYMENTS:
- * 1. Download Inter from https://github.com/rsms/inter/releases
- * 2. Place the .woff2 files into /src/assets/fonts/
- * 3. Replace the @import below with local @font-face declarations:
- *
- *    @font-face {
- *      font-family: 'Inter';
- *      font-style: normal;
- *      font-weight: 300 700;
- *      font-display: swap;
- *      src: url('../assets/fonts/Inter-VariableFont.woff2') format('woff2');
- *    }
- *
- * The system font fallback stack below ensures the UI is usable even if
- * the font fails to load (e.g. no internet on first launch).
+ * This intentionally avoids loading Inter from Google Fonts so the app works
+ * fully offline inside the air-gapped Windows .exe. The system fonts below
+ * provide a high-quality native look on all target platforms (Windows, macOS,
+ * Linux) without any network request.
  */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
 body {
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
 }
