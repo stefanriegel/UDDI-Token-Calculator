@@ -47,6 +47,24 @@ User can authenticate via Workload Identity Federation by providing a WIF config
 
 User can authenticate via Kerberos protocol with username, password, realm, and KDC address — pure Go (gokrb5), not Windows SSPI integrated auth. Backend implemented in S02: realADKerberosValidator, BuildKerberosClient, session Realm/KDC fields, orchestrator credential mappings. Frontend Kerberos credential form pending.
 
+### AWS-ORG-01 — User can enter org master credentials + role name to discover and scan all child accounts in an AWS Organization
+
+- Status: active
+- Class: core-capability
+- Source: inferred
+- Primary Slice: M004-2qci81/S02
+
+User can enter org master credentials + role name to discover and scan all child accounts in an AWS Organization. Backend implemented in M004-2qci81/S02: DiscoverAccounts with Organizations ListAccounts, multi-account fan-out with per-account AssumeRole, management account detection, per-account failure tolerance. Frontend org credential form pending S07.
+
+### AWS-RES-01 — AWS scanner counts 19 resource types (5 original + 9 EC2 expanded + 3 Route53/Resolver expanded + 2 original Route53) with correct token categories
+
+- Status: active
+- Class: core-capability
+- Source: inferred
+- Primary Slice: M004-2qci81/S02
+
+AWS scanner counts 19 resource types: VPCs, subnets, EC2 instances, load balancers, network interfaces (original), elastic IPs, NAT gateways, transit gateways, internet gateways, route tables, security groups, VPN gateways, IPAM pools, VPC CIDR blocks (EC2 expanded), Route53 zones, records (original), health checks, traffic policies, resolver endpoints (Route53/Resolver expanded). Each mapped to correct DDI Objects/Managed Assets category.
+
 ## Validated
 
 ### NIOS-01 — User can upload a NIOS Grid backup file (`.tar.gz`, `.tgz`, or `.bak`) and receive a list of discovered Grid Members with their roles

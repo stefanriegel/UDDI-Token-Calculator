@@ -1,11 +1,14 @@
 // Package aws implements scanner.Scanner for Amazon Web Services.
 // It discovers VPCs, subnets, Route53 hosted zones and record sets, EC2 instances
 // (with full IP enumeration), and elbv2 load balancers across all enabled regions.
+// When org mode is enabled, it fans out scanning across all accounts in an
+// AWS Organization using per-account AssumeRole credentials.
 package aws
 
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	awssdk "github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
@@ -15,6 +18,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sso"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/infoblox/uddi-go-token-calculator/internal/calculator"
+	"github.com/infoblox/uddi-go-token-calculator/internal/cloudutil"
 	"github.com/infoblox/uddi-go-token-calculator/internal/scanner"
 )
 
@@ -24,12 +28,14 @@ type Scanner struct{}
 // New returns a ready-to-use AWS Scanner.
 func New() *Scanner { return &Scanner{} }
 
+// maxConcurrentAccounts is the default concurrency for org mode account fan-out.
+const maxConcurrentAccounts = 5
+
 // Scan satisfies scanner.Scanner. It:
 //  1. Builds an aws.Config from req.Credentials (auth_method routing)
-//  2. Calls sts:GetCallerIdentity to get the account ID (used as Source in FindingRows)
-//  3. Scans Route53 globally (hosted zones + record sets)
-//  4. Enumerates all enabled regions and fans out per-region scans with semaphore
-//  5. Returns all FindingRows and any per-provider error
+//  2. In single-account mode: scans the authenticated account directly
+//  3. In org mode: discovers all org accounts, fans out per-account with AssumeRole
+//  4. Returns all FindingRows and any per-provider error
 func (s *Scanner) Scan(ctx context.Context, req scanner.ScanRequest, publish func(scanner.Event)) ([]calculator.FindingRow, error) {
 	// For SSO auth, inject the first selected account ID into the credentials map
 	// so buildConfig can call sso:GetRoleCredentials for the correct account.
@@ -47,38 +53,174 @@ func (s *Scanner) Scan(ctx context.Context, req scanner.ScanRequest, publish fun
 		return nil, fmt.Errorf("aws: build config: %w", err)
 	}
 
-	// Get account ID for FindingRow.Source.
+	// Org mode: fan out per-account.
+	if creds["org_enabled"] == "true" {
+		return s.scanOrg(ctx, baseCfg, creds, req.MaxWorkers, publish)
+	}
+
+	// Single-account mode (existing behavior).
 	accountID, err := getAccountID(ctx, baseCfg)
 	if err != nil {
 		return nil, fmt.Errorf("aws: get account id: %w", err)
 	}
-
-	// Resolve a human-friendly account name (alias or fallback).
 	accountName := getAccountName(ctx, baseCfg, accountID)
+	return scanOneAccount(ctx, baseCfg, accountName, req.MaxWorkers, publish)
+}
 
+// scanOneAccount runs the full scan for a single AWS account:
+// Route53 globally + all enabled regions in parallel.
+func scanOneAccount(ctx context.Context, cfg awssdk.Config, accountName string, maxWorkers int, publish func(scanner.Event)) ([]calculator.FindingRow, error) {
 	var findings []calculator.FindingRow
 
 	// Route53 is a global service — scan once with the bootstrap region config.
-	r53Findings := scanRoute53(ctx, baseCfg, accountName, publish)
+	r53Findings := scanRoute53(ctx, cfg, accountName, publish)
 	findings = append(findings, r53Findings...)
 
 	// Enumerate enabled regions and scan each in parallel (with semaphore).
-	regions, err := listEnabledRegions(ctx, baseCfg)
+	regions, err := listEnabledRegions(ctx, cfg)
 	if err != nil {
 		return findings, fmt.Errorf("aws: list regions: %w", err)
 	}
 
-	regionalFindings := scanAllRegions(ctx, baseCfg, regions, accountName, req.MaxWorkers, publish)
+	regionalFindings := scanAllRegions(ctx, cfg, regions, accountName, maxWorkers, publish)
 	findings = append(findings, regionalFindings...)
 
 	return findings, nil
 }
 
+// scanOrg implements the Organizations multi-account fan-out.
+// It discovers all org accounts, identifies the management account, then scans
+// each account concurrently: management uses base credentials, child accounts
+// use AssumeRole. Per-account failures are non-fatal.
+func (s *Scanner) scanOrg(ctx context.Context, baseCfg awssdk.Config, creds map[string]string, maxWorkers int, publish func(scanner.Event)) ([]calculator.FindingRow, error) {
+	orgRoleName := creds["org_role_name"]
+	if orgRoleName == "" {
+		orgRoleName = "OrganizationAccountAccessRole"
+	}
+
+	// Discover management account ID.
+	mgmtAccountID, err := getAccountID(ctx, baseCfg)
+	if err != nil {
+		return nil, fmt.Errorf("aws org: get management account id: %w", err)
+	}
+
+	// Discover all org accounts.
+	accounts, err := DiscoverAccounts(ctx, baseCfg)
+	if err != nil {
+		return nil, fmt.Errorf("aws org: discover accounts: %w", err)
+	}
+
+	publish(scanner.Event{
+		Type:     "account_progress",
+		Provider: scanner.ProviderAWS,
+		Status:   "scanning",
+		Message:  fmt.Sprintf("discovered %d accounts in organization", len(accounts)),
+	})
+
+	// Fan out per-account with semaphore.
+	accountWorkers := maxConcurrentAccounts
+	if maxWorkers > 0 {
+		accountWorkers = maxWorkers
+	}
+	sem := cloudutil.NewSemaphore(accountWorkers)
+
+	var (
+		mu       sync.Mutex
+		wg       sync.WaitGroup
+		findings []calculator.FindingRow
+	)
+
+	for _, acct := range accounts {
+		acct := acct // capture
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			if err := sem.Acquire(ctx); err != nil {
+				return
+			}
+			defer sem.Release()
+
+			accountName := acct.Name
+			if accountName == "" {
+				accountName = "Account " + acct.ID
+			}
+
+			publish(scanner.Event{
+				Type:     "account_progress",
+				Provider: scanner.ProviderAWS,
+				Status:   "scanning",
+				Message:  fmt.Sprintf("scanning account %s (%s)", accountName, acct.ID),
+			})
+
+			var accountCfg awssdk.Config
+			var cfgErr error
+
+			if acct.ID == mgmtAccountID {
+				// Management account uses base credentials directly — no self-assume.
+				accountCfg = baseCfg
+			} else {
+				// Child account: AssumeRole into the org role.
+				accountCfg, cfgErr = buildOrgAccountConfig(baseCfg, acct.ID, orgRoleName)
+				if cfgErr != nil {
+					// Non-fatal: publish warning and continue.
+					publish(scanner.Event{
+						Type:     "account_progress",
+						Provider: scanner.ProviderAWS,
+						Status:   "error",
+						Message:  fmt.Sprintf("AssumeRole failed for account %s (%s): %v", accountName, acct.ID, cfgErr),
+					})
+					return
+				}
+			}
+
+			rows, scanErr := scanOneAccount(ctx, accountCfg, accountName, 0, publish)
+
+			mu.Lock()
+			findings = append(findings, rows...)
+			mu.Unlock()
+
+			if scanErr != nil {
+				publish(scanner.Event{
+					Type:     "account_progress",
+					Provider: scanner.ProviderAWS,
+					Status:   "error",
+					Message:  fmt.Sprintf("scan failed for account %s (%s): %v", accountName, acct.ID, scanErr),
+				})
+			} else {
+				publish(scanner.Event{
+					Type:     "account_progress",
+					Provider: scanner.ProviderAWS,
+					Status:   "complete",
+					Message:  fmt.Sprintf("completed account %s (%s): %d findings", accountName, acct.ID, len(rows)),
+				})
+			}
+		}()
+	}
+
+	wg.Wait()
+	return findings, nil
+}
+
+// buildOrgAccountConfig creates an aws.Config for a child account by assuming the
+// specified role via STS. The config uses CredentialsCache for auto-refresh.
+func buildOrgAccountConfig(baseCfg awssdk.Config, accountID, roleName string) (awssdk.Config, error) {
+	roleARN := fmt.Sprintf("arn:aws:iam::%s:role/%s", accountID, roleName)
+	stsClient := sts.NewFromConfig(baseCfg)
+	provider := stscreds.NewAssumeRoleProvider(stsClient, roleARN, func(o *stscreds.AssumeRoleOptions) {
+		o.RoleSessionName = "uddi-org-scan"
+	})
+
+	cfg := baseCfg.Copy()
+	cfg.Credentials = awssdk.NewCredentialsCache(provider)
+	return cfg, nil
+}
+
 // buildConfig constructs an aws.Config from the credential map.
-// auth_method values: "access_key" | "access-key" | "profile" | "sso" | "assume_role" | "assume-role"
+// auth_method values: "access_key" | "access-key" | "profile" | "sso" | "assume_role" | "assume-role" | "org"
 // Hyphenated variants ("access-key", "assume-role") are accepted as aliases for the
 // underscore forms so that the frontend's kebab-case auth method IDs work without
-// a mapping step.
+// a mapping step. "org" uses access_key credentials as its base auth.
 // For all paths: adaptive retry (5 attempts) and explicit region are set.
 func buildConfig(ctx context.Context, creds map[string]string) (awssdk.Config, error) {
 	region := creds["region"]
@@ -93,7 +235,9 @@ func buildConfig(ctx context.Context, creds map[string]string) (awssdk.Config, e
 	}
 
 	switch creds["auth_method"] {
-	case "access_key", "access-key", "":
+	case "access_key", "access-key", "", "org":
+		// "org" uses access_key credentials as the base — the org fan-out is handled
+		// at the Scan() level, not in buildConfig.
 		keyID := creds["access_key_id"]
 		secret := creds["secret_access_key"]
 		if keyID == "" || secret == "" {

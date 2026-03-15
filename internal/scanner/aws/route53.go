@@ -7,13 +7,13 @@ import (
 
 	awssdk "github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/route53"
+	"github.com/aws/aws-sdk-go-v2/service/route53resolver"
 	"github.com/infoblox/uddi-go-token-calculator/internal/calculator"
 	"github.com/infoblox/uddi-go-token-calculator/internal/scanner"
 )
 
-// scanRoute53 performs a single global Route53 scan (zones + all record sets).
-// Emits two events: one for hosted zones, one for record sets.
-// Uses Region: "global" since Route53 is not region-specific.
+// scanRoute53 performs a single global Route53 scan (zones, record sets, health checks, traffic policies).
+// Emits one event per resource type. Uses Region: "global" since Route53 is not region-specific.
 func scanRoute53(ctx context.Context, cfg awssdk.Config, accountID string, publish func(scanner.Event)) []calculator.FindingRow {
 	var findings []calculator.FindingRow
 
@@ -95,6 +95,16 @@ func scanRoute53(ctx context.Context, cfg awssdk.Config, accountID string, publi
 		})
 	}
 
+	// Route53 Health Checks (global)
+	findings = append(findings, runResourceScan(ctx, cfg, "global", accountID,
+		"route53_health_check", calculator.CategoryDDIObjects, calculator.TokensPerDDIObject,
+		publish, func() (int, error) { return scanRoute53HealthChecks(ctx, cfg) }))
+
+	// Route53 Traffic Policies (global)
+	findings = append(findings, runResourceScan(ctx, cfg, "global", accountID,
+		"route53_traffic_policy", calculator.CategoryDDIObjects, calculator.TokensPerDDIObject,
+		publish, func() (int, error) { return scanRoute53TrafficPolicies(ctx, cfg) }))
+
 	return findings
 }
 
@@ -144,4 +154,68 @@ func countAllRecordSets(ctx context.Context, cfg awssdk.Config, zoneIDs []string
 // requires the bare ID "Z1ABCDEF".
 func stripZoneID(id string) string {
 	return strings.TrimPrefix(id, "/hostedzone/")
+}
+
+// scanRoute53HealthChecks returns the total number of Route53 health checks
+// using the built-in ListHealthChecks paginator.
+func scanRoute53HealthChecks(ctx context.Context, cfg awssdk.Config) (int, error) {
+	client := route53.NewFromConfig(cfg)
+	paginator := route53.NewListHealthChecksPaginator(client, &route53.ListHealthChecksInput{})
+	count := 0
+	for paginator.HasMorePages() {
+		page, err := paginator.NextPage(ctx)
+		if err != nil {
+			return count, err
+		}
+		count += len(page.HealthChecks)
+	}
+	return count, nil
+}
+
+// scanRoute53TrafficPolicies returns the total number of Route53 traffic policies.
+// Uses manual pagination with IsTruncated/TrafficPolicyIdMarker since the SDK
+// does not provide a built-in paginator for ListTrafficPolicies.
+func scanRoute53TrafficPolicies(ctx context.Context, cfg awssdk.Config) (int, error) {
+	client := route53.NewFromConfig(cfg)
+	count := 0
+	var marker *string
+	for {
+		out, err := client.ListTrafficPolicies(ctx, &route53.ListTrafficPoliciesInput{
+			TrafficPolicyIdMarker: marker,
+		})
+		if err != nil {
+			return count, err
+		}
+		count += len(out.TrafficPolicySummaries)
+		if !out.IsTruncated {
+			break
+		}
+		marker = out.TrafficPolicyIdMarker
+	}
+	return count, nil
+}
+
+// scanResolverEndpoints returns the total number of Route53 Resolver endpoints
+// in a region. Route53 Resolver is a regional service (unlike Route53 itself).
+// Gracefully returns 0 if the service is not available in the region.
+func scanResolverEndpoints(ctx context.Context, cfg awssdk.Config) (int, error) {
+	client := route53resolver.NewFromConfig(cfg)
+	paginator := route53resolver.NewListResolverEndpointsPaginator(client, &route53resolver.ListResolverEndpointsInput{})
+	count := 0
+	for paginator.HasMorePages() {
+		page, err := paginator.NextPage(ctx)
+		if err != nil {
+			msg := err.Error()
+			// Graceful: some regions don't support Route53 Resolver.
+			if strings.Contains(msg, "not available") ||
+				strings.Contains(msg, "InvalidRequestException") ||
+				strings.Contains(msg, "not supported") ||
+				strings.Contains(msg, "UnknownEndpoint") {
+				return 0, nil
+			}
+			return count, err
+		}
+		count += len(page.ResolverEndpoints)
+	}
+	return count, nil
 }

@@ -1488,3 +1488,101 @@ func TestBuildTokenSource_WorkloadIdentity_NoCachedTokenSource(t *testing.T) {
 		t.Errorf("expected error mentioning workload_identity_json, got %q", err.Error())
 	}
 }
+
+// TestValidate_OrgAuthMethod: org authMethod with a mock validator returning
+// multiple accounts should return multiple SubscriptionItems.
+func TestValidate_OrgAuthMethod(t *testing.T) {
+	store := session.NewStore()
+	h := server.NewValidateHandler(store)
+
+	// Inject a mock AWS validator that returns 3 org accounts.
+	h.AWSValidator = stubOKValidator([]server.SubscriptionItem{
+		{ID: "111111111111", Name: "Management"},
+		{ID: "222222222222", Name: "Development"},
+		{ID: "333333333333", Name: "Production"},
+	})
+
+	rec := postValidate(t, store, h, "aws", map[string]interface{}{
+		"authMethod": "org",
+		"credentials": map[string]string{
+			"accessKeyId":     "AKIAIOSFODNN7EXAMPLE",
+			"secretAccessKey": "test-secret",
+			"orgEnabled":      "true",
+			"orgRoleName":     "OrganizationAccountAccessRole",
+		},
+	})
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp server.ValidateResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !resp.Valid {
+		t.Errorf("expected valid=true, got error: %s", resp.Error)
+	}
+	if len(resp.Subscriptions) != 3 {
+		t.Fatalf("expected 3 subscriptions (org accounts), got %d", len(resp.Subscriptions))
+	}
+	if resp.Subscriptions[0].ID != "111111111111" {
+		t.Errorf("expected first subscription ID 111111111111, got %s", resp.Subscriptions[0].ID)
+	}
+	if resp.Subscriptions[2].Name != "Production" {
+		t.Errorf("expected third subscription name Production, got %s", resp.Subscriptions[2].Name)
+	}
+}
+
+// TestValidate_OrgStoresCredentials: org authMethod should store OrgEnabled and OrgRoleName
+// in the session.
+func TestValidate_OrgStoresCredentials(t *testing.T) {
+	store := session.NewStore()
+	h := server.NewValidateHandler(store)
+
+	h.AWSValidator = stubOKValidator([]server.SubscriptionItem{
+		{ID: "111111111111", Name: "Management"},
+	})
+
+	rec := postValidate(t, store, h, "aws", map[string]interface{}{
+		"authMethod": "org",
+		"credentials": map[string]string{
+			"accessKeyId":     "AKIAIOSFODNN7EXAMPLE",
+			"secretAccessKey": "test-secret",
+			"orgEnabled":      "true",
+			"orgRoleName":     "ScannerRole",
+		},
+	})
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Extract session ID from cookie.
+	cookieResp := &http.Response{Header: rec.Header()}
+	var sessionID string
+	for _, c := range cookieResp.Cookies() {
+		if c.Name == "ddi_session" {
+			sessionID = c.Value
+			break
+		}
+	}
+	if sessionID == "" {
+		t.Fatal("expected ddi_session cookie")
+	}
+
+	sess, ok := store.Get(sessionID)
+	if !ok {
+		t.Fatal("session not found in store")
+	}
+	if sess.AWS == nil {
+		t.Fatal("session AWS credentials not set")
+	}
+	if !sess.AWS.OrgEnabled {
+		t.Error("expected OrgEnabled=true in session")
+	}
+	if sess.AWS.OrgRoleName != "ScannerRole" {
+		t.Errorf("expected OrgRoleName=ScannerRole, got %q", sess.AWS.OrgRoleName)
+	}
+}
+

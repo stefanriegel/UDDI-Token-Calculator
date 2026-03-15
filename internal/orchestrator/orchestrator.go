@@ -232,6 +232,10 @@ func buildScanRequest(p ScanProviderRequest, sess *session.Session) scanner.Scan
 			req.Credentials["sso_region"] = sess.AWS.SSORegion
 			req.Credentials["source_profile"] = sess.AWS.SourceProfile
 			req.Credentials["external_id"] = sess.AWS.ExternalID
+			if sess.AWS.OrgEnabled {
+				req.Credentials["org_enabled"] = "true"
+			}
+			req.Credentials["org_role_name"] = sess.AWS.OrgRoleName
 		}
 	case scanner.ProviderAzure:
 		if sess.Azure != nil {
