@@ -50,6 +50,8 @@ type ScanRequest struct {
 	// RequestTimeout is the per-request timeout in seconds.
 	// 0 means use the provider's default timeout (typically 30s).
 	RequestTimeout int
+	// CheckpointPath is the file path for checkpoint persistence. Empty means no checkpointing.
+	CheckpointPath string
 }
 
 // Event carries scan progress information published over the SSE stream.

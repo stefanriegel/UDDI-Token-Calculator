@@ -15,6 +15,7 @@ import (
 	"google.golang.org/api/option"
 
 	"github.com/infoblox/uddi-go-token-calculator/internal/calculator"
+	"github.com/infoblox/uddi-go-token-calculator/internal/checkpoint"
 	"github.com/infoblox/uddi-go-token-calculator/internal/cloudutil"
 	"github.com/infoblox/uddi-go-token-calculator/internal/scanner"
 )
@@ -179,6 +180,10 @@ func runResourceScan(ctx context.Context, projectID, item, category string, toke
 	}
 }
 
+// scanOneProjectFunc is the function used by scanAllProjects to scan a single project.
+// It defaults to scanOneProject and can be swapped in tests to inject stub results.
+var scanOneProjectFunc = scanOneProject
+
 // scanOneProject runs all resource scans for a single GCP project and returns
 // the aggregated FindingRows. It scans all 13 resource types:
 //   - Original 6: VPC networks, subnets, DNS zones, DNS records, compute instances, compute IPs
@@ -332,17 +337,44 @@ func scanOneProject(ctx context.Context, projectID string, ts oauth2.TokenSource
 // Concurrency is limited by maxConcurrentProjects (default 5), overridden
 // by maxWorkers when non-zero. Per-project failures are non-fatal: an error
 // event is published and remaining projects continue.
-func scanAllProjects(ctx context.Context, ts oauth2.TokenSource, projects []string, maxWorkers int, publish func(scanner.Event)) ([]calculator.FindingRow, error) {
+// When checkpointPath is non-empty and there are multiple projects, completed
+// projects are loaded from a prior checkpoint and skipped on resume.
+func scanAllProjects(ctx context.Context, ts oauth2.TokenSource, projects []string, maxWorkers int, checkpointPath string, publish func(scanner.Event)) ([]calculator.FindingRow, error) {
 	workers := maxConcurrentProjects
 	if maxWorkers > 0 {
 		workers = maxWorkers
 	}
 	sem := cloudutil.NewSemaphore(workers)
 
+	// ── Checkpoint: load prior state ──
+	var cp *checkpoint.Checkpoint
+	completed := make(map[string]bool)
+	var findings []calculator.FindingRow
+
+	if checkpointPath != "" && len(projects) > 1 {
+		if state, loadErr := checkpoint.Load(checkpointPath); loadErr != nil {
+			publish(scanner.Event{
+				Type:     "checkpoint_error",
+				Provider: scanner.ProviderGCP,
+				Message:  fmt.Sprintf("failed to load checkpoint, starting fresh: %v", loadErr),
+			})
+		} else if state != nil {
+			for _, u := range state.CompletedUnits {
+				completed[u.ID] = true
+				findings = append(findings, u.Findings...)
+			}
+			publish(scanner.Event{
+				Type:     "checkpoint_loaded",
+				Provider: scanner.ProviderGCP,
+				Message:  fmt.Sprintf("resuming from checkpoint: %d projects already complete", len(state.CompletedUnits)),
+			})
+		}
+		cp = checkpoint.New(checkpointPath, "", scanner.ProviderGCP)
+	}
+
 	var (
-		mu       sync.Mutex
-		wg       sync.WaitGroup
-		findings []calculator.FindingRow
+		mu sync.Mutex
+		wg sync.WaitGroup
 	)
 
 	for _, projID := range projects {
@@ -356,6 +388,17 @@ func scanAllProjects(ctx context.Context, ts oauth2.TokenSource, projects []stri
 			}
 			defer sem.Release()
 
+			// ── Checkpoint: skip completed projects ──
+			if completed[projID] {
+				publish(scanner.Event{
+					Type:     "project_progress",
+					Provider: scanner.ProviderGCP,
+					Status:   "skipped",
+					Message:  fmt.Sprintf("skipping already-completed project %s", projID),
+				})
+				return
+			}
+
 			publish(scanner.Event{
 				Type:     "project_progress",
 				Provider: scanner.ProviderGCP,
@@ -365,7 +408,7 @@ func scanAllProjects(ctx context.Context, ts oauth2.TokenSource, projects []stri
 
 			// Each project gets its own client options from the shared token source.
 			opts := []option.ClientOption{option.WithTokenSource(ts)}
-			rows := scanOneProject(ctx, projID, ts, opts, publish)
+			rows := scanOneProjectFunc(ctx, projID, ts, opts, publish)
 
 			mu.Lock()
 			findings = append(findings, rows...)
@@ -377,10 +420,38 @@ func scanAllProjects(ctx context.Context, ts oauth2.TokenSource, projects []stri
 				Status:   "complete",
 				Message:  fmt.Sprintf("completed project %s: %d findings", projID, len(rows)),
 			})
+
+			// ── Checkpoint: save after each successful project ──
+			if cp != nil {
+				if saveErr := cp.AddUnit(checkpoint.CompletedUnit{
+					ID:          projID,
+					Name:        projID,
+					CompletedAt: time.Now(),
+					Findings:    rows,
+				}); saveErr != nil {
+					publish(scanner.Event{
+						Type:     "checkpoint_error",
+						Provider: scanner.ProviderGCP,
+						Message:  fmt.Sprintf("failed to save checkpoint: %v", saveErr),
+					})
+				} else {
+					publish(scanner.Event{
+						Type:     "checkpoint_saved",
+						Provider: scanner.ProviderGCP,
+						Message:  checkpointPath,
+					})
+				}
+			}
 		}()
 	}
 
 	wg.Wait()
+
+	// ── Checkpoint: clean up on full success ──
+	if cp != nil && checkpointPath != "" {
+		_ = checkpoint.Delete(checkpointPath)
+	}
+
 	return findings, nil
 }
 
@@ -398,7 +469,7 @@ func (s *Scanner) Scan(ctx context.Context, req scanner.ScanRequest, publish fun
 
 	// Step 2: Multi-project fan-out when more than one subscription is provided.
 	if len(req.Subscriptions) > 1 {
-		return scanAllProjects(ctx, ts, req.Subscriptions, req.MaxWorkers, publish)
+		return scanAllProjects(ctx, ts, req.Subscriptions, req.MaxWorkers, req.CheckpointPath, publish)
 	}
 
 	// Step 3: Single-project scan — extract project ID.

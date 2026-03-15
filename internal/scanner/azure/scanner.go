@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
@@ -17,6 +18,7 @@ import (
 	armprivatedns "github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/privatedns/armprivatedns"
 	armsubscriptions "github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armsubscriptions"
 	"github.com/infoblox/uddi-go-token-calculator/internal/calculator"
+	"github.com/infoblox/uddi-go-token-calculator/internal/checkpoint"
 	"github.com/infoblox/uddi-go-token-calculator/internal/cloudutil"
 	"github.com/infoblox/uddi-go-token-calculator/internal/scanner"
 )
@@ -47,14 +49,16 @@ func (s *Scanner) Scan(ctx context.Context, req scanner.ScanRequest, publish fun
 		return nil, errors.New("azure: no subscriptions selected")
 	}
 
-	return scanAllSubscriptions(ctx, cred, subscriptions, req.MaxWorkers, publish)
+	return scanAllSubscriptions(ctx, cred, subscriptions, req.MaxWorkers, req.CheckpointPath, publish)
 }
 
 // scanAllSubscriptions fans out scanning across all subscriptions concurrently.
 // Concurrency is limited by maxConcurrentSubscriptions (default 5), overridden
 // by maxWorkers when non-zero. Per-subscription failures are non-fatal: an error
 // event is published and remaining subscriptions continue.
-func scanAllSubscriptions(ctx context.Context, cred azcore.TokenCredential, subscriptions []string, maxWorkers int, publish func(scanner.Event)) ([]calculator.FindingRow, error) {
+// When checkpointPath is non-empty and there are multiple subscriptions, completed
+// subscriptions are loaded from a prior checkpoint and skipped on resume.
+func scanAllSubscriptions(ctx context.Context, cred azcore.TokenCredential, subscriptions []string, maxWorkers int, checkpointPath string, publish func(scanner.Event)) ([]calculator.FindingRow, error) {
 	// Resolve subscription display names for human-readable Source fields.
 	subNames := make(map[string]string, len(subscriptions))
 	if subClient, err := armsubscriptions.NewClient(cred, nil); err == nil {
@@ -65,6 +69,32 @@ func scanAllSubscriptions(ctx context.Context, cred azcore.TokenCredential, subs
 		}
 	}
 
+	// ── Checkpoint: load prior state ──
+	var cp *checkpoint.Checkpoint
+	completed := make(map[string]bool)
+	var findings []calculator.FindingRow
+
+	if checkpointPath != "" && len(subscriptions) > 1 {
+		if state, loadErr := checkpoint.Load(checkpointPath); loadErr != nil {
+			publish(scanner.Event{
+				Type:     "checkpoint_error",
+				Provider: scanner.ProviderAzure,
+				Message:  fmt.Sprintf("failed to load checkpoint, starting fresh: %v", loadErr),
+			})
+		} else if state != nil {
+			for _, u := range state.CompletedUnits {
+				completed[u.ID] = true
+				findings = append(findings, u.Findings...)
+			}
+			publish(scanner.Event{
+				Type:     "checkpoint_loaded",
+				Provider: scanner.ProviderAzure,
+				Message:  fmt.Sprintf("resuming from checkpoint: %d subscriptions already complete", len(state.CompletedUnits)),
+			})
+		}
+		cp = checkpoint.New(checkpointPath, "", scanner.ProviderAzure)
+	}
+
 	// Determine concurrency limit.
 	workers := maxConcurrentSubscriptions
 	if maxWorkers > 0 {
@@ -73,9 +103,8 @@ func scanAllSubscriptions(ctx context.Context, cred azcore.TokenCredential, subs
 	sem := cloudutil.NewSemaphore(workers)
 
 	var (
-		mu       sync.Mutex
-		wg       sync.WaitGroup
-		findings []calculator.FindingRow
+		mu sync.Mutex
+		wg sync.WaitGroup
 	)
 
 	for _, subID := range subscriptions {
@@ -93,6 +122,17 @@ func scanAllSubscriptions(ctx context.Context, cred azcore.TokenCredential, subs
 				return
 			}
 			defer sem.Release()
+
+			// ── Checkpoint: skip completed subscriptions ──
+			if completed[subID] {
+				publish(scanner.Event{
+					Type:     "subscription_progress",
+					Provider: scanner.ProviderAzure,
+					Status:   "skipped",
+					Message:  fmt.Sprintf("skipping already-completed subscription %s (%s)", displayName, subID),
+				})
+				return
+			}
 
 			publish(scanner.Event{
 				Type:     "subscription_progress",
@@ -121,11 +161,39 @@ func scanAllSubscriptions(ctx context.Context, cred azcore.TokenCredential, subs
 					Status:   "complete",
 					Message:  fmt.Sprintf("completed subscription %s (%s): %d findings", displayName, subID, len(rows)),
 				})
+
+				// ── Checkpoint: save after each successful subscription ──
+				if cp != nil {
+					if saveErr := cp.AddUnit(checkpoint.CompletedUnit{
+						ID:          subID,
+						Name:        displayName,
+						CompletedAt: time.Now(),
+						Findings:    rows,
+					}); saveErr != nil {
+						publish(scanner.Event{
+							Type:     "checkpoint_error",
+							Provider: scanner.ProviderAzure,
+							Message:  fmt.Sprintf("failed to save checkpoint: %v", saveErr),
+						})
+					} else {
+						publish(scanner.Event{
+							Type:     "checkpoint_saved",
+							Provider: scanner.ProviderAzure,
+							Message:  checkpointPath,
+						})
+					}
+				}
 			}
 		}()
 	}
 
 	wg.Wait()
+
+	// ── Checkpoint: clean up on full success ──
+	if cp != nil && checkpointPath != "" {
+		_ = checkpoint.Delete(checkpointPath)
+	}
+
 	return findings, nil
 }
 
