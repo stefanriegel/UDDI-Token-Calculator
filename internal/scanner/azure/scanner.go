@@ -11,9 +11,9 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
-	armcompute "github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/compute/armcompute/v6"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/dns/armdns"
 	armnetwork "github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/network/armnetwork/v6"
+	armprivatedns "github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/privatedns/armprivatedns"
 	"github.com/infoblox/uddi-go-token-calculator/internal/calculator"
 	"github.com/infoblox/uddi-go-token-calculator/internal/scanner"
 )
@@ -27,8 +27,8 @@ func New() *Scanner { return &Scanner{} }
 // Scan satisfies scanner.Scanner. For each selected subscription it:
 //  1. Builds an Azure credential from req.Credentials (auth_method routing)
 //  2. Lists all Virtual Networks and their subnets (DDI Objects)
-//  3. Lists all DNS zones and record sets (DDI Objects)
-//  4. Lists all Virtual Machines (Active IPs — one IP per VM NIC)
+//  3. Lists all DNS zones and record sets, both public and private (DDI Objects)
+//  4. Lists all VM NIC IPs (Active IPs — counted via NIC IPConfigurations)
 //  5. Lists all Load Balancers and Application Gateways (Managed Assets)
 func (s *Scanner) Scan(ctx context.Context, req scanner.ScanRequest, publish func(scanner.Event)) ([]calculator.FindingRow, error) {
 	cred, err := buildCredential(req.Credentials, req.CachedAzureCredential)
@@ -90,151 +90,177 @@ func buildCredential(creds map[string]string, cached azcore.TokenCredential) (az
 }
 
 // scanSubscription discovers all Azure resources in a single subscription.
+// Each resource type is isolated: on error, an error event is emitted and
+// scanning continues to the next resource type (partial results are preserved).
 func scanSubscription(ctx context.Context, cred azcore.TokenCredential, subID string, publish func(scanner.Event)) ([]calculator.FindingRow, error) {
 	var findings []calculator.FindingRow
 
 	// ── VNets and subnets ─────────────────────────────────────────────────────
 	vnetCount, subnetCount, err := countVNetsAndSubnets(ctx, cred, subID)
 	if err != nil {
-		return findings, fmt.Errorf("vnets: %w", err)
+		publish(scanner.Event{
+			Type:     "error",
+			Provider: scanner.ProviderAzure,
+			Resource: "vnet",
+			Status:   "error",
+			Message:  err.Error(),
+		})
+	} else {
+		publish(scanner.Event{
+			Type:     "resource_progress",
+			Provider: scanner.ProviderAzure,
+			Resource: "vnet",
+			Count:    vnetCount,
+			Status:   "done",
+		})
+		findings = append(findings, calculator.FindingRow{
+			Provider:         scanner.ProviderAzure,
+			Source:           subID,
+			Category:         calculator.CategoryDDIObjects,
+			Item:             "vnet",
+			Count:            vnetCount,
+			TokensPerUnit:    calculator.TokensPerDDIObject,
+			ManagementTokens: vnetCount / calculator.TokensPerDDIObject,
+		})
+
+		publish(scanner.Event{
+			Type:     "resource_progress",
+			Provider: scanner.ProviderAzure,
+			Resource: "subnet",
+			Count:    subnetCount,
+			Status:   "done",
+		})
+		findings = append(findings, calculator.FindingRow{
+			Provider:         scanner.ProviderAzure,
+			Source:           subID,
+			Category:         calculator.CategoryDDIObjects,
+			Item:             "subnet",
+			Count:            subnetCount,
+			TokensPerUnit:    calculator.TokensPerDDIObject,
+			ManagementTokens: subnetCount / calculator.TokensPerDDIObject,
+		})
 	}
 
-	publish(scanner.Event{
-		Type:     "resource_progress",
-		Provider: scanner.ProviderAzure,
-		Resource: "vnet",
-		Count:    vnetCount,
-		Status:   "done",
-	})
-	findings = append(findings, calculator.FindingRow{
-		Provider:         scanner.ProviderAzure,
-		Source:           subID,
-		Category:         calculator.CategoryDDIObjects,
-		Item:             "vnet",
-		Count:            vnetCount,
-		TokensPerUnit:    calculator.TokensPerDDIObject,
-		ManagementTokens: vnetCount / calculator.TokensPerDDIObject,
-	})
-
-	publish(scanner.Event{
-		Type:     "resource_progress",
-		Provider: scanner.ProviderAzure,
-		Resource: "subnet",
-		Count:    subnetCount,
-		Status:   "done",
-	})
-	findings = append(findings, calculator.FindingRow{
-		Provider:         scanner.ProviderAzure,
-		Source:           subID,
-		Category:         calculator.CategoryDDIObjects,
-		Item:             "subnet",
-		Count:            subnetCount,
-		TokensPerUnit:    calculator.TokensPerDDIObject,
-		ManagementTokens: subnetCount / calculator.TokensPerDDIObject,
-	})
-
-	// ── DNS zones and records ─────────────────────────────────────────────────
+	// ── DNS zones and records (public + private) ───────────────────────────────
 	zoneCount, recordCount, err := countDNS(ctx, cred, subID)
 	if err != nil {
-		return findings, fmt.Errorf("dns: %w", err)
+		publish(scanner.Event{
+			Type:     "error",
+			Provider: scanner.ProviderAzure,
+			Resource: "dns_zone",
+			Status:   "error",
+			Message:  err.Error(),
+		})
+	} else {
+		publish(scanner.Event{
+			Type:     "resource_progress",
+			Provider: scanner.ProviderAzure,
+			Resource: "dns_zone",
+			Count:    zoneCount,
+			Status:   "done",
+		})
+		findings = append(findings, calculator.FindingRow{
+			Provider:         scanner.ProviderAzure,
+			Source:           subID,
+			Category:         calculator.CategoryDDIObjects,
+			Item:             "dns_zone",
+			Count:            zoneCount,
+			TokensPerUnit:    calculator.TokensPerDDIObject,
+			ManagementTokens: zoneCount / calculator.TokensPerDDIObject,
+		})
+
+		publish(scanner.Event{
+			Type:     "resource_progress",
+			Provider: scanner.ProviderAzure,
+			Resource: "dns_record",
+			Count:    recordCount,
+			Status:   "done",
+		})
+		findings = append(findings, calculator.FindingRow{
+			Provider:         scanner.ProviderAzure,
+			Source:           subID,
+			Category:         calculator.CategoryDDIObjects,
+			Item:             "dns_record",
+			Count:            recordCount,
+			TokensPerUnit:    calculator.TokensPerDDIObject,
+			ManagementTokens: recordCount / calculator.TokensPerDDIObject,
+		})
 	}
 
-	publish(scanner.Event{
-		Type:     "resource_progress",
-		Provider: scanner.ProviderAzure,
-		Resource: "dns_zone",
-		Count:    zoneCount,
-		Status:   "done",
-	})
-	findings = append(findings, calculator.FindingRow{
-		Provider:         scanner.ProviderAzure,
-		Source:           subID,
-		Category:         calculator.CategoryDDIObjects,
-		Item:             "dns_zone",
-		Count:            zoneCount,
-		TokensPerUnit:    calculator.TokensPerDDIObject,
-		ManagementTokens: zoneCount / calculator.TokensPerDDIObject,
-	})
-
-	publish(scanner.Event{
-		Type:     "resource_progress",
-		Provider: scanner.ProviderAzure,
-		Resource: "dns_record",
-		Count:    recordCount,
-		Status:   "done",
-	})
-	findings = append(findings, calculator.FindingRow{
-		Provider:         scanner.ProviderAzure,
-		Source:           subID,
-		Category:         calculator.CategoryDDIObjects,
-		Item:             "dns_record",
-		Count:            recordCount,
-		TokensPerUnit:    calculator.TokensPerDDIObject,
-		ManagementTokens: recordCount / calculator.TokensPerDDIObject,
-	})
-
-	// ── Virtual Machines ──────────────────────────────────────────────────────
-	vmCount, err := countVMs(ctx, cred, subID)
+	// ── VM NIC IPs ────────────────────────────────────────────────────────────
+	vmIPCount, err := countVMIPs(ctx, cred, subID)
 	if err != nil {
-		return findings, fmt.Errorf("virtual_machines: %w", err)
+		publish(scanner.Event{
+			Type:     "error",
+			Provider: scanner.ProviderAzure,
+			Resource: "virtual_machine",
+			Status:   "error",
+			Message:  err.Error(),
+		})
+	} else {
+		publish(scanner.Event{
+			Type:     "resource_progress",
+			Provider: scanner.ProviderAzure,
+			Resource: "virtual_machine",
+			Count:    vmIPCount,
+			Status:   "done",
+		})
+		findings = append(findings, calculator.FindingRow{
+			Provider:         scanner.ProviderAzure,
+			Source:           subID,
+			Category:         calculator.CategoryActiveIPs,
+			Item:             "virtual_machine",
+			Count:            vmIPCount,
+			TokensPerUnit:    calculator.TokensPerActiveIP,
+			ManagementTokens: vmIPCount / calculator.TokensPerActiveIP,
+		})
 	}
-
-	publish(scanner.Event{
-		Type:     "resource_progress",
-		Provider: scanner.ProviderAzure,
-		Resource: "virtual_machine",
-		Count:    vmCount,
-		Status:   "done",
-	})
-	findings = append(findings, calculator.FindingRow{
-		Provider:         scanner.ProviderAzure,
-		Source:           subID,
-		Category:         calculator.CategoryActiveIPs,
-		Item:             "virtual_machine",
-		Count:            vmCount,
-		TokensPerUnit:    calculator.TokensPerActiveIP,
-		ManagementTokens: vmCount / calculator.TokensPerActiveIP,
-	})
 
 	// ── Load Balancers ────────────────────────────────────────────────────────
 	lbCount, gwCount, err := countLBsAndGateways(ctx, cred, subID)
 	if err != nil {
-		return findings, fmt.Errorf("load_balancers: %w", err)
+		publish(scanner.Event{
+			Type:     "error",
+			Provider: scanner.ProviderAzure,
+			Resource: "load_balancer",
+			Status:   "error",
+			Message:  err.Error(),
+		})
+	} else {
+		publish(scanner.Event{
+			Type:     "resource_progress",
+			Provider: scanner.ProviderAzure,
+			Resource: "load_balancer",
+			Count:    lbCount,
+			Status:   "done",
+		})
+		findings = append(findings, calculator.FindingRow{
+			Provider:         scanner.ProviderAzure,
+			Source:           subID,
+			Category:         calculator.CategoryManagedAssets,
+			Item:             "load_balancer",
+			Count:            lbCount,
+			TokensPerUnit:    calculator.TokensPerManagedAsset,
+			ManagementTokens: lbCount / calculator.TokensPerManagedAsset,
+		})
+
+		publish(scanner.Event{
+			Type:     "resource_progress",
+			Provider: scanner.ProviderAzure,
+			Resource: "application_gateway",
+			Count:    gwCount,
+			Status:   "done",
+		})
+		findings = append(findings, calculator.FindingRow{
+			Provider:         scanner.ProviderAzure,
+			Source:           subID,
+			Category:         calculator.CategoryManagedAssets,
+			Item:             "application_gateway",
+			Count:            gwCount,
+			TokensPerUnit:    calculator.TokensPerManagedAsset,
+			ManagementTokens: gwCount / calculator.TokensPerManagedAsset,
+		})
 	}
-
-	publish(scanner.Event{
-		Type:     "resource_progress",
-		Provider: scanner.ProviderAzure,
-		Resource: "load_balancer",
-		Count:    lbCount,
-		Status:   "done",
-	})
-	findings = append(findings, calculator.FindingRow{
-		Provider:         scanner.ProviderAzure,
-		Source:           subID,
-		Category:         calculator.CategoryManagedAssets,
-		Item:             "load_balancer",
-		Count:            lbCount,
-		TokensPerUnit:    calculator.TokensPerManagedAsset,
-		ManagementTokens: lbCount / calculator.TokensPerManagedAsset,
-	})
-
-	publish(scanner.Event{
-		Type:     "resource_progress",
-		Provider: scanner.ProviderAzure,
-		Resource: "application_gateway",
-		Count:    gwCount,
-		Status:   "done",
-	})
-	findings = append(findings, calculator.FindingRow{
-		Provider:         scanner.ProviderAzure,
-		Source:           subID,
-		Category:         calculator.CategoryManagedAssets,
-		Item:             "application_gateway",
-		Count:            gwCount,
-		TokensPerUnit:    calculator.TokensPerManagedAsset,
-		ManagementTokens: gwCount / calculator.TokensPerManagedAsset,
-	})
 
 	return findings, nil
 }
@@ -262,8 +288,10 @@ func countVNetsAndSubnets(ctx context.Context, cred azcore.TokenCredential, subI
 	return vnets, subnets, nil
 }
 
-// countDNS lists all DNS zones and counts their record sets.
+// countDNS lists all public and private DNS zones and counts their record sets.
+// Counts from both zone types are combined into the returned zones and records values.
 func countDNS(ctx context.Context, cred azcore.TokenCredential, subID string) (zones, records int, err error) {
+	// ── Public DNS zones (armdns) ─────────────────────────────────────────────
 	zonesClient, err := armdns.NewZonesClient(subID, cred, nil)
 	if err != nil {
 		return 0, 0, err
@@ -284,7 +312,6 @@ func countDNS(ctx context.Context, cred azcore.TokenCredential, subID string) (z
 			if zone.Name == nil || zone.ID == nil {
 				continue
 			}
-			// Extract resource group from the zone ID.
 			rgName := resourceGroupFromID(*zone.ID)
 			if rgName == "" {
 				continue
@@ -299,26 +326,70 @@ func countDNS(ctx context.Context, cred azcore.TokenCredential, subID string) (z
 			}
 		}
 	}
+
+	// ── Private DNS zones (armprivatedns) ─────────────────────────────────────
+	privateZonesClient, err := armprivatedns.NewPrivateZonesClient(subID, cred, nil)
+	if err != nil {
+		return zones, records, err
+	}
+	privateRecordsClient, err := armprivatedns.NewRecordSetsClient(subID, cred, nil)
+	if err != nil {
+		return zones, records, err
+	}
+
+	privateZonePager := privateZonesClient.NewListPager(nil)
+	for privateZonePager.More() {
+		page, err := privateZonePager.NextPage(ctx)
+		if err != nil {
+			return zones, records, err
+		}
+		for _, zone := range page.Value {
+			zones++
+			if zone.Name == nil || zone.ID == nil {
+				continue
+			}
+			rgName := resourceGroupFromID(*zone.ID)
+			if rgName == "" {
+				continue
+			}
+			// Private DNS uses NewListPager (not NewListAllByDNSZonePager).
+			rsPager := privateRecordsClient.NewListPager(rgName, *zone.Name, nil)
+			for rsPager.More() {
+				rsPage, err := rsPager.NextPage(ctx)
+				if err != nil {
+					break // skip this zone's records on error
+				}
+				records += len(rsPage.Value)
+			}
+		}
+	}
+
 	return zones, records, nil
 }
 
-// countVMs lists all Virtual Machines in the subscription.
-func countVMs(ctx context.Context, cred azcore.TokenCredential, subID string) (int, error) {
-	client, err := armcompute.NewVirtualMachinesClient(subID, cred, nil)
+// countVMIPs counts the total number of IP configurations across all NICs
+// that are attached to a Virtual Machine. Unattached NICs are skipped.
+func countVMIPs(ctx context.Context, cred azcore.TokenCredential, subID string) (int, error) {
+	nicClient, err := armnetwork.NewInterfacesClient(subID, cred, nil)
 	if err != nil {
 		return 0, err
 	}
 
-	count := 0
-	pager := client.NewListAllPager(nil)
+	ipCount := 0
+	pager := nicClient.NewListAllPager(nil)
 	for pager.More() {
 		page, err := pager.NextPage(ctx)
 		if err != nil {
-			return count, err
+			return ipCount, err
 		}
-		count += len(page.Value)
+		for _, nic := range page.Value {
+			if nic.Properties == nil || nic.Properties.VirtualMachine == nil {
+				continue
+			}
+			ipCount += len(nic.Properties.IPConfigurations)
+		}
 	}
-	return count, nil
+	return ipCount, nil
 }
 
 // countLBsAndGateways lists all Load Balancers and Application Gateways.
