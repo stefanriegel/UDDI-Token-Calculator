@@ -124,10 +124,10 @@ func TestValidate_UnknownProvider(t *testing.T) {
 	}
 }
 
-// TestValidate_SSOWithEmptyCredentials: authMethod="sso" for AWS with missing fields
-// → 200, {valid:false, error:"ssoStartUrl and ssoRegion are required..."}.
+// TestValidate_SSOWithEmptyCredentials: authMethod="sso" for AWS with missing startUrl
+// → 200, {valid:false, error:"ssoStartUrl is required..."}.
 // SSO is a real path (not "coming soon") — supplying empty credentials returns
-// a descriptive field-validation error.
+// a descriptive field-validation error. ssoRegion defaults to us-east-1.
 func TestValidate_SSOWithEmptyCredentials(t *testing.T) {
 	store := session.NewStore()
 	// Do NOT stub — use the real AWS validator so the SSO path fires.
@@ -147,8 +147,8 @@ func TestValidate_SSOWithEmptyCredentials(t *testing.T) {
 	if resp.Valid {
 		t.Error("expected valid=false for SSO with missing credentials")
 	}
-	if !strings.Contains(resp.Error, "ssoStartUrl") && !strings.Contains(resp.Error, "ssoRegion") {
-		t.Errorf("expected error about missing SSO fields, got %q", resp.Error)
+	if !strings.Contains(resp.Error, "ssoStartUrl") {
+		t.Errorf("expected error about missing ssoStartUrl, got %q", resp.Error)
 	}
 }
 
