@@ -35,6 +35,12 @@ type ScanProviderRequest struct {
 	SelectedMembers []string
 	// Mode selects the NIOS scan mode: "backup" (default) or "wapi" (live WAPI).
 	Mode string
+	// MaxWorkers is the maximum number of concurrent workers for this provider.
+	// 0 means use the provider's default concurrency.
+	MaxWorkers int
+	// RequestTimeout is the per-request timeout in seconds for this provider.
+	// 0 means use the provider's default timeout.
+	RequestTimeout int
 }
 
 // OrchestratorResult holds the aggregated output of a completed scan.
@@ -204,10 +210,12 @@ func (o *Orchestrator) Run(ctx context.Context, sess *session.Session, providers
 // its local copy and the session can be zeroed immediately after.
 func buildScanRequest(p ScanProviderRequest, sess *session.Session) scanner.ScanRequest {
 	req := scanner.ScanRequest{
-		Provider:      p.Provider,
-		Subscriptions: append([]string(nil), p.Subscriptions...),
-		SelectionMode: p.SelectionMode,
-		Credentials:   make(map[string]string),
+		Provider:       p.Provider,
+		Subscriptions:  append([]string(nil), p.Subscriptions...),
+		SelectionMode:  p.SelectionMode,
+		Credentials:    make(map[string]string),
+		MaxWorkers:     p.MaxWorkers,
+		RequestTimeout: p.RequestTimeout,
 	}
 
 	switch p.Provider {

@@ -72,3 +72,7 @@
 - "WIF project ID fallback chain: list projects API → SA impersonation URL parsing → user-provided projectId"
 - "Scanner buildTokenSource routes browser-oauth through same cached path as ADC — both require re-validate on cache miss"
 - "BuildTokenSourceForTest exported in testing.go (not _test.go) for cross-package test access from server_test"
+- "CallWithBackoff uses RetryableError/RetryAfterError interfaces (not HTTP-specific) so it works for both HTTP calls and arbitrary func() error fan-out pacing"
+- "Semaphore is a thin channel wrapper (not sync.Semaphore) matching the existing aws/regions.go pattern — minimal diff for extraction"
+- "MaxWorkers/RequestTimeout use zero-means-default semantics with omitempty JSON — old clients that don't send them get provider defaults"
+- "Bluecat/EfficientIP migration to shared CallWithBackoff deferred from S01 scope — existing retry logic works and is tested"

@@ -506,9 +506,11 @@ func toOrchestratorProviders(specs []ScanProviderSpec) []orchestrator.ScanProvid
 	reqs := make([]orchestrator.ScanProviderRequest, 0, len(specs))
 	for _, s := range specs {
 		req := orchestrator.ScanProviderRequest{
-			Provider:      s.Provider,
-			Subscriptions: s.Subscriptions,
-			SelectionMode: s.SelectionMode,
+			Provider:       s.Provider,
+			Subscriptions:  s.Subscriptions,
+			SelectionMode:  s.SelectionMode,
+			MaxWorkers:     s.MaxWorkers,
+			RequestTimeout: s.RequestTimeout,
 		}
 
 		// For NIOS provider: dispatch based on Mode field.

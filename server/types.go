@@ -30,6 +30,12 @@ type ScanProviderSpec struct {
 	BackupToken string `json:"backupToken,omitempty"`
 	// Mode selects the NIOS scan mode: "backup" (default) or "wapi" (live WAPI).
 	Mode string `json:"mode,omitempty"`
+	// MaxWorkers is the maximum number of concurrent workers for this provider.
+	// 0 means use the provider's default concurrency.
+	MaxWorkers int `json:"maxWorkers,omitempty"`
+	// RequestTimeout is the per-request timeout in seconds for this provider.
+	// 0 means use the provider's default timeout.
+	RequestTimeout int `json:"requestTimeout,omitempty"`
 }
 
 // ScanStartResponse is returned immediately by POST /api/v1/scan.
