@@ -1,4 +1,4 @@
-name: Release
+name: CI
 
 on:
   push:
@@ -28,41 +28,46 @@ jobs:
       - name: Run vet
         run: go vet ./...
 
-  # Job 2: GoReleaser release with native cross-compilation (main and tags only)
-  # NOTE: Code signing (DIST-02) is deferred — Azure Artifact Signing is not available
-  # in all regions. Unsigned binaries ship; Windows users see a SmartScreen popup
-  # ("More info → Run anyway"). Signing can be revisited via DigiCert/SignPath.io in v2.
+  # Job 2: GoReleaser release — only on semver tags (v*.*.*)
   release:
     name: Release
     needs: test
-    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
-      contents: write   # Required for GoReleaser to create GitHub Release
+      contents: write
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # GoReleaser needs full git history for version calculation
+          fetch-depth: 0
 
       - uses: actions/setup-go@v5
         with:
           go-version: stable
           cache: true
 
-      # For main-push builds (not tagged releases): create a snapshot tag so GoReleaser
-      # can produce a GitHub Release. GoReleaser OSS requires a tag — nightly/snapshot
-      # publishing is Pro-only. Tagged releases (v1.0.0) skip this step.
-      - name: Create snapshot tag (main-push builds only)
-        if: github.ref == 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/')
+      - name: Prepare release notes
+        id: notes
         run: |
-          git config user.email "ci@github.com"
-          git config user.name "GitHub Actions"
-          SNAP_TAG="snapshot-$(git describe --tags --always --abbrev=8)"
-          git tag "$SNAP_TAG"
+          TAG="${GITHUB_REF#refs/tags/}"
+          NOTES_FILE=".github/release-notes/${TAG}.md"
+          if [ -f "$NOTES_FILE" ]; then
+            echo "file=${NOTES_FILE}" >> "$GITHUB_OUTPUT"
+          else
+            echo "file=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Import GPG key
+        uses: crazy-max/ghaction-import-gpg@v6
+        id: import_gpg
+        with:
+          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
 
       - uses: goreleaser/goreleaser-action@v7
         with:
           version: "~> v2"
-          args: release --clean
+          args: release --clean ${{ steps.notes.outputs.file && format('--release-notes {0}', steps.notes.outputs.file) || '' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GPG_FINGERPRINT: ${{ steps.import_gpg.outputs.fingerprint }}

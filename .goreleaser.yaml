@@ -1,35 +1,37 @@
-# GoReleaser OSS v2 — native cross-compilation
-# GoReleaser handles cross-compilation natively for all targets.
+# GoReleaser OSS v2 — macOS ARM + Windows x64
 version: 2
 
 builds:
-  - id: ddi-scanner
+  - id: uddi-token-calculator
     env:
       - CGO_ENABLED=0
-    goos:
-      - windows
-      - darwin
-    goarch:
-      - amd64
-      - arm64
-    ignore:
-      - goos: darwin
-        goarch: amd64
-      - goos: windows
-        goarch: arm64
+    targets:
+      - darwin_arm64
+      - windows_amd64
     ldflags:
       - -s -w
       - -X github.com/infoblox/uddi-go-token-calculator/internal/version.Version={{.Version}}
       - -X github.com/infoblox/uddi-go-token-calculator/internal/version.Commit={{.ShortCommit}}
-    binary: ddi-scanner
+    binary: uddi-token-calculator
 
 archives:
   - id: default
-    name_template: "ddi-scanner_{{ .Os }}_{{ .Arch }}"
-    format: binary
+    name_template: "uddi-token-calculator_{{ .Os }}_{{ .Arch }}"
+    formats: [binary]
 
 checksum:
   name_template: "checksums.txt"
+
+signs:
+  - artifacts: checksum
+    args:
+      - "--batch"
+      - "--local-user"
+      - "{{ .Env.GPG_FINGERPRINT }}"
+      - "--output"
+      - "${signature}"
+      - "--detach-sign"
+      - "${artifact}"
 
 snapshot:
   version_template: "{{ .Summary }}"
@@ -40,9 +42,4 @@ release:
   make_latest: true
 
 changelog:
-  sort: asc
-  filters:
-    exclude:
-      - "^docs:"
-      - "^test:"
-      - "^chore:"
+  disable: true
