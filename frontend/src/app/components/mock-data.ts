@@ -250,6 +250,7 @@ export const PROVIDERS: ProviderOption[] = [
           { key: 'username', label: 'Username', placeholder: 'DOMAIN\\admin' },
           { key: 'password', label: 'Password', placeholder: '********', secret: true },
           { key: 'useSSL', label: 'Use HTTPS (port 5986)', placeholder: 'true', helpText: 'Enable for encrypted WinRM transport' },
+          { key: 'insecureSkipVerify', label: 'Allow untrusted certificates', placeholder: 'true', helpText: 'Skip TLS certificate validation (common for self-signed certs)' },
         ],
       },
     ],

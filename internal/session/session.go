@@ -41,6 +41,12 @@ type AWSCredentials struct {
 	// scanner to call sso:GetRoleCredentials, which exchanges it for temporary
 	// STS credentials without requiring a local ~/.aws/config SSO profile.
 	SSOAccessToken string
+	// SourceProfile is the AWS CLI profile used as the base credentials for
+	// assume-role authentication. Defaults to "default" if not specified.
+	SourceProfile string
+	// ExternalID is the STS external ID for cross-account assume-role.
+	// Only sent to STS when non-empty.
+	ExternalID string
 }
 
 // AzureCredentials holds Azure-specific authentication material.
@@ -51,6 +57,11 @@ type AzureCredentials struct {
 	ClientID       string
 	ClientSecret   string
 	SubscriptionID string
+	// CertificateData holds base64-encoded or raw PEM certificate content
+	// for certificate-based Service Principal authentication.
+	CertificateData string
+	// CertificatePassword holds the optional password for encrypted private keys.
+	CertificatePassword string
 	// CachedCredential holds the live token credential obtained during browser-SSO
 	// validation. It must never be serialized (no json tag). When non-nil the scanner
 	// reuses it, preventing a second browser popup.
@@ -63,19 +74,27 @@ type GCPCredentials struct {
 	AuthMethod         string
 	ServiceAccountJSON string
 	ProjectID          string
+	// WorkloadIdentityJSON holds the WIF configuration JSON for external_account auth.
+	// Distinct from ServiceAccountJSON to avoid overloading the same field.
+	WorkloadIdentityJSON string
 	// CachedTokenSource holds the live OAuth2 token source obtained during browser-oauth
-	// validation. The scanner reuses it to avoid triggering a second browser popup.
+	// or ADC validation. The scanner reuses it to avoid triggering a second browser popup.
 	CachedTokenSource oauth2.TokenSource
 }
 
 // ADCredentials holds Active Directory / WinRM authentication material.
 // No json tags — credentials must never be accidentally serialized.
 type ADCredentials struct {
-	AuthMethod string
-	Hosts      []string // One entry per domain controller. Was: Host string (single DC only).
-	Username   string
-	Password   string
-	Domain     string
+	AuthMethod         string
+	Hosts              []string // One entry per domain controller. Was: Host string (single DC only).
+	Username           string
+	Password           string
+	Domain             string
+	UseSSL             bool
+	InsecureSkipVerify bool
+	// Kerberos-specific fields (pure Go via gokrb5, not Windows SSPI).
+	Realm string // Kerberos realm (e.g. "CORP.EXAMPLE.COM")
+	KDC   string // Key Distribution Center address (e.g. "dc01.corp.example.com:88")
 }
 
 // BluecatCredentials holds Bluecat Address Manager authentication material.

@@ -44,15 +44,36 @@ func New() *Scanner {
 }
 
 // buildTokenSource returns an OAuth2 token source for GCP API calls.
-// For adc auth method, it returns the cached token source from validation.
-// For service-account auth method, it parses the service_account_json credential.
+// Supports four auth methods:
+//   - "adc": cached token source from ADC validation
+//   - "browser-oauth": cached token source from browser consent flow
+//   - "workload-identity": parse WIF configuration JSON (external_account type)
+//   - "service-account" (default): parse service_account JSON credential
 func buildTokenSource(ctx context.Context, creds map[string]string, cached oauth2.TokenSource) (oauth2.TokenSource, error) {
-	if creds["auth_method"] == "adc" {
+	switch creds["auth_method"] {
+	case "adc", "browser-oauth":
 		if cached != nil {
 			return cached, nil
 		}
-		return nil, fmt.Errorf("gcp: no cached token source for ADC — re-validate")
+		return nil, fmt.Errorf("gcp: no cached token source for %s — re-validate", creds["auth_method"])
+
+	case "workload-identity":
+		// Prefer cached token source if available (from validation).
+		if cached != nil {
+			return cached, nil
+		}
+		// Fallback: parse WIF JSON directly.
+		wifJSON := creds["workload_identity_json"]
+		if wifJSON == "" {
+			return nil, fmt.Errorf("gcp: workload_identity_json credential is required")
+		}
+		googleCreds, err := google.CredentialsFromJSON(ctx, []byte(wifJSON), scopeComputeReadonly, scopeDNSReadonly)
+		if err != nil {
+			return nil, fmt.Errorf("gcp: failed to parse WIF configuration: %w", err)
+		}
+		return googleCreds.TokenSource, nil
 	}
+
 	// Service account (or empty auth_method defaults to service account).
 	saJSON := creds["service_account_json"]
 	if saJSON == "" {

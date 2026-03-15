@@ -14,7 +14,7 @@ import (
 // Compile-time signature assertion — BuildNTLMClient must remain exported
 // with this exact signature. This test will FAIL TO COMPILE (not just fail)
 // if the signature changes.
-var _ func(string, string, string) (*winrm.Client, error) = BuildNTLMClient
+var _ func(string, string, string, ...ClientOption) (*winrm.Client, error) = BuildNTLMClient
 
 // TestMaxConcurrentDCs verifies the constant exists and has the expected value.
 func TestMaxConcurrentDCs(t *testing.T) {
@@ -239,5 +239,35 @@ func TestAllZeroCountReturnsEmpty(t *testing.T) {
 
 	if len(filtered) != 0 {
 		t.Errorf("all-zero rows: filtered count = %d, want 0", len(filtered))
+	}
+}
+
+// TestBuildNTLMClientHTTPS verifies BuildNTLMClient with HTTP, HTTPS, and HTTPS+insecure variants.
+func TestBuildNTLMClientHTTPS(t *testing.T) {
+	// HTTP baseline (no options)
+	client, err := BuildNTLMClient("127.0.0.1", "testuser", "testpass")
+	if err != nil {
+		t.Fatalf("BuildNTLMClient (HTTP) failed: %v", err)
+	}
+	if client == nil {
+		t.Fatal("expected non-nil client for HTTP")
+	}
+
+	// HTTPS with WithHTTPS()
+	clientHTTPS, err := BuildNTLMClient("127.0.0.1", "testuser", "testpass", WithHTTPS())
+	if err != nil {
+		t.Fatalf("BuildNTLMClient (HTTPS) failed: %v", err)
+	}
+	if clientHTTPS == nil {
+		t.Fatal("expected non-nil client for HTTPS")
+	}
+
+	// HTTPS + InsecureSkipVerify
+	clientInsecure, err := BuildNTLMClient("127.0.0.1", "testuser", "testpass", WithHTTPS(), WithInsecureSkipVerify())
+	if err != nil {
+		t.Fatalf("BuildNTLMClient (HTTPS+insecure) failed: %v", err)
+	}
+	if clientInsecure == nil {
+		t.Fatal("expected non-nil client for HTTPS+insecure")
 	}
 }
