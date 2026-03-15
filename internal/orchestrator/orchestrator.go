@@ -166,6 +166,8 @@ func buildScanRequest(p ScanProviderRequest, sess *session.Session) scanner.Scan
 			req.Credentials["region"] = sess.AWS.Region
 			req.Credentials["profile_name"] = sess.AWS.ProfileName
 			req.Credentials["role_arn"] = sess.AWS.RoleARN
+			req.Credentials["sso_access_token"] = sess.AWS.SSOAccessToken
+			req.Credentials["sso_region"] = sess.AWS.SSORegion
 		}
 	case scanner.ProviderAzure:
 		if sess.Azure != nil {
@@ -174,12 +176,18 @@ func buildScanRequest(p ScanProviderRequest, sess *session.Session) scanner.Scan
 			req.Credentials["client_id"] = sess.Azure.ClientID
 			req.Credentials["client_secret"] = sess.Azure.ClientSecret
 			req.Credentials["subscription_id"] = sess.Azure.SubscriptionID
+			// Pass the live cached credential through the ScanRequest side-channel
+			// so the Azure scanner can reuse it without a second browser popup.
+			req.CachedAzureCredential = sess.Azure.CachedCredential
 		}
 	case scanner.ProviderGCP:
 		if sess.GCP != nil {
 			req.Credentials["auth_method"] = sess.GCP.AuthMethod
 			req.Credentials["service_account_json"] = sess.GCP.ServiceAccountJSON
 			req.Credentials["project_id"] = sess.GCP.ProjectID
+			// Pass the live cached token source through the ScanRequest side-channel
+			// so the GCP scanner can reuse it without a second browser popup.
+			req.CachedGCPTokenSource = sess.GCP.CachedTokenSource
 		}
 	case scanner.ProviderAD:
 		if sess.AD != nil {

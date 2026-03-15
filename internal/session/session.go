@@ -8,8 +8,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/infoblox/uddi-go-token-calculator/internal/broker"
 	"github.com/infoblox/uddi-go-token-calculator/internal/calculator"
+	"golang.org/x/oauth2"
 )
 
 // ScanState is a string type so log messages are human-readable without a lookup table.
@@ -32,6 +34,13 @@ type AWSCredentials struct {
 	Region          string
 	ProfileName     string
 	RoleARN         string
+	SSOStartURL     string
+	SSORegion       string
+	// SSOAccessToken is the short-lived OIDC access token obtained during the
+	// SSO device-authorization flow in the validate handler. It is used by the
+	// scanner to call sso:GetRoleCredentials, which exchanges it for temporary
+	// STS credentials without requiring a local ~/.aws/config SSO profile.
+	SSOAccessToken string
 }
 
 // AzureCredentials holds Azure-specific authentication material.
@@ -42,6 +51,10 @@ type AzureCredentials struct {
 	ClientID       string
 	ClientSecret   string
 	SubscriptionID string
+	// CachedCredential holds the live token credential obtained during browser-SSO
+	// validation. It must never be serialized (no json tag). When non-nil the scanner
+	// reuses it, preventing a second browser popup.
+	CachedCredential azcore.TokenCredential
 }
 
 // GCPCredentials holds GCP-specific authentication material.
@@ -50,6 +63,9 @@ type GCPCredentials struct {
 	AuthMethod         string
 	ServiceAccountJSON string
 	ProjectID          string
+	// CachedTokenSource holds the live OAuth2 token source obtained during browser-oauth
+	// validation. The scanner reuses it to avoid triggering a second browser popup.
+	CachedTokenSource oauth2.TokenSource
 }
 
 // ADCredentials holds Active Directory / WinRM authentication material.
