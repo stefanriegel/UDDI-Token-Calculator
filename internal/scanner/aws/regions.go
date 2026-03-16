@@ -115,9 +115,9 @@ func scanRegion(ctx context.Context, cfg awssdk.Config, region string, accountID
 		"load_balancer", calculator.CategoryManagedAssets, calculator.TokensPerManagedAsset,
 		publish, func() (int, error) { return scanLoadBalancers(ctx, cfg) }))
 
-	// Elastic IPs
+	// Elastic IPs — Active IPs (Address)
 	findings = append(findings, runResourceScan(ctx, cfg, region, accountID,
-		"elastic_ip", calculator.CategoryDDIObjects, calculator.TokensPerDDIObject,
+		"elastic_ip", calculator.CategoryActiveIPs, calculator.TokensPerActiveIP,
 		publish, func() (int, error) { return scanElasticIPs(ctx, cfg) }))
 
 	// NAT gateways (excludes deleted)
@@ -164,6 +164,11 @@ func scanRegion(ctx context.Context, cfg awssdk.Config, region string, accountID
 	findings = append(findings, runResourceScan(ctx, cfg, region, accountID,
 		"resolver_endpoint", calculator.CategoryDDIObjects, calculator.TokensPerDDIObject,
 		publish, func() (int, error) { return scanResolverEndpoints(ctx, cfg) }))
+
+	// Customer Gateways — Managed Assets
+	findings = append(findings, runResourceScan(ctx, cfg, region, accountID,
+		"customer_gateway", calculator.CategoryManagedAssets, calculator.TokensPerManagedAsset,
+		publish, func() (int, error) { return scanCustomerGateways(ctx, cfg) }))
 
 	return findings
 }

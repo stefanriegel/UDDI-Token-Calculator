@@ -42,8 +42,8 @@ func TestExpandedResourceScanners_Wiring(t *testing.T) {
 		{"ec2_instance", calculator.CategoryManagedAssets, calculator.TokensPerManagedAsset},
 		{"ec2_ip", calculator.CategoryActiveIPs, calculator.TokensPerActiveIP},
 		{"load_balancer", calculator.CategoryManagedAssets, calculator.TokensPerManagedAsset},
-		// EC2 expanded (9)
-		{"elastic_ip", calculator.CategoryDDIObjects, calculator.TokensPerDDIObject},
+		// EC2 expanded (9 from M004 + 1 restored from v2.2.0)
+		{"elastic_ip", calculator.CategoryActiveIPs, calculator.TokensPerActiveIP},
 		{"nat_gateway", calculator.CategoryManagedAssets, calculator.TokensPerManagedAsset},
 		{"transit_gateway", calculator.CategoryManagedAssets, calculator.TokensPerManagedAsset},
 		{"internet_gateway", calculator.CategoryDDIObjects, calculator.TokensPerDDIObject},
@@ -52,6 +52,7 @@ func TestExpandedResourceScanners_Wiring(t *testing.T) {
 		{"vpn_gateway", calculator.CategoryManagedAssets, calculator.TokensPerManagedAsset},
 		{"ipam_pool", calculator.CategoryDDIObjects, calculator.TokensPerDDIObject},
 		{"vpc_cidr_block", calculator.CategoryDDIObjects, calculator.TokensPerDDIObject},
+		{"customer_gateway", calculator.CategoryManagedAssets, calculator.TokensPerManagedAsset},
 		// Route53 Resolver (regional)
 		{"resolver_endpoint", calculator.CategoryDDIObjects, calculator.TokensPerDDIObject},
 	}
