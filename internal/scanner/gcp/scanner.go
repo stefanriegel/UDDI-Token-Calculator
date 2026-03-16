@@ -311,16 +311,6 @@ func scanOneProject(ctx context.Context, projectID string, ts oauth2.TokenSource
 		calculator.CategoryActiveIPs, calculator.TokensPerActiveIP, publish,
 		func() (int, error) { return countAddresses(ctx, opts, projectID) }))
 
-	// GCP-07: Cloud Routers — CategoryManagedAssets
-	findings = append(findings, runResourceScan(ctx, projectID, "cloud_router",
-		calculator.CategoryManagedAssets, calculator.TokensPerManagedAsset, publish,
-		func() (int, error) { return countRouters(ctx, opts, projectID) }))
-
-	// GCP-08: VPN Gateways — CategoryManagedAssets
-	findings = append(findings, runResourceScan(ctx, projectID, "vpn_gateway",
-		calculator.CategoryManagedAssets, calculator.TokensPerManagedAsset, publish,
-		func() (int, error) { return countVPNGateways(ctx, opts, projectID) }))
-
 	// GCP-09: Forwarding Rules (load balancer frontends) — CategoryManagedAssets
 	findings = append(findings, runResourceScan(ctx, projectID, "forwarding_rule",
 		calculator.CategoryManagedAssets, calculator.TokensPerManagedAsset, publish,
@@ -330,16 +320,6 @@ func scanOneProject(ctx context.Context, projectID string, ts oauth2.TokenSource
 	findings = append(findings, runResourceScan(ctx, projectID, "internal_range",
 		calculator.CategoryDDIObjects, calculator.TokensPerDDIObject, publish,
 		func() (int, error) { return countInternalRanges(ctx, opts, projectID) }))
-
-	// GCP-11: Firewall rules — CategoryDDIObjects
-	findings = append(findings, runResourceScan(ctx, projectID, "firewall",
-		calculator.CategoryDDIObjects, calculator.TokensPerDDIObject, publish,
-		func() (int, error) { return countFirewalls(ctx, opts, projectID) }))
-
-	// GCP-12: VPN Tunnels — CategoryManagedAssets
-	findings = append(findings, runResourceScan(ctx, projectID, "vpn_tunnel",
-		calculator.CategoryManagedAssets, calculator.TokensPerManagedAsset, publish,
-		func() (int, error) { return countVPNTunnels(ctx, opts, projectID) }))
 
 	// GCP-13: GKE Cluster CIDRs — CategoryDDIObjects
 	findings = append(findings, runResourceScan(ctx, projectID, "gke_cluster_cidr",
