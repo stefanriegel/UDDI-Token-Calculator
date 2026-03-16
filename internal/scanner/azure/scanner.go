@@ -655,6 +655,35 @@ func scanSubscription(ctx context.Context, cred azcore.TokenCredential, subID st
 		})
 	}
 
+	// ── Virtual Hubs (Azure Virtual WAN) ─────────────────────────────────────
+	vhubCount, err := countVirtualHubs(ctx, cred, subID)
+	if err != nil {
+		publish(scanner.Event{
+			Type:     "error",
+			Provider: scanner.ProviderAzure,
+			Resource: "virtual_hub",
+			Status:   "error",
+			Message:  err.Error(),
+		})
+	} else {
+		publish(scanner.Event{
+			Type:     "resource_progress",
+			Provider: scanner.ProviderAzure,
+			Resource: "virtual_hub",
+			Count:    vhubCount,
+			Status:   "done",
+		})
+		findings = append(findings, calculator.FindingRow{
+			Provider:         scanner.ProviderAzure,
+			Source:           displayName,
+			Category:         calculator.CategoryManagedAssets,
+			Item:             "virtual_hub",
+			Count:            vhubCount,
+			TokensPerUnit:    calculator.TokensPerManagedAsset,
+			ManagementTokens: vhubCount / calculator.TokensPerManagedAsset,
+		})
+	}
+
 	return findings, nil
 }
 
@@ -888,24 +917,7 @@ func countNATGateways(ctx context.Context, cred azcore.TokenCredential, subID st
 	return count, nil
 }
 
-// countAzureFirewalls lists all Azure Firewalls in a subscription.
-func countAzureFirewalls(ctx context.Context, cred azcore.TokenCredential, subID string) (int, error) {
-	client, err := armnetwork.NewAzureFirewallsClient(subID, cred, nil)
-	if err != nil {
-		return 0, err
-	}
 
-	count := 0
-	pager := client.NewListAllPager(nil)
-	for pager.More() {
-		page, err := pager.NextPage(ctx)
-		if err != nil {
-			return count, err
-		}
-		count += len(page.Value)
-	}
-	return count, nil
-}
 
 // countPrivateEndpoints lists all private endpoints in a subscription.
 func countPrivateEndpoints(ctx context.Context, cred azcore.TokenCredential, subID string) (int, error) {

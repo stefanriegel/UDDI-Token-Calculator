@@ -306,37 +306,47 @@ func scanOneProject(ctx context.Context, projectID string, ts oauth2.TokenSource
 
 	// ── Expanded 7 resource types (T02) ──
 
-	// GCP-06: Addresses — CategoryDDIObjects
-	findings = append(findings, runResourceScan(ctx, projectID, "address",
-		calculator.CategoryDDIObjects, calculator.TokensPerDDIObject, publish,
+	// GCP-06: Compute Addresses (static/reserved IPs) — CategoryActiveIPs
+	findings = append(findings, runResourceScan(ctx, projectID, "compute_address",
+		calculator.CategoryActiveIPs, calculator.TokensPerActiveIP, publish,
 		func() (int, error) { return countAddresses(ctx, opts, projectID) }))
 
-	// GCP-07: Firewalls — CategoryDDIObjects
-	findings = append(findings, runResourceScan(ctx, projectID, "firewall",
-		calculator.CategoryDDIObjects, calculator.TokensPerDDIObject, publish,
-		func() (int, error) { return countFirewalls(ctx, opts, projectID) }))
-
-	// GCP-08: Routers — CategoryManagedAssets
-	findings = append(findings, runResourceScan(ctx, projectID, "router",
+	// GCP-07: Cloud Routers — CategoryManagedAssets
+	findings = append(findings, runResourceScan(ctx, projectID, "cloud_router",
 		calculator.CategoryManagedAssets, calculator.TokensPerManagedAsset, publish,
 		func() (int, error) { return countRouters(ctx, opts, projectID) }))
 
-	// GCP-09: VPN Gateways — CategoryManagedAssets
+	// GCP-08: VPN Gateways — CategoryManagedAssets
 	findings = append(findings, runResourceScan(ctx, projectID, "vpn_gateway",
 		calculator.CategoryManagedAssets, calculator.TokensPerManagedAsset, publish,
 		func() (int, error) { return countVPNGateways(ctx, opts, projectID) }))
 
-	// GCP-10: VPN Tunnels — CategoryManagedAssets
+	// GCP-09: Forwarding Rules (load balancer frontends) — CategoryManagedAssets
+	findings = append(findings, runResourceScan(ctx, projectID, "forwarding_rule",
+		calculator.CategoryManagedAssets, calculator.TokensPerManagedAsset, publish,
+		func() (int, error) { return countForwardingRules(ctx, opts, projectID) }))
+
+	// GCP-10: Internal Ranges (address blocks) — CategoryDDIObjects
+	findings = append(findings, runResourceScan(ctx, projectID, "internal_range",
+		calculator.CategoryDDIObjects, calculator.TokensPerDDIObject, publish,
+		func() (int, error) { return countInternalRanges(ctx, opts, projectID) }))
+
+	// GCP-11: Firewall rules — CategoryDDIObjects
+	findings = append(findings, runResourceScan(ctx, projectID, "firewall",
+		calculator.CategoryDDIObjects, calculator.TokensPerDDIObject, publish,
+		func() (int, error) { return countFirewalls(ctx, opts, projectID) }))
+
+	// GCP-12: VPN Tunnels — CategoryManagedAssets
 	findings = append(findings, runResourceScan(ctx, projectID, "vpn_tunnel",
 		calculator.CategoryManagedAssets, calculator.TokensPerManagedAsset, publish,
 		func() (int, error) { return countVPNTunnels(ctx, opts, projectID) }))
 
-	// GCP-11: GKE Cluster CIDRs — CategoryDDIObjects
+	// GCP-13: GKE Cluster CIDRs — CategoryDDIObjects
 	findings = append(findings, runResourceScan(ctx, projectID, "gke_cluster_cidr",
 		calculator.CategoryDDIObjects, calculator.TokensPerDDIObject, publish,
 		func() (int, error) { return countGKEClusterCIDRs(ctx, opts, projectID) }))
 
-	// GCP-12: Secondary Subnet Ranges — CategoryDDIObjects
+	// GCP-14: Secondary Subnet Ranges — CategoryDDIObjects
 	findings = append(findings, runResourceScan(ctx, projectID, "secondary_range",
 		calculator.CategoryDDIObjects, calculator.TokensPerDDIObject, publish,
 		func() (int, error) { return countSecondarySubnetRanges(ctx, opts, projectID) }))
