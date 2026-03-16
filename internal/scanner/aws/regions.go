@@ -130,22 +130,12 @@ func scanRegion(ctx context.Context, cfg awssdk.Config, region string, accountID
 		"transit_gateway", calculator.CategoryManagedAssets, calculator.TokensPerManagedAsset,
 		publish, func() (int, error) { return scanTransitGateways(ctx, cfg) }))
 
-	// Internet gateways
+	// Internet gateways — Managed Assets (Engineering Excel: Managed Asset = Yes)
 	findings = append(findings, runResourceScan(ctx, cfg, region, accountID,
-		"internet_gateway", calculator.CategoryDDIObjects, calculator.TokensPerDDIObject,
+		"internet_gateway", calculator.CategoryManagedAssets, calculator.TokensPerManagedAsset,
 		publish, func() (int, error) { return scanInternetGateways(ctx, cfg) }))
 
-	// Route tables
-	findings = append(findings, runResourceScan(ctx, cfg, region, accountID,
-		"route_table", calculator.CategoryDDIObjects, calculator.TokensPerDDIObject,
-		publish, func() (int, error) { return scanRouteTables(ctx, cfg) }))
-
-	// Security groups
-	findings = append(findings, runResourceScan(ctx, cfg, region, accountID,
-		"security_group", calculator.CategoryDDIObjects, calculator.TokensPerDDIObject,
-		publish, func() (int, error) { return scanSecurityGroups(ctx, cfg) }))
-
-	// VPN gateways (excludes deleted)
+	// VPN gateways (excludes deleted) — Managed Assets
 	findings = append(findings, runResourceScan(ctx, cfg, region, accountID,
 		"vpn_gateway", calculator.CategoryManagedAssets, calculator.TokensPerManagedAsset,
 		publish, func() (int, error) { return scanVPNGateways(ctx, cfg) }))

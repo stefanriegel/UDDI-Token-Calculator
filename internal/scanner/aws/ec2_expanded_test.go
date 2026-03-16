@@ -42,13 +42,11 @@ func TestExpandedResourceScanners_Wiring(t *testing.T) {
 		{"ec2_instance", calculator.CategoryManagedAssets, calculator.TokensPerManagedAsset},
 		{"ec2_ip", calculator.CategoryActiveIPs, calculator.TokensPerActiveIP},
 		{"load_balancer", calculator.CategoryManagedAssets, calculator.TokensPerManagedAsset},
-		// EC2 expanded (9 from M004 + 1 restored from v2.2.0)
+		// EC2 expanded (7 from M004 + 1 restored from v2.2.0)
 		{"elastic_ip", calculator.CategoryActiveIPs, calculator.TokensPerActiveIP},
 		{"nat_gateway", calculator.CategoryManagedAssets, calculator.TokensPerManagedAsset},
 		{"transit_gateway", calculator.CategoryManagedAssets, calculator.TokensPerManagedAsset},
-		{"internet_gateway", calculator.CategoryDDIObjects, calculator.TokensPerDDIObject},
-		{"route_table", calculator.CategoryDDIObjects, calculator.TokensPerDDIObject},
-		{"security_group", calculator.CategoryDDIObjects, calculator.TokensPerDDIObject},
+		{"internet_gateway", calculator.CategoryManagedAssets, calculator.TokensPerManagedAsset},
 		{"vpn_gateway", calculator.CategoryManagedAssets, calculator.TokensPerManagedAsset},
 		{"ipam_pool", calculator.CategoryDDIObjects, calculator.TokensPerDDIObject},
 		{"vpc_cidr_block", calculator.CategoryDDIObjects, calculator.TokensPerDDIObject},

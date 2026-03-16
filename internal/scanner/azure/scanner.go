@@ -580,35 +580,6 @@ func scanSubscription(ctx context.Context, cred azcore.TokenCredential, subID st
 		})
 	}
 
-	// ── Route Tables ─────────────────────────────────────────────────────────
-	routeTableCount, err := countRouteTables(ctx, cred, subID)
-	if err != nil {
-		publish(scanner.Event{
-			Type:     "error",
-			Provider: scanner.ProviderAzure,
-			Resource: "route_table",
-			Status:   "error",
-			Message:  err.Error(),
-		})
-	} else {
-		publish(scanner.Event{
-			Type:     "resource_progress",
-			Provider: scanner.ProviderAzure,
-			Resource: "route_table",
-			Count:    routeTableCount,
-			Status:   "done",
-		})
-		findings = append(findings, calculator.FindingRow{
-			Provider:         scanner.ProviderAzure,
-			Source:           displayName,
-			Category:         calculator.CategoryDDIObjects,
-			Item:             "route_table",
-			Count:            routeTableCount,
-			TokensPerUnit:    calculator.TokensPerDDIObject,
-			ManagementTokens: routeTableCount / calculator.TokensPerDDIObject,
-		})
-	}
-
 	// ── VNet Gateways and Gateway IPs ────────────────────────────────────────
 	vnetGWCount, vnetGWIPCount, err := countVNetGatewayIPs(ctx, cred, subID, vnetIDs)
 	if err != nil {
