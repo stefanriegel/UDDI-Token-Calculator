@@ -40,12 +40,14 @@ import {
   validateBluecat as apiValidateBluecat,
   validateEfficientip as apiValidateEfficientip,
   validateNiosWapi as apiValidateNiosWapi,
+  discoverADServers as apiDiscoverADServers,
   startScan as apiStartScan,
   getScanStatus as apiGetScanStatus,
   getScanResults as apiGetScanResults,
   getSessionId,
   cloneSession,
   type ScanStatusResponse,
+  type ADDiscoveredServer,
 } from './api-client';
 import {
   PROVIDERS,
@@ -265,6 +267,16 @@ export function Wizard() {
   const [backupToken, setBackupToken] = useState<string>('');
   const [niosServerMetrics, setNiosServerMetrics] = useState<NiosServerMetrics[]>([]);
 
+  // AD forest discovery state
+  const [adDiscovering, setAdDiscovering] = useState(false);
+  const [adDiscoveryResult, setAdDiscoveryResult] = useState<{
+    forestName?: string;
+    domainControllers: ADDiscoveredServer[];
+    dhcpServers: ADDiscoveredServer[];
+    errors?: string[];
+  } | null>(null);
+  const [adDiscoveryDismissed, setAdDiscoveryDismissed] = useState(false);
+
   // Use live metrics when available from real scan, fall back to mock data in demo mode
   const effectiveNiosMetrics = niosServerMetrics.length > 0 ? niosServerMetrics : MOCK_NIOS_SERVER_METRICS;
 
@@ -349,6 +361,8 @@ export function Wizard() {
     setMemberSearchFilter('');
     setBackupToken('');
     setNiosServerMetrics([]);
+    setAdDiscoveryResult(null);
+    setAdDiscoveryDismissed(false);
     setFindingsProviderFilter(new Set());
     setFindingsCategoryFilter(new Set());
     setFindingsSort(null);
@@ -363,6 +377,44 @@ export function Wizard() {
     setCredentialStatus((prev) => ({ ...prev, [id]: 'idle' }));
     setSubscriptions((prev) => ({ ...prev, [id]: [] }));
   };
+
+  // AD forest discovery: runs automatically after the microsoft provider validates.
+  // Uses the first server in the current credentials list as the seed DC.
+  const triggerADDiscovery = useCallback(async () => {
+    if (backend.isDemo) return; // no-op in demo mode
+    const authMethod = selectedAuthMethod.microsoft;
+    const creds = credentials.microsoft || {};
+    // Kerberos uses a different auth flow that doesn't support discovery via NTLM WinRM
+    if (authMethod === 'kerberos') return;
+    setAdDiscovering(true);
+    setAdDiscoveryResult(null);
+    setAdDiscoveryDismissed(false);
+    try {
+      const result = await apiDiscoverADServers(authMethod, creds);
+      // Only surface if we found additional servers beyond what the user already entered
+      const existingServers = new Set(
+        (creds.servers || '').split(',').map((s: string) => s.trim().toLowerCase()).filter(Boolean)
+      );
+      const newDCs = result.domainControllers.filter(
+        (dc) => !existingServers.has(dc.hostname.toLowerCase())
+      );
+      const newDHCP = result.dhcpServers.filter(
+        (s) => !existingServers.has(s.hostname.toLowerCase())
+      );
+      if (newDCs.length > 0 || newDHCP.length > 0) {
+        setAdDiscoveryResult({
+          forestName: result.forestName,
+          domainControllers: newDCs,
+          dhcpServers: newDHCP,
+          errors: result.errors,
+        });
+      }
+    } catch {
+      // Discovery is best-effort; silently ignore errors
+    } finally {
+      setAdDiscovering(false);
+    }
+  }, [backend.isDemo, selectedAuthMethod, credentials]);
 
   // Validate credentials — uses real API when connected, mock when in demo mode
   const validateCredential = useCallback(async (providerId: ProviderType) => {
@@ -472,6 +524,11 @@ export function Wizard() {
             ...prev,
             [providerId]: result.subscriptions.map((s) => ({ ...s, selected: autoSelect })),
           }));
+
+          // After MS DHCP/DNS validates, probe the forest for additional servers
+          if (providerId === 'microsoft') {
+            triggerADDiscovery();
+          }
         } else {
           setCredentialStatus((prev) => ({ ...prev, [providerId]: 'error' }));
           setCredentialError((prev) => ({ ...prev, [providerId]: result.error || 'Validation failed' }));
@@ -1562,6 +1619,140 @@ export function Wizard() {
                           <div className="mt-2 flex items-start gap-2 p-2.5 bg-red-50 rounded-lg border border-red-100">
                             <AlertCircle className="w-3.5 h-3.5 text-red-500 mt-0.5 shrink-0" />
                             <p className="text-[12px] text-red-700">{credentialError[provId]}</p>
+                          </div>
+                        )}
+
+                        {/* AD Forest Discovery panel — shown after microsoft validates */}
+                        {provId === 'microsoft' && status === 'valid' && !adDiscoveryDismissed && (
+                          <div className="mt-3">
+                            {adDiscovering && (
+                              <div className="flex items-center gap-2 p-2.5 bg-blue-50 rounded-lg border border-blue-100 text-[12px] text-blue-700">
+                                <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+                                Scanning forest for additional domain controllers and DHCP servers…
+                              </div>
+                            )}
+                            {!adDiscovering && adDiscoveryResult && (adDiscoveryResult.domainControllers.length > 0 || adDiscoveryResult.dhcpServers.length > 0) && (
+                              <div className="p-3 bg-green-50 rounded-lg border border-green-200">
+                                <div className="flex items-start justify-between gap-2 mb-2">
+                                  <div className="flex items-center gap-1.5">
+                                    <Globe className="w-3.5 h-3.5 text-green-700 shrink-0" />
+                                    <span className="text-[12px] text-green-800" style={{ fontWeight: 600 }}>
+                                      {adDiscoveryResult.forestName
+                                        ? `Forest "${adDiscoveryResult.forestName}" discovered`
+                                        : 'Additional AD servers discovered'}
+                                    </span>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => setAdDiscoveryDismissed(true)}
+                                    className="text-green-600 hover:text-green-800 flex-shrink-0"
+                                    aria-label="Dismiss"
+                                  >
+                                    <X className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                                <p className="text-[11px] text-green-700 mb-2">
+                                  The following servers were found in the forest but are not yet in your server list. Click <strong>Add All</strong> or pick individual servers to include them.
+                                </p>
+                                {/* DC list */}
+                                {adDiscoveryResult.domainControllers.length > 0 && (
+                                  <div className="mb-1.5">
+                                    <p className="text-[11px] text-green-700 mb-1" style={{ fontWeight: 600 }}>Domain Controllers / DNS Servers</p>
+                                    <ul className="space-y-1">
+                                      {adDiscoveryResult.domainControllers.map((dc) => (
+                                        <li key={dc.hostname} className="flex items-center justify-between px-2 py-1 bg-white/70 rounded border border-green-200 text-[11px]">
+                                          <div>
+                                            <span className="font-medium">{dc.hostname}</span>
+                                            {dc.ip && <span className="text-green-600 ml-1">({dc.ip})</span>}
+                                            {dc.domain && <span className="text-green-500 ml-1">· {dc.domain}</span>}
+                                            <span className="ml-1.5 text-[10px] text-white bg-green-600 rounded px-1 py-0.5">{dc.roles.join(' · ')}</span>
+                                          </div>
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              const existing = (credentials.microsoft?.servers || '').split(',').map((s: string) => s.trim()).filter(Boolean);
+                                              if (!existing.some((s) => s.toLowerCase() === dc.hostname.toLowerCase())) {
+                                                setCredentials((prev) => ({
+                                                  ...prev,
+                                                  microsoft: { ...prev.microsoft, servers: [...existing, dc.hostname].join(',') },
+                                                }));
+                                              }
+                                              setAdDiscoveryResult((prev) => prev ? {
+                                                ...prev,
+                                                domainControllers: prev.domainControllers.filter((d) => d.hostname !== dc.hostname),
+                                              } : null);
+                                            }}
+                                            className="ml-2 px-2 py-0.5 bg-green-600 hover:bg-green-700 text-white text-[10px] rounded transition-colors"
+                                          >
+                                            Add
+                                          </button>
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                )}
+                                {/* DHCP list */}
+                                {adDiscoveryResult.dhcpServers.length > 0 && (
+                                  <div className="mb-1.5">
+                                    <p className="text-[11px] text-green-700 mb-1" style={{ fontWeight: 600 }}>DHCP Servers (non-DC)</p>
+                                    <ul className="space-y-1">
+                                      {adDiscoveryResult.dhcpServers.map((s) => (
+                                        <li key={s.hostname} className="flex items-center justify-between px-2 py-1 bg-white/70 rounded border border-green-200 text-[11px]">
+                                          <div>
+                                            <span className="font-medium">{s.hostname}</span>
+                                            {s.ip && <span className="text-green-600 ml-1">({s.ip})</span>}
+                                            <span className="ml-1.5 text-[10px] text-white bg-amber-600 rounded px-1 py-0.5">DHCP</span>
+                                          </div>
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              const existing = (credentials.microsoft?.servers || '').split(',').map((s2: string) => s2.trim()).filter(Boolean);
+                                              if (!existing.some((e) => e.toLowerCase() === s.hostname.toLowerCase())) {
+                                                setCredentials((prev) => ({
+                                                  ...prev,
+                                                  microsoft: { ...prev.microsoft, servers: [...existing, s.hostname].join(',') },
+                                                }));
+                                              }
+                                              setAdDiscoveryResult((prev) => prev ? {
+                                                ...prev,
+                                                dhcpServers: prev.dhcpServers.filter((d) => d.hostname !== s.hostname),
+                                              } : null);
+                                            }}
+                                            className="ml-2 px-2 py-0.5 bg-amber-600 hover:bg-amber-700 text-white text-[10px] rounded transition-colors"
+                                          >
+                                            Add
+                                          </button>
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                )}
+                                {/* Add All button */}
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const existing = (credentials.microsoft?.servers || '').split(',').map((s: string) => s.trim()).filter(Boolean);
+                                    const toAdd = [
+                                      ...adDiscoveryResult!.domainControllers.map((d) => d.hostname),
+                                      ...adDiscoveryResult!.dhcpServers.map((d) => d.hostname),
+                                    ].filter((h) => !existing.some((e) => e.toLowerCase() === h.toLowerCase()));
+                                    setCredentials((prev) => ({
+                                      ...prev,
+                                      microsoft: { ...prev.microsoft, servers: [...existing, ...toAdd].join(',') },
+                                    }));
+                                    setAdDiscoveryDismissed(true);
+                                  }}
+                                  className="w-full mt-1 py-1.5 bg-green-600 hover:bg-green-700 text-white text-[12px] font-medium rounded-lg transition-colors"
+                                >
+                                  Add All ({adDiscoveryResult.domainControllers.length + adDiscoveryResult.dhcpServers.length} servers)
+                                </button>
+                                {adDiscoveryResult.errors && adDiscoveryResult.errors.length > 0 && (
+                                  <p className="mt-1 text-[10px] text-amber-700">
+                                    ⚠ Partial discovery: {adDiscoveryResult.errors.join('; ')}
+                                  </p>
+                                )}
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>

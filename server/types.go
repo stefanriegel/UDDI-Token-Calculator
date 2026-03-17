@@ -142,6 +142,30 @@ type NiosServerMetric struct {
 	ObjectCount int    `json:"objectCount"`
 }
 
+// ADDiscoverRequest is the body for POST /api/v1/providers/ad/discover.
+// The seed server + credentials are re-submitted so discovery can be performed
+// immediately after the first server validates, without waiting for a scan.
+type ADDiscoverRequest struct {
+	AuthMethod  string            `json:"authMethod"`
+	Credentials map[string]string `json:"credentials"`
+}
+
+// ADDiscoveredServer is one server entry in the discovery response.
+type ADDiscoveredServer struct {
+	Hostname string   `json:"hostname"`
+	IP       string   `json:"ip,omitempty"`
+	Domain   string   `json:"domain,omitempty"`
+	Roles    []string `json:"roles"`
+}
+
+// ADDiscoverResponse is the body for POST /api/v1/providers/ad/discover.
+type ADDiscoverResponse struct {
+	ForestName        string               `json:"forestName,omitempty"`
+	DomainControllers []ADDiscoveredServer `json:"domainControllers"`
+	DHCPServers       []ADDiscoveredServer `json:"dhcpServers"`
+	Errors            []string             `json:"errors,omitempty"`
+}
+
 // BluecatValidateResponse is the response from Bluecat credential validation.
 type BluecatValidateResponse struct {
 	Valid      bool   `json:"valid"`

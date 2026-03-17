@@ -100,6 +100,7 @@ func NewRouter(staticHandler http.Handler, store *session.Store, orch *orchestra
 			r.Get("/scan/{scanId}/export", exportHandler.HandleExport)
 			r.Post("/session/clone", scanHandler.HandleCloneSession)
 			r.Post("/providers/nios/upload", scanHandler.HandleUploadNiosBackup)
+			r.Post("/providers/ad/discover", HandleADDiscover)
 		})
 	} else {
 		r.Route("/api/v1", func(r chi.Router) {
@@ -108,6 +109,7 @@ func NewRouter(staticHandler http.Handler, store *session.Store, orch *orchestra
 			r.Get("/update/check", HandleCheckUpdate)
 			r.Post("/update/apply", HandleSelfUpdate)
 			r.Post("/update/restart", HandleRestart)
+			r.Post("/providers/ad/discover", HandleADDiscover)
 		})
 	}
 

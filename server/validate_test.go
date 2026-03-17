@@ -1586,3 +1586,84 @@ func TestValidate_OrgStoresCredentials(t *testing.T) {
 	}
 }
 
+// TestHandleADDiscover_MissingServer verifies the discover endpoint returns 400
+// when no server address is supplied.
+func TestHandleADDiscover_MissingServer(t *testing.T) {
+	store := session.NewStore()
+	router := server.NewRouter(noopStatic, store, nil)
+
+	body := map[string]interface{}{
+		"authMethod":  "ntlm",
+		"credentials": map[string]string{},
+	}
+	b, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/providers/ad/discover", bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", rec.Code)
+	}
+	var resp map[string]string
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !strings.Contains(resp["error"], "server") {
+		t.Errorf("expected error mentioning 'server', got %q", resp["error"])
+	}
+}
+
+// TestHandleADDiscover_InvalidBody verifies that a malformed JSON body returns 400.
+func TestHandleADDiscover_InvalidBody(t *testing.T) {
+	store := session.NewStore()
+	router := server.NewRouter(noopStatic, store, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/providers/ad/discover", strings.NewReader("not json"))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", rec.Code)
+	}
+}
+
+// TestHandleADDiscover_UnreachableHost verifies that an unreachable host returns
+// HTTP 200 with an errors array (best-effort, not a hard failure).
+func TestHandleADDiscover_UnreachableHost(t *testing.T) {
+	store := session.NewStore()
+	router := server.NewRouter(noopStatic, store, nil)
+
+	body := map[string]interface{}{
+		"authMethod": "ntlm",
+		"credentials": map[string]string{
+			"servers":  "192.0.2.1", // RFC 5737 TEST-NET — guaranteed unreachable
+			"username": "testuser",
+			"password": "testpass",
+		},
+	}
+	b, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/providers/ad/discover", bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	// Always HTTP 200 — discovery errors are soft
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", rec.Code)
+	}
+	var resp server.ADDiscoverResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	// Errors may be populated; DomainControllers and DHCPServers must be initialised (not nil).
+	if resp.DomainControllers == nil {
+		t.Error("DomainControllers should be non-nil slice, not null")
+	}
+	if resp.DHCPServers == nil {
+		t.Error("DHCPServers should be non-nil slice, not null")
+	}
+}
+
+

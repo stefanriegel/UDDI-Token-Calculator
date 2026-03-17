@@ -1703,3 +1703,81 @@ func realADKerberosValidator(ctx context.Context, creds map[string]string) ([]Su
 	}
 	return items, nil
 }
+
+// HandleADDiscover handles POST /api/v1/providers/ad/discover.
+// It accepts a seed DC hostname + credentials, connects via WinRM, and queries the
+// Active Directory forest for all domain controllers and DHCP servers.
+// The response is a best-effort list — partial failures are returned as warnings
+// rather than hard errors so the wizard can still display whatever was found.
+func HandleADDiscover(w http.ResponseWriter, r *http.Request) {
+	var req ADDiscoverRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+
+	// Extract seed host from credentials.
+	hosts := parseServers(req.Credentials["servers"])
+	if len(hosts) == 0 {
+		if h := req.Credentials["server"]; h != "" {
+			hosts = []string{h}
+		}
+	}
+	if len(hosts) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "at least one server address is required"})
+		return
+	}
+	seedHost := hosts[0]
+	username := req.Credentials["username"]
+	password := req.Credentials["password"]
+
+	var clientOpts []ad.ClientOption
+	if req.Credentials["useSSL"] == "true" {
+		clientOpts = append(clientOpts, ad.WithHTTPS())
+	}
+	if req.Credentials["insecureSkipVerify"] == "true" {
+		clientOpts = append(clientOpts, ad.WithInsecureSkipVerify())
+	}
+
+	// Use a 30s deadline — forest enumeration can be slow in large environments.
+	discoverCtx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	discovery, err := ad.DiscoverForest(discoverCtx, seedHost, username, password, clientOpts...)
+	if err != nil {
+		writeJSON(w, http.StatusOK, ADDiscoverResponse{
+			DomainControllers: []ADDiscoveredServer{},
+			DHCPServers:       []ADDiscoveredServer{},
+			Errors:            []string{err.Error()},
+		})
+		return
+	}
+
+	resp := ADDiscoverResponse{
+		ForestName: discovery.ForestName,
+		Errors:     discovery.Errors,
+	}
+
+	resp.DomainControllers = make([]ADDiscoveredServer, 0, len(discovery.DomainControllers))
+	for _, dc := range discovery.DomainControllers {
+		resp.DomainControllers = append(resp.DomainControllers, ADDiscoveredServer{
+			Hostname: dc.Hostname,
+			IP:       dc.IP,
+			Domain:   dc.Domain,
+			Roles:    dc.Roles,
+		})
+	}
+
+	resp.DHCPServers = make([]ADDiscoveredServer, 0, len(discovery.DHCPServers))
+	for _, s := range discovery.DHCPServers {
+		resp.DHCPServers = append(resp.DHCPServers, ADDiscoveredServer{
+			Hostname: s.Hostname,
+			IP:       s.IP,
+			Domain:   s.Domain,
+			Roles:    s.Roles,
+		})
+	}
+
+	writeJSON(w, http.StatusOK, resp)
+}
+

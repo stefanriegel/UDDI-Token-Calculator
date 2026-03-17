@@ -181,6 +181,43 @@ export async function cloneSession(): Promise<CloneSessionResponse> {
   return res.json();
 }
 
+// ─── AD Forest Discovery ───────────────────────────────────────────────────────
+
+export interface ADDiscoveredServer {
+  hostname: string;
+  ip?: string;
+  domain?: string;
+  roles: string[]; // e.g. ["DC", "DNS"] or ["DHCP"]
+}
+
+export interface ADDiscoverResponse {
+  forestName?: string;
+  domainControllers: ADDiscoveredServer[];
+  dhcpServers: ADDiscoveredServer[];
+  errors?: string[];
+}
+
+/**
+ * Probe the AD forest via a seed DC and return all domain controllers and
+ * DHCP servers discovered.  Credentials are NOT stored server-side by this
+ * endpoint — the seed host must already be in the validated session.
+ */
+export async function discoverADServers(
+  authMethod: string,
+  credentials: Record<string, string>,
+): Promise<ADDiscoverResponse> {
+  const res = await fetch(apiUrl('/providers/ad/discover'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ authMethod, credentials }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as { error?: string }).error || `AD discover failed: ${res.status}`);
+  }
+  return res.json();
+}
+
 // ─── Scan ──────────────────────────────────────────────────────────────────────
 
 export interface ScanRequest {
