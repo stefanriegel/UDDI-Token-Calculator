@@ -24,7 +24,8 @@ frontend/node_modules/
 .DS_Store
 
 # GSD agent workspace — internal planning, never shipped
-Thumbs.db
+.gsd/
+
 *.swp
 *.swo
 *~
