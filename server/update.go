@@ -273,7 +273,7 @@ func HandleSelfUpdate(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(SelfUpdateResponse{
 			Success:   false,
 			ManagedBy: "homebrew",
-			Message:   "Run `brew upgrade uddi-token-calculator` to update.",
+			Message:   "Run `brew update && brew upgrade uddi-token-calculator` to update.",
 		})
 		return
 	}
