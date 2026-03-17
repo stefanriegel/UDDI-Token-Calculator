@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/infoblox/uddi-go-token-calculator/internal/calculator"
-	"github.com/infoblox/uddi-go-token-calculator/internal/checkpoint"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/calculator"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/checkpoint"
 )
 
 func TestCheckpoint_RoundTrip(t *testing.T) {

@@ -8,9 +8,9 @@ import (
 	awssdk "github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/route53"
 	"github.com/aws/aws-sdk-go-v2/service/route53resolver"
-	"github.com/infoblox/uddi-go-token-calculator/internal/calculator"
-	"github.com/infoblox/uddi-go-token-calculator/internal/cloudutil"
-	"github.com/infoblox/uddi-go-token-calculator/internal/scanner"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/calculator"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/cloudutil"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/scanner"
 )
 
 // scanRoute53 performs a single global Route53 scan (zones, record sets, health checks, traffic policies).

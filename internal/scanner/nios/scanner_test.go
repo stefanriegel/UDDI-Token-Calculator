@@ -12,9 +12,9 @@ import (
 	"os"
 	"testing"
 
-	"github.com/infoblox/uddi-go-token-calculator/internal/calculator"
-	"github.com/infoblox/uddi-go-token-calculator/internal/scanner"
-	niosscanner "github.com/infoblox/uddi-go-token-calculator/internal/scanner/nios"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/calculator"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/scanner"
+	niosscanner "github.com/stefanriegel/UDDI-Token-Calculator/internal/scanner/nios"
 )
 
 // NiosResultScanner is the optional interface implemented by the NIOS scanner

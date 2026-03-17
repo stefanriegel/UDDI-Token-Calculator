@@ -10,7 +10,7 @@ import (
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 
-	"github.com/infoblox/uddi-go-token-calculator/internal/cloudutil"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/cloudutil"
 )
 
 // ProjectInfo describes a single GCP project discovered via Resource Manager.

@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/infoblox/uddi-go-token-calculator/internal/orchestrator"
-	"github.com/infoblox/uddi-go-token-calculator/internal/session"
-	"github.com/infoblox/uddi-go-token-calculator/server"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/orchestrator"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/session"
+	"github.com/stefanriegel/UDDI-Token-Calculator/server"
 )
 
 // TestHandleScanResultsNIOS verifies that GET /api/v1/scan/{scanId}/results returns

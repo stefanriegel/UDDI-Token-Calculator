@@ -14,9 +14,9 @@ import (
 	"google.golang.org/api/option"
 	"golang.org/x/oauth2"
 
-	"github.com/infoblox/uddi-go-token-calculator/internal/calculator"
-	"github.com/infoblox/uddi-go-token-calculator/internal/checkpoint"
-	"github.com/infoblox/uddi-go-token-calculator/internal/scanner"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/calculator"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/checkpoint"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/scanner"
 )
 
 // ---- Compile-time signature assertions ----

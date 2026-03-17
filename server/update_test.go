@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/infoblox/uddi-go-token-calculator/internal/version"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/version"
 )
 
 func TestParseSemver(t *testing.T) {

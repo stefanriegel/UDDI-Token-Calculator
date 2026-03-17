@@ -18,10 +18,10 @@ import (
 	armnetwork "github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/network/armnetwork/v6"
 	armprivatedns "github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/privatedns/armprivatedns"
 	armsubscriptions "github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armsubscriptions"
-	"github.com/infoblox/uddi-go-token-calculator/internal/calculator"
-	"github.com/infoblox/uddi-go-token-calculator/internal/checkpoint"
-	"github.com/infoblox/uddi-go-token-calculator/internal/cloudutil"
-	"github.com/infoblox/uddi-go-token-calculator/internal/scanner"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/calculator"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/checkpoint"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/cloudutil"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/scanner"
 )
 
 // maxConcurrentSubscriptions is the default concurrency for multi-subscription fan-out.

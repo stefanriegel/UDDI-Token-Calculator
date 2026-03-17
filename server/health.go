@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/infoblox/uddi-go-token-calculator/internal/version"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/version"
 )
 
 // HandleHealth serves GET /api/v1/health.

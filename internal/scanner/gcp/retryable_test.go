@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/infoblox/uddi-go-token-calculator/internal/cloudutil"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/cloudutil"
 	"google.golang.org/api/googleapi"
 )
 

@@ -3,7 +3,7 @@ package calculator_test
 import (
 	"testing"
 
-	"github.com/infoblox/uddi-go-token-calculator/internal/calculator"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/calculator"
 )
 
 func TestCalculate_EmptyInput(t *testing.T) {

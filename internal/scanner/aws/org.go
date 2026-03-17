@@ -8,7 +8,7 @@ import (
 	awssdk "github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/organizations"
 	orgtypes "github.com/aws/aws-sdk-go-v2/service/organizations/types"
-	"github.com/infoblox/uddi-go-token-calculator/internal/cloudutil"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/cloudutil"
 )
 
 // AccountInfo describes a single AWS account discovered via Organizations.

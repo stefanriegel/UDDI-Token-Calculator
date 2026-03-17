@@ -17,8 +17,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/infoblox/uddi-go-token-calculator/internal/calculator"
-	"github.com/infoblox/uddi-go-token-calculator/internal/scanner"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/calculator"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/scanner"
 )
 
 // Regex patterns for WAPI version detection, ported from Python reference.

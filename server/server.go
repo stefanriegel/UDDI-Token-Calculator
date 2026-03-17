@@ -9,8 +9,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
-	"github.com/infoblox/uddi-go-token-calculator/internal/orchestrator"
-	"github.com/infoblox/uddi-go-token-calculator/internal/session"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/orchestrator"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/session"
 )
 
 // silentPaths are request paths that should not produce log output.

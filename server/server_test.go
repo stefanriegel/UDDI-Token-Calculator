@@ -8,9 +8,9 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/infoblox/uddi-go-token-calculator/internal/orchestrator"
-	"github.com/infoblox/uddi-go-token-calculator/internal/session"
-	"github.com/infoblox/uddi-go-token-calculator/server"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/orchestrator"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/session"
+	"github.com/stefanriegel/UDDI-Token-Calculator/server"
 )
 
 // fakeFS builds an in-memory FS that mimics what embed.FS looks like after fs.Sub.

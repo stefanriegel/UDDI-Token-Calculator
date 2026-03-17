@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/infoblox/uddi-go-token-calculator/internal/session"
-	"github.com/infoblox/uddi-go-token-calculator/server"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/session"
+	"github.com/stefanriegel/UDDI-Token-Calculator/server"
 )
 
 // testCompleteSession creates a session store, adds a complete session to it,

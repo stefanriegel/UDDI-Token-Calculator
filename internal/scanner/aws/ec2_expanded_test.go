@@ -6,8 +6,8 @@ import (
 	"testing"
 
 	awssdk "github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/infoblox/uddi-go-token-calculator/internal/calculator"
-	"github.com/infoblox/uddi-go-token-calculator/internal/scanner"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/calculator"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/scanner"
 )
 
 // TestExpandedResourceScanners_Wiring verifies that scanRegion produces a FindingRow

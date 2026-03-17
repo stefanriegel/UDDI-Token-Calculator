@@ -7,8 +7,8 @@ import (
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/infoblox/uddi-go-token-calculator/internal/exporter"
-	"github.com/infoblox/uddi-go-token-calculator/internal/session"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/exporter"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/session"
 )
 
 // ExportHandler holds the dependencies required by the export HTTP handler.

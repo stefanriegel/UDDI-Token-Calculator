@@ -17,8 +17,8 @@ import (
 	krbconfig "github.com/jcmturner/gokrb5/v8/config"
 	"github.com/masterzen/winrm"
 
-	"github.com/infoblox/uddi-go-token-calculator/internal/calculator"
-	"github.com/infoblox/uddi-go-token-calculator/internal/scanner"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/calculator"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/scanner"
 )
 
 const (

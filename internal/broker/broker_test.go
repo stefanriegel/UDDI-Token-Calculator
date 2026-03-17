@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/infoblox/uddi-go-token-calculator/internal/broker"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/broker"
 )
 
 // Test 1: New() returns non-nil Broker with empty clients map

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/infoblox/uddi-go-token-calculator/internal/session"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/session"
 )
 
 // Test 1: NewStore() returns non-nil Store

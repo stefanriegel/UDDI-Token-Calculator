@@ -6,9 +6,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/infoblox/uddi-go-token-calculator/internal/orchestrator"
-	"github.com/infoblox/uddi-go-token-calculator/internal/session"
-	"github.com/infoblox/uddi-go-token-calculator/server"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/orchestrator"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/session"
+	"github.com/stefanriegel/UDDI-Token-Calculator/server"
 )
 
 func TestHealthEndpoint(t *testing.T) {

@@ -10,10 +10,10 @@ import (
 	"strings"
 	"testing"
 
-	ad "github.com/infoblox/uddi-go-token-calculator/internal/scanner/ad"
-	gcp "github.com/infoblox/uddi-go-token-calculator/internal/scanner/gcp"
-	"github.com/infoblox/uddi-go-token-calculator/internal/session"
-	"github.com/infoblox/uddi-go-token-calculator/server"
+	ad "github.com/stefanriegel/UDDI-Token-Calculator/internal/scanner/ad"
+	gcp "github.com/stefanriegel/UDDI-Token-Calculator/internal/scanner/gcp"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/session"
+	"github.com/stefanriegel/UDDI-Token-Calculator/server"
 )
 
 // stubValidator returns a fixed result without making any network calls.

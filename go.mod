@@ -1,4 +1,4 @@
-module github.com/infoblox/uddi-go-token-calculator
+module github.com/stefanriegel/UDDI-Token-Calculator
 
 go 1.25.6
 

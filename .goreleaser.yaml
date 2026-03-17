@@ -11,8 +11,8 @@ builds:
       - linux_amd64
     ldflags:
       - -s -w
-      - -X github.com/infoblox/uddi-go-token-calculator/internal/version.Version={{.Version}}
-      - -X github.com/infoblox/uddi-go-token-calculator/internal/version.Commit={{.ShortCommit}}
+      - -X github.com/stefanriegel/UDDI-Token-Calculator/internal/version.Version={{.Version}}
+      - -X github.com/stefanriegel/UDDI-Token-Calculator/internal/version.Commit={{.ShortCommit}}
     binary: uddi-token-calculator
 
 archives:

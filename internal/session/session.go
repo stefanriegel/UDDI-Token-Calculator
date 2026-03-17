@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
-	"github.com/infoblox/uddi-go-token-calculator/internal/broker"
-	"github.com/infoblox/uddi-go-token-calculator/internal/calculator"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/broker"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/calculator"
 	"golang.org/x/oauth2"
 )
 

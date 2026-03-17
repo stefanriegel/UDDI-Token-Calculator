@@ -13,10 +13,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/infoblox/uddi-go-token-calculator/internal/broker"
-	"github.com/infoblox/uddi-go-token-calculator/internal/calculator"
-	"github.com/infoblox/uddi-go-token-calculator/internal/scanner"
-	"github.com/infoblox/uddi-go-token-calculator/internal/session"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/broker"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/calculator"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/scanner"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/session"
 )
 
 // ScanProviderRequest describes a single provider to be scanned.

@@ -6,12 +6,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/infoblox/uddi-go-token-calculator/internal/broker"
-	"github.com/infoblox/uddi-go-token-calculator/internal/calculator"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/broker"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/calculator"
 
-	"github.com/infoblox/uddi-go-token-calculator/internal/orchestrator"
-	"github.com/infoblox/uddi-go-token-calculator/internal/scanner"
-	"github.com/infoblox/uddi-go-token-calculator/internal/session"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/orchestrator"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/scanner"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/session"
 )
 
 // noopScanner is a test helper that returns zero findings instantly.

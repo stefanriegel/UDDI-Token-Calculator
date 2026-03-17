@@ -10,9 +10,9 @@ import (
 
 	awssdk "github.com/aws/aws-sdk-go-v2/aws"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
-	"github.com/infoblox/uddi-go-token-calculator/internal/calculator"
-	"github.com/infoblox/uddi-go-token-calculator/internal/checkpoint"
-	"github.com/infoblox/uddi-go-token-calculator/internal/scanner"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/calculator"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/checkpoint"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/scanner"
 )
 
 // TestCountInstanceIPs tests the multi-NIC primary case (AWS-05).

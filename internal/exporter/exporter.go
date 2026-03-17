@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/infoblox/uddi-go-token-calculator/internal/calculator"
-	"github.com/infoblox/uddi-go-token-calculator/internal/session"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/calculator"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/session"
 	"github.com/xuri/excelize/v2"
 )
 

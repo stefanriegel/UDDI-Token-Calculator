@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/infoblox/uddi-go-token-calculator/internal/broker"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/broker"
 )
 
 // Store is a sync.Map-backed in-memory session store.

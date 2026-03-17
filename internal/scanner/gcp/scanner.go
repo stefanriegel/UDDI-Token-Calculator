@@ -14,10 +14,10 @@ import (
 	"google.golang.org/api/googleapi"
 	"google.golang.org/api/option"
 
-	"github.com/infoblox/uddi-go-token-calculator/internal/calculator"
-	"github.com/infoblox/uddi-go-token-calculator/internal/checkpoint"
-	"github.com/infoblox/uddi-go-token-calculator/internal/cloudutil"
-	"github.com/infoblox/uddi-go-token-calculator/internal/scanner"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/calculator"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/checkpoint"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/cloudutil"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/scanner"
 )
 
 // GCP OAuth2 scopes required for discovery.

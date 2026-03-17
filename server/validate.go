@@ -33,10 +33,10 @@ import (
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 
-	ad "github.com/infoblox/uddi-go-token-calculator/internal/scanner/ad"
-	awsscanner "github.com/infoblox/uddi-go-token-calculator/internal/scanner/aws"
-	gcpscanner "github.com/infoblox/uddi-go-token-calculator/internal/scanner/gcp"
-	"github.com/infoblox/uddi-go-token-calculator/internal/session"
+	ad "github.com/stefanriegel/UDDI-Token-Calculator/internal/scanner/ad"
+	awsscanner "github.com/stefanriegel/UDDI-Token-Calculator/internal/scanner/aws"
+	gcpscanner "github.com/stefanriegel/UDDI-Token-Calculator/internal/scanner/gcp"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/session"
 )
 
 // azureCredCache is an in-process store for live Azure token credentials obtained

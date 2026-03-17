@@ -12,20 +12,20 @@ import (
 
 	"github.com/pkg/browser"
 
-	"github.com/infoblox/uddi-go-token-calculator/internal/version"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/version"
 
-	awsscanner "github.com/infoblox/uddi-go-token-calculator/internal/scanner/aws"
-	azurescanner "github.com/infoblox/uddi-go-token-calculator/internal/scanner/azure"
-	bluecatscanner "github.com/infoblox/uddi-go-token-calculator/internal/scanner/bluecat"
-	efficientipscanner "github.com/infoblox/uddi-go-token-calculator/internal/scanner/efficientip"
-	gcpscanner "github.com/infoblox/uddi-go-token-calculator/internal/scanner/gcp"
-	adscanner "github.com/infoblox/uddi-go-token-calculator/internal/scanner/ad"
-	niosscanner "github.com/infoblox/uddi-go-token-calculator/internal/scanner/nios"
+	awsscanner "github.com/stefanriegel/UDDI-Token-Calculator/internal/scanner/aws"
+	azurescanner "github.com/stefanriegel/UDDI-Token-Calculator/internal/scanner/azure"
+	bluecatscanner "github.com/stefanriegel/UDDI-Token-Calculator/internal/scanner/bluecat"
+	efficientipscanner "github.com/stefanriegel/UDDI-Token-Calculator/internal/scanner/efficientip"
+	gcpscanner "github.com/stefanriegel/UDDI-Token-Calculator/internal/scanner/gcp"
+	adscanner "github.com/stefanriegel/UDDI-Token-Calculator/internal/scanner/ad"
+	niosscanner "github.com/stefanriegel/UDDI-Token-Calculator/internal/scanner/nios"
 
-	"github.com/infoblox/uddi-go-token-calculator/internal/orchestrator"
-	"github.com/infoblox/uddi-go-token-calculator/internal/scanner"
-	"github.com/infoblox/uddi-go-token-calculator/internal/session"
-	"github.com/infoblox/uddi-go-token-calculator/server"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/orchestrator"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/scanner"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/session"
+	"github.com/stefanriegel/UDDI-Token-Calculator/server"
 )
 
 func main() {

@@ -6,7 +6,7 @@ import (
 	"context"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
-	"github.com/infoblox/uddi-go-token-calculator/internal/calculator"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/calculator"
 	"golang.org/x/oauth2"
 )
 

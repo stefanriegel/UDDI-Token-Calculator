@@ -16,7 +16,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/infoblox/uddi-go-token-calculator/internal/calculator"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/calculator"
 )
 
 // Version is the forward-compatibility guard. Load rejects files with a

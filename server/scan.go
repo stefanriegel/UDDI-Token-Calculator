@@ -19,9 +19,9 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/infoblox/uddi-go-token-calculator/internal/orchestrator"
-	"github.com/infoblox/uddi-go-token-calculator/internal/scanner/nios"
-	"github.com/infoblox/uddi-go-token-calculator/internal/session"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/orchestrator"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/scanner/nios"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/session"
 )
 
 // niosBackupTokens maps opaque upload tokens to temp file paths.
