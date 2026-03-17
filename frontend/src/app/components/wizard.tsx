@@ -991,6 +991,11 @@ export function Wizard() {
                 <ArrowUpCircle className="w-3 h-3" />
                 <span className="hidden sm:inline">{backend.updateError || 'Update failed'}</span>
               </div>
+            ) : backend.updateStatus === 'managed' ? (
+              <div className="flex items-center gap-1.5 px-2.5 py-1 bg-blue-500/20 border border-blue-500/30 rounded-full text-[11px] text-blue-300" title={backend.updateError || ''}>
+                <ArrowUpCircle className="w-3 h-3" />
+                <span className="hidden sm:inline">brew upgrade uddi-token-calculator</span>
+              </div>
             ) : backend.updateInfo?.updateAvailable ? (
               <button
                 onClick={backend.applyUpdate}

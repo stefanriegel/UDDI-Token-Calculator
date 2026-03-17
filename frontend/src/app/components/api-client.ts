@@ -320,6 +320,8 @@ export interface SelfUpdateResponse {
   error?: string;
   message?: string;
   restartPending?: boolean;
+  /** Set when the binary is managed by an external package manager (e.g. "homebrew"). */
+  managedBy?: string;
 }
 
 export async function checkForUpdate(): Promise<UpdateCheckResponse> {

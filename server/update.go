@@ -271,8 +271,9 @@ func HandleSelfUpdate(w http.ResponseWriter, r *http.Request) {
 	// Detect Homebrew-managed installs — self-update won't have write permission
 	if isHomebrewManaged(execPath) {
 		json.NewEncoder(w).Encode(SelfUpdateResponse{
-			Success: false,
-			Error:   "This binary is managed by Homebrew. Run `brew upgrade uddi-token-calculator` to update.",
+			Success:   false,
+			ManagedBy: "homebrew",
+			Message:   "Run `brew upgrade uddi-token-calculator` to update.",
 		})
 		return
 	}

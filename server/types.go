@@ -204,6 +204,10 @@ type SelfUpdateResponse struct {
 	Error          string `json:"error,omitempty"`
 	Message        string `json:"message,omitempty"`
 	RestartPending bool   `json:"restartPending,omitempty"`
+	// ManagedBy is set when the binary is managed by an external package manager
+	// (e.g. "homebrew"). The client should display an informational hint rather
+	// than treating this as an error.
+	ManagedBy string `json:"managedBy,omitempty"`
 }
 
 // ScanResultsResponse is the body for GET /api/v1/scan/{id}/results.
