@@ -24,7 +24,6 @@ frontend/node_modules/
 .DS_Store
 
 # GSD agent workspace — internal planning, never shipped
-.gsd/
 Thumbs.db
 *.swp
 *.swo
@@ -57,3 +56,11 @@ tmp/
 .gsd/metrics.json
 .gsd/completed-units.json
 .gsd/STATE.md
+
+# ── GSD baseline (auto-generated) ──
+.gsd/forensics/
+.gsd/parallel/
+.gsd/gsd.db
+.gsd/DISCUSSION-MANIFEST.json
+.gsd/milestones/**/*-CONTINUE.md
+.gsd/milestones/**/continue.md
