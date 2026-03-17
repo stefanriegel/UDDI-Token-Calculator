@@ -245,29 +245,33 @@ export const PROVIDERS: ProviderOption[] = [
     authMethods: [
       {
         id: 'kerberos',
-        name: 'Windows / Kerberos (Current User)',
-        description: 'Use your current Windows domain session (integrated auth)',
+        name: 'Kerberos (username + password)',
+        description: 'Authenticate with on-premises AD credentials via Kerberos — works from any host, no domain join required',
         fields: [
-          { key: 'servers', label: 'Server Address(es)', placeholder: 'dc01.corp.local', serverList: true, helpText: 'Add one or more domain controller hostnames or IPs' },
+          { key: 'servers', label: 'Domain Controller', placeholder: 'dc01.corp.local', serverList: true, helpText: 'Hostname or IP of one or more domain controllers' },
+          { key: 'username', label: 'Username', placeholder: 'administrator', helpText: 'On-premises AD user (not an Entra ID-only account)' },
+          { key: 'password', label: 'Password', placeholder: '********', secret: true },
+          { key: 'realm', label: 'Kerberos Realm', placeholder: 'CORP.EXAMPLE.COM', helpText: 'AD domain in uppercase, e.g. CORP.EXAMPLE.COM' },
+          { key: 'kdc', label: 'KDC Address (optional)', placeholder: 'dc01.corp.local:88', helpText: 'Defaults to the first DC on port 88' },
         ],
       },
       {
         id: 'ntlm',
         name: 'Username & Password (NTLM)',
-        description: 'Authenticate with domain credentials',
+        description: 'Authenticate with on-premises AD credentials via NTLM — use this from an Entra ID-joined or non-domain-joined machine',
         fields: [
-          { key: 'servers', label: 'Server Address(es)', placeholder: 'dc01.corp.local', serverList: true, helpText: 'Add one or more domain controller hostnames or IPs' },
-          { key: 'username', label: 'Username', placeholder: 'DOMAIN\\admin' },
+          { key: 'servers', label: 'Domain Controller', placeholder: 'dc01.corp.local', serverList: true, helpText: 'Hostname or IP of one or more domain controllers' },
+          { key: 'username', label: 'Username', placeholder: 'CORP\\admin', helpText: 'On-premises AD user — use DOMAIN\\user or user@domain.local format. Entra ID-only accounts (user@tenant.onmicrosoft.com) are not supported.' },
           { key: 'password', label: 'Password', placeholder: '********', secret: true },
         ],
       },
       {
         id: 'powershell-remote',
-        name: 'PowerShell Remoting (WinRM)',
-        description: 'Connect via WinRM to a remote Windows Server',
+        name: 'PowerShell Remoting (WinRM / HTTPS)',
+        description: 'Connect via encrypted WinRM (HTTPS) — recommended for production environments with valid TLS certificates',
         fields: [
-          { key: 'servers', label: 'Server Address(es)', placeholder: 'dc01.corp.local', serverList: true, helpText: 'Add one or more domain controller hostnames or IPs' },
-          { key: 'username', label: 'Username', placeholder: 'DOMAIN\\admin' },
+          { key: 'servers', label: 'Domain Controller', placeholder: 'dc01.corp.local', serverList: true, helpText: 'Hostname or IP of one or more domain controllers' },
+          { key: 'username', label: 'Username', placeholder: 'CORP\\admin' },
           { key: 'password', label: 'Password', placeholder: '********', secret: true },
           { key: 'useSSL', label: 'Use HTTPS (port 5986)', placeholder: 'true', helpText: 'Enable for encrypted WinRM transport' },
           { key: 'insecureSkipVerify', label: 'Allow untrusted certificates', placeholder: 'true', helpText: 'Skip TLS certificate validation (common for self-signed certs)' },
