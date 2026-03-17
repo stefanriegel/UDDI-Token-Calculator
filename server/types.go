@@ -8,8 +8,9 @@ type VersionResponse struct {
 
 // HealthResponse is the JSON body for GET /api/v1/health.
 type HealthResponse struct {
-	Status  string `json:"status"`
-	Version string `json:"version"`
+	Status   string `json:"status"`
+	Version  string `json:"version"`
+	Platform string `json:"platform"` // runtime.GOOS: "windows", "darwin", "linux"
 }
 
 // ScanStartRequest is the body for POST /api/v1/scan.

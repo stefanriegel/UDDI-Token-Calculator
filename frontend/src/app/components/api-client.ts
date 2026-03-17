@@ -40,6 +40,8 @@ function apiUrl(path: string) {
 export interface HealthResponse {
   status: 'ok' | 'degraded' | 'error';
   version: string;
+  /** runtime.GOOS from the backend binary — e.g. "windows", "darwin", "linux" */
+  platform?: string;
 }
 
 export async function checkHealth(): Promise<HealthResponse> {

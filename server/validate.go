@@ -1296,6 +1296,11 @@ func realADValidator(ctx context.Context, creds map[string]string) ([]Subscripti
 		return realADKerberosValidator(ctx, creds)
 	}
 
+	// Route Windows SSPI (current user pass-through) to its dedicated validator.
+	if creds["authMethod"] == "sspi" {
+		return realADSSPIValidator(ctx, creds)
+	}
+
 	// Parse the first server from the comma-separated list for the connectivity probe.
 	servers := parseServers(creds["servers"])
 	if len(servers) == 0 {
@@ -1781,3 +1786,39 @@ func HandleADDiscover(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+
+// realADSSPIValidator validates connectivity using Windows SSPI (Negotiate/Kerberos)
+// with the currently logged-on user's credentials — no username or password required.
+// On non-Windows builds BuildSSPIClient returns ErrSSPINotAvailable immediately.
+func realADSSPIValidator(ctx context.Context, creds map[string]string) ([]SubscriptionItem, error) {
+	servers := parseServers(creds["servers"])
+	if len(servers) == 0 {
+		if h := creds["server"]; h != "" {
+			servers = []string{h}
+		}
+	}
+	if len(servers) == 0 {
+		return nil, errors.New("server address is required")
+	}
+	host := servers[0]
+
+	sspiClient, err := ad.BuildSSPIClient(host)
+	if err != nil {
+		// On non-Windows this is ErrSSPINotAvailable — surface a clear message.
+		return nil, fmt.Errorf("Windows SSO is only available on domain-joined Windows hosts: %w", err)
+	}
+
+	probeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	_, err = sspiClient.RunPowerShell(probeCtx, `$PSVersionTable.PSVersion.Major`)
+	if err != nil {
+		return nil, fmt.Errorf("SSPI WinRM probe failed: %w", err)
+	}
+
+	items := make([]SubscriptionItem, 0, len(servers))
+	for _, s := range servers {
+		items = append(items, SubscriptionItem{ID: s, Name: s + " (Windows SSO)"})
+	}
+	return items, nil
+}

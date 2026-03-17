@@ -60,6 +60,8 @@ export interface AuthMethod {
   name: string;
   description: string;
   fields: CredentialField[];
+  /** If true, this auth method is only shown when the backend reports platform === "windows" */
+  windowsOnly?: boolean;
 }
 
 export interface ProviderOption {
@@ -243,6 +245,15 @@ export const PROVIDERS: ProviderOption[] = [
     description: 'On-prem Windows Server DHCP scopes and DNS zones',
     subscriptionLabel: 'Servers',
     authMethods: [
+      {
+        id: 'sspi',
+        name: 'Windows SSO (Current User)',
+        description: 'Use your current Windows domain session — no password required. Only available on domain-joined Windows hosts.',
+        windowsOnly: true,
+        fields: [
+          { key: 'servers', label: 'Domain Controller', placeholder: 'dc01.corp.local', serverList: true, helpText: 'Hostname or IP of one or more domain controllers' },
+        ],
+      },
       {
         id: 'kerberos',
         name: 'Kerberos (username + password)',

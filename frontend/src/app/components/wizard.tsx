@@ -1165,7 +1165,11 @@ export function Wizard() {
                   const provider = PROVIDERS.find((p) => p.id === provId)!;
                   const status = credentialStatus[provId];
                   const currentAuthId = selectedAuthMethod[provId];
-                  const currentAuth = provider.authMethods.find((m) => m.id === currentAuthId) || provider.authMethods[0];
+                  const platform = backend.health?.platform;
+                  const availableAuthMethods = provider.authMethods.filter(
+                    (m) => !m.windowsOnly || platform === 'windows'
+                  );
+                  const currentAuth = availableAuthMethods.find((m) => m.id === currentAuthId) || availableAuthMethods[0];
                   const hasFields = currentAuth.fields.length > 0;
 
                   return (
@@ -1202,7 +1206,7 @@ export function Wizard() {
                           Authentication Method
                         </label>
                         <div className="flex flex-wrap gap-1.5">
-                          {provider.authMethods.map((method) => {
+                          {availableAuthMethods.map((method) => {
                             const isSelected = currentAuthId === method.id;
                             return (
                               <button
