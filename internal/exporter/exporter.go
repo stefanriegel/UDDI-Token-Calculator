@@ -5,6 +5,7 @@ package exporter
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 
@@ -88,12 +89,22 @@ func Build(w io.Writer, sess *session.Session) error {
 		}
 	}
 
-	// Sheet 7 — Errors (conditional).
+	// Sheet — Errors (conditional).
 	if len(sess.Errors) > 0 {
 		if _, err := f.NewSheet("Errors"); err != nil {
 			return fmt.Errorf("exporter: new sheet Errors: %w", err)
 		}
 		if err := buildErrorsSheet(f, headerStyle, sess); err != nil {
+			return err
+		}
+	}
+
+	// Sheet — AD Migration Planner (conditional: present when AD scan produced per-DC metrics).
+	if len(sess.ADServerMetricsJSON) > 0 {
+		if _, err := f.NewSheet("AD Migration Planner"); err != nil {
+			return fmt.Errorf("exporter: new sheet AD Migration Planner: %w", err)
+		}
+		if err := buildADMigrationSheet(f, headerStyle, sess); err != nil {
 			return err
 		}
 	}
@@ -312,6 +323,167 @@ func buildErrorsSheet(f *excelize.File, headerStyle int, sess *session.Session) 
 			return err
 		}
 	}
+
+	return sw.Flush()
+}
+
+// adMetricExport mirrors the JSON shape of ADServerMetric for deserialization.
+type adMetricExport struct {
+	Hostname              string `json:"hostname"`
+	DNSObjects            int    `json:"dnsObjects"`
+	DHCPObjects           int    `json:"dhcpObjects"`
+	DHCPObjectsWithOverhead int  `json:"dhcpObjectsWithOverhead"`
+	QPS                   int    `json:"qps"`
+	LPS                   int    `json:"lps"`
+	Tier                  string `json:"tier"`
+	ServerTokens          int    `json:"serverTokens"`
+}
+
+// buildADMigrationSheet writes the AD Migration Planner sheet with per-DC tier data
+// and scenario comparison. Uses StreamWriter for large dataset safety.
+func buildADMigrationSheet(f *excelize.File, headerStyle int, sess *session.Session) error {
+	var metrics []adMetricExport
+	if err := json.Unmarshal(sess.ADServerMetricsJSON, &metrics); err != nil {
+		return fmt.Errorf("exporter: decode ADServerMetricsJSON: %w", err)
+	}
+
+	sw, err := f.NewStreamWriter("AD Migration Planner")
+	if err != nil {
+		return fmt.Errorf("exporter: StreamWriter AD Migration Planner: %w", err)
+	}
+
+	// Set column widths
+	for col, w := range map[int]float64{1: 20, 2: 14, 3: 14, 4: 18, 5: 10, 6: 10, 7: 14, 8: 14} {
+		colName, _ := excelize.ColumnNumberToName(col)
+		_ = f.SetColWidth("AD Migration Planner", colName, colName, w)
+	}
+
+	// Header row
+	headers := []interface{}{
+		excelize.Cell{StyleID: headerStyle, Value: "DC Hostname"},
+		excelize.Cell{StyleID: headerStyle, Value: "DNS Objects"},
+		excelize.Cell{StyleID: headerStyle, Value: "DHCP Objects"},
+		excelize.Cell{StyleID: headerStyle, Value: "DHCP Objects (+20%)"},
+		excelize.Cell{StyleID: headerStyle, Value: "QPS"},
+		excelize.Cell{StyleID: headerStyle, Value: "LPS"},
+		excelize.Cell{StyleID: headerStyle, Value: "NIOS-X Tier"},
+		excelize.Cell{StyleID: headerStyle, Value: "Server Tokens"},
+	}
+	if err := sw.SetRow("A1", headers); err != nil {
+		return err
+	}
+
+	// Data rows
+	totalServerTokens := 0
+	for i, m := range metrics {
+		cell, _ := excelize.CoordinatesToCellName(1, i+2)
+		if err := sw.SetRow(cell, []interface{}{
+			m.Hostname,
+			m.DNSObjects,
+			m.DHCPObjects,
+			m.DHCPObjectsWithOverhead,
+			m.QPS,
+			m.LPS,
+			m.Tier,
+			m.ServerTokens,
+		}); err != nil {
+			return err
+		}
+		totalServerTokens += m.ServerTokens
+	}
+
+	// Blank row + totals
+	row := len(metrics) + 3
+	cell, _ := excelize.CoordinatesToCellName(1, row)
+	_ = sw.SetRow(cell, []interface{}{
+		excelize.Cell{StyleID: headerStyle, Value: "TOTAL"},
+		"", "", "", "", "", "",
+		excelize.Cell{StyleID: headerStyle, Value: totalServerTokens},
+	})
+
+	// Scenario comparison section
+	row += 2
+	cell, _ = excelize.CoordinatesToCellName(1, row)
+	_ = sw.SetRow(cell, []interface{}{
+		excelize.Cell{StyleID: headerStyle, Value: "Migration Scenario"},
+		excelize.Cell{StyleID: headerStyle, Value: "Server Tokens"},
+		excelize.Cell{StyleID: headerStyle, Value: "Description"},
+	})
+
+	// Current: keep all DCs on existing licensing (0 server tokens)
+	row++
+	cell, _ = excelize.CoordinatesToCellName(1, row)
+	_ = sw.SetRow(cell, []interface{}{
+		"Current (No Migration)",
+		0,
+		"All DCs remain on current Windows DNS/DHCP licensing.",
+	})
+
+	// Hybrid: migrate 50% of DCs
+	hybridTokens := 0
+	half := len(metrics) / 2
+	if half == 0 && len(metrics) > 0 {
+		half = 1
+	}
+	for i := 0; i < half; i++ {
+		hybridTokens += metrics[i].ServerTokens
+	}
+	row++
+	cell, _ = excelize.CoordinatesToCellName(1, row)
+	_ = sw.SetRow(cell, []interface{}{
+		"Hybrid Migration",
+		hybridTokens,
+		fmt.Sprintf("Migrate %d of %d DCs to NIOS-X, remainder stay on Windows DNS/DHCP.", half, len(metrics)),
+	})
+
+	// Full: migrate all DCs
+	row++
+	cell, _ = excelize.CoordinatesToCellName(1, row)
+	_ = sw.SetRow(cell, []interface{}{
+		"Full Migration",
+		totalServerTokens,
+		fmt.Sprintf("Migrate all %d DCs to NIOS-X.", len(metrics)),
+	})
+
+	// Summary metrics section
+	row += 2
+	cell, _ = excelize.CoordinatesToCellName(1, row)
+	_ = sw.SetRow(cell, []interface{}{
+		excelize.Cell{StyleID: headerStyle, Value: "Summary Metrics"},
+	})
+
+	// Knowledge Worker count, computer count, static IP count from findings
+	kwCount := 0
+	compCount := 0
+	staticIPCount := 0
+	for _, finding := range sess.TokenResult.Findings {
+		switch finding.Item {
+		case "user_account":
+			if finding.Provider == "ad" {
+				kwCount += finding.Count
+			}
+		case "computer_count":
+			if finding.Provider == "ad" {
+				compCount += finding.Count
+			}
+		case "static_ip_count":
+			if finding.Provider == "ad" {
+				staticIPCount += finding.Count
+			}
+		}
+	}
+
+	row++
+	cell, _ = excelize.CoordinatesToCellName(1, row)
+	_ = sw.SetRow(cell, []interface{}{"Knowledge Workers (AD Users)", kwCount})
+
+	row++
+	cell, _ = excelize.CoordinatesToCellName(1, row)
+	_ = sw.SetRow(cell, []interface{}{"Computer Inventory (Managed Assets)", compCount})
+
+	row++
+	cell, _ = excelize.CoordinatesToCellName(1, row)
+	_ = sw.SetRow(cell, []interface{}{"Static IPs (Active IPs)", staticIPCount})
 
 	return sw.Flush()
 }

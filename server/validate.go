@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os/exec"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -289,6 +290,7 @@ func storeCredentials(sess *session.Session, provider, authMethod string, creds 
 			InsecureSkipVerify: creds["insecureSkipVerify"] == "true",
 			Realm:              creds["realm"],
 			KDC:                creds["kdc"],
+			EventLogWindowHours: parseEventLogWindowHours(creds["eventLogWindowHours"]),
 		}
 	case "bluecat":
 		var configIDs []string
@@ -1634,6 +1636,25 @@ func parseServers(s string) []string {
 		}
 	}
 	return out
+}
+
+// parseEventLogWindowHours parses the event log window string and returns a valid
+// window in hours. Defaults to 72 (3 days) if empty or invalid.
+func parseEventLogWindowHours(s string) int {
+	if s == "" {
+		return 72
+	}
+	v, err := strconv.Atoi(s)
+	if err != nil || v <= 0 {
+		return 72
+	}
+	// Clamp to valid options: 1, 24, 72, 168.
+	switch v {
+	case 1, 24, 72, 168:
+		return v
+	default:
+		return 72
+	}
 }
 
 // realADKerberosValidator validates Kerberos authentication by obtaining a TGT from

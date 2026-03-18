@@ -48,6 +48,7 @@ import {
   cloneSession,
   type ScanStatusResponse,
   type ADDiscoveredServer,
+  type ADServerMetricAPI,
 } from './api-client';
 import {
   PROVIDERS,
@@ -267,6 +268,9 @@ export function Wizard() {
   const [backupToken, setBackupToken] = useState<string>('');
   const [niosServerMetrics, setNiosServerMetrics] = useState<NiosServerMetrics[]>([]);
 
+  // AD server metrics for migration planner
+  const [adServerMetrics, setAdServerMetrics] = useState<ADServerMetricAPI[]>([]);
+
   // AD forest discovery state
   const [adDiscovering, setAdDiscovering] = useState(false);
   const [adDiscoveryResult, setAdDiscoveryResult] = useState<{
@@ -279,6 +283,14 @@ export function Wizard() {
 
   // Use live metrics when available from real scan, fall back to mock data in demo mode
   const effectiveNiosMetrics = niosServerMetrics.length > 0 ? niosServerMetrics : MOCK_NIOS_SERVER_METRICS;
+
+  // AD server metrics: use live data when available, mock data in demo mode when microsoft is selected
+  const MOCK_AD_SERVER_METRICS: ADServerMetricAPI[] = [
+    { hostname: 'DC01', dnsObjects: 1250, dhcpObjects: 340, dhcpObjectsWithOverhead: 408, qps: 2800, lps: 45, tier: '2XS', serverTokens: 130 },
+    { hostname: 'DC02', dnsObjects: 8500, dhcpObjects: 1200, dhcpObjectsWithOverhead: 1440, qps: 12000, lps: 120, tier: 'XS', serverTokens: 250 },
+    { hostname: 'DC03', dnsObjects: 25000, dhcpObjects: 8000, dhcpObjectsWithOverhead: 9600, qps: 35000, lps: 250, tier: 'M', serverTokens: 880 },
+  ];
+  const effectiveADMetrics = adServerMetrics.length > 0 ? adServerMetrics : (backend.isDemo && selectedProviders.includes('microsoft') ? MOCK_AD_SERVER_METRICS : []);
 
   // Helper: render provider icon (uses real cloud logos for all providers)
   const ProviderIconEl = ({ id, className }: { id: ProviderType; className?: string; color?: string }) => {
@@ -702,6 +714,10 @@ export function Wizard() {
                   lps: m.lps,
                   objectCount: m.objectCount,
                 })));
+              }
+              // Store AD server metrics from live scan results
+              if (results.adServerMetrics && results.adServerMetrics.length > 0) {
+                setAdServerMetrics(results.adServerMetrics);
               }
             }
           } catch {
@@ -1540,6 +1556,38 @@ export function Wizard() {
                                   />
                                   <p className="text-[11px] text-[var(--muted-foreground)] mt-1">
                                     Comma-separated list of site IDs to restrict scanning scope
+                                  </p>
+                                </div>
+                              </details>
+                            )}
+
+                            {/* Advanced section — Microsoft AD: Event Log Time Window */}
+                            {provId === 'microsoft' && (
+                              <details className="mt-2">
+                                <summary className="text-[12px] text-[var(--muted-foreground)] cursor-pointer hover:text-[var(--foreground)] select-none" style={{ fontWeight: 500 }}>
+                                  Advanced Options
+                                </summary>
+                                <div className="mt-2 pl-1">
+                                  <label className="block text-[12px] text-[var(--muted-foreground)] mb-1">
+                                    Event Log Time Window
+                                  </label>
+                                  <select
+                                    value={credentials.microsoft?.eventLogWindowHours || '72'}
+                                    onChange={(e) =>
+                                      setCredentials((prev) => ({
+                                        ...prev,
+                                        microsoft: { ...prev.microsoft, eventLogWindowHours: e.target.value },
+                                      }))
+                                    }
+                                    className="w-full px-3 py-2 bg-[var(--input-background)] border border-[var(--border)] rounded-lg text-[13px] focus:outline-none focus:ring-2 focus:ring-[var(--infoblox-blue)]/30 focus:border-[var(--infoblox-blue)]"
+                                  >
+                                    <option value="1">Last 1 hour</option>
+                                    <option value="24">Last 24 hours</option>
+                                    <option value="72">Last 72 hours (default)</option>
+                                    <option value="168">Last 7 days</option>
+                                  </select>
+                                  <p className="text-[11px] text-[var(--muted-foreground)] mt-1">
+                                    How far back to read DNS/DHCP event logs for QPS/LPS calculation. Longer windows give more accurate averages but take longer to process.
                                   </p>
                                 </div>
                               </details>
@@ -3159,6 +3207,121 @@ export function Wizard() {
                   </div>
                 );
               })()}
+
+              {/* AD Migration Planner — shown when microsoft provider is selected and AD metrics exist */}
+              {selectedProviders.includes('microsoft') && effectiveADMetrics.length > 0 && (
+                <div id="section-ad-migration" className="bg-white rounded-xl border-2 border-[var(--infoblox-blue)]/30 mb-6 overflow-hidden">
+                  <div className="px-6 py-4 border-b border-[var(--border)] bg-gradient-to-r from-blue-50 to-indigo-50">
+                    <h3 className="text-[16px] flex items-center gap-2" style={{ fontWeight: 700 }}>
+                      <span className="text-[var(--infoblox-blue)]">📊</span>
+                      AD Migration Planner
+                    </h3>
+                    <p className="text-[12px] text-[var(--muted-foreground)] mt-1">
+                      Per-DC NIOS-X tier recommendations with DHCP +20% overhead applied
+                    </p>
+                  </div>
+                  <div className="px-6 py-4">
+                    {/* Per-DC table */}
+                    <div className="overflow-x-auto mb-6">
+                      <table className="w-full text-[13px]">
+                        <thead>
+                          <tr className="border-b-2 border-[var(--border)]">
+                            <th className="text-left py-2 px-3" style={{ fontWeight: 600 }}>DC Hostname</th>
+                            <th className="text-right py-2 px-3" style={{ fontWeight: 600 }}>DNS Objects</th>
+                            <th className="text-right py-2 px-3" style={{ fontWeight: 600 }}>DHCP Objects</th>
+                            <th className="text-right py-2 px-3" style={{ fontWeight: 600 }}>DHCP (+20%)</th>
+                            <th className="text-right py-2 px-3" style={{ fontWeight: 600 }}>QPS</th>
+                            <th className="text-right py-2 px-3" style={{ fontWeight: 600 }}>LPS</th>
+                            <th className="text-center py-2 px-3" style={{ fontWeight: 600 }}>NIOS-X Tier</th>
+                            <th className="text-right py-2 px-3" style={{ fontWeight: 600 }}>Server Tokens</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {effectiveADMetrics.map((m, i) => {
+                            const tierColors: Record<string, string> = {
+                              '2XS': 'bg-gray-100 text-gray-700',
+                              'XS': 'bg-sky-100 text-sky-700',
+                              'S': 'bg-green-100 text-green-700',
+                              'M': 'bg-yellow-100 text-yellow-700',
+                              'L': 'bg-orange-100 text-orange-700',
+                              'XL': 'bg-red-100 text-red-700',
+                            };
+                            return (
+                              <tr key={i} className="border-b border-[var(--border)] hover:bg-gray-50">
+                                <td className="py-2 px-3" style={{ fontWeight: 500 }}>{m.hostname}</td>
+                                <td className="py-2 px-3 text-right">{m.dnsObjects.toLocaleString()}</td>
+                                <td className="py-2 px-3 text-right">{m.dhcpObjects.toLocaleString()}</td>
+                                <td className="py-2 px-3 text-right">{m.dhcpObjectsWithOverhead.toLocaleString()}</td>
+                                <td className="py-2 px-3 text-right">{m.qps.toLocaleString()}</td>
+                                <td className="py-2 px-3 text-right">{m.lps.toLocaleString()}</td>
+                                <td className="py-2 px-3 text-center">
+                                  <span className={`inline-block px-2 py-0.5 rounded-full text-[11px] ${tierColors[m.tier] || 'bg-gray-100 text-gray-700'}`} style={{ fontWeight: 600 }}>
+                                    {m.tier}
+                                  </span>
+                                </td>
+                                <td className="py-2 px-3 text-right" style={{ fontWeight: 600 }}>{m.serverTokens.toLocaleString()}</td>
+                              </tr>
+                            );
+                          })}
+                          <tr className="border-t-2 border-[var(--infoblox-blue)]/20 bg-blue-50/50">
+                            <td className="py-2 px-3" style={{ fontWeight: 700 }}>TOTAL</td>
+                            <td className="py-2 px-3 text-right" style={{ fontWeight: 600 }}>{effectiveADMetrics.reduce((s, m) => s + m.dnsObjects, 0).toLocaleString()}</td>
+                            <td className="py-2 px-3 text-right" style={{ fontWeight: 600 }}>{effectiveADMetrics.reduce((s, m) => s + m.dhcpObjects, 0).toLocaleString()}</td>
+                            <td className="py-2 px-3 text-right" style={{ fontWeight: 600 }}>{effectiveADMetrics.reduce((s, m) => s + m.dhcpObjectsWithOverhead, 0).toLocaleString()}</td>
+                            <td className="py-2 px-3 text-right" style={{ fontWeight: 600 }}>{effectiveADMetrics.reduce((s, m) => s + m.qps, 0).toLocaleString()}</td>
+                            <td className="py-2 px-3 text-right" style={{ fontWeight: 600 }}>{effectiveADMetrics.reduce((s, m) => s + m.lps, 0).toLocaleString()}</td>
+                            <td className="py-2 px-3"></td>
+                            <td className="py-2 px-3 text-right" style={{ fontWeight: 700, color: 'var(--infoblox-blue)' }}>{effectiveADMetrics.reduce((s, m) => s + m.serverTokens, 0).toLocaleString()}</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* Scenario comparison */}
+                    <div className="grid grid-cols-3 gap-4">
+                      {(() => {
+                        const totalTokens = effectiveADMetrics.reduce((s, m) => s + m.serverTokens, 0);
+                        const half = Math.max(1, Math.floor(effectiveADMetrics.length / 2));
+                        const hybridTokens = effectiveADMetrics.slice(0, half).reduce((s, m) => s + m.serverTokens, 0);
+                        return [
+                          { title: 'Current', subtitle: 'No Migration', tokens: 0, desc: 'All DCs remain on Windows DNS/DHCP licensing.', color: 'gray' },
+                          { title: 'Hybrid', subtitle: `${half} of ${effectiveADMetrics.length} DCs`, tokens: hybridTokens, desc: `Migrate ${half} DC${half > 1 ? 's' : ''} to NIOS-X, remainder stay on Windows.`, color: 'amber' },
+                          { title: 'Full Migration', subtitle: `All ${effectiveADMetrics.length} DCs`, tokens: totalTokens, desc: 'Migrate all DCs to NIOS-X for unified DDI management.', color: 'green' },
+                        ].map((scenario, i) => (
+                          <div key={i} className={`rounded-lg border-2 ${i === 2 ? 'border-green-200 bg-green-50/50' : i === 1 ? 'border-amber-200 bg-amber-50/50' : 'border-gray-200 bg-gray-50/50'} p-4`}>
+                            <div className="text-[14px]" style={{ fontWeight: 700 }}>{scenario.title}</div>
+                            <div className="text-[11px] text-[var(--muted-foreground)]">{scenario.subtitle}</div>
+                            <div className="text-[24px] mt-2" style={{ fontWeight: 800, color: 'var(--infoblox-blue)' }}>{scenario.tokens.toLocaleString()}</div>
+                            <div className="text-[11px] text-[var(--muted-foreground)]">Server Tokens</div>
+                            <div className="text-[11px] text-[var(--muted-foreground)] mt-2">{scenario.desc}</div>
+                          </div>
+                        ));
+                      })()}
+                    </div>
+
+                    {/* Knowledge Worker / Computer / Static IP summary */}
+                    <div className="mt-6 grid grid-cols-3 gap-4">
+                      {(() => {
+                        const kwCount = findings.filter(f => f.item === 'user_account' && (f.provider as string) === 'ad').reduce((s, f) => s + f.count, 0);
+                        const compCount = findings.filter(f => f.item === 'computer_count' && (f.provider as string) === 'ad').reduce((s, f) => s + f.count, 0);
+                        const staticCount = findings.filter(f => f.item === 'static_ip_count' && (f.provider as string) === 'ad').reduce((s, f) => s + f.count, 0);
+                        return [
+                          { label: 'Knowledge Workers', value: kwCount, icon: '👥', desc: 'AD User Accounts' },
+                          { label: 'Computer Inventory', value: compCount, icon: '💻', desc: 'Managed Assets' },
+                          { label: 'Static IPs', value: staticCount, icon: '🌐', desc: 'Active IPs' },
+                        ].map((metric, i) => (
+                          <div key={i} className="bg-gray-50 rounded-lg p-3 text-center">
+                            <div className="text-[20px]">{metric.icon}</div>
+                            <div className="text-[20px] mt-1" style={{ fontWeight: 700 }}>{metric.value.toLocaleString()}</div>
+                            <div className="text-[12px]" style={{ fontWeight: 600 }}>{metric.label}</div>
+                            <div className="text-[11px] text-[var(--muted-foreground)]">{metric.desc}</div>
+                          </div>
+                        ));
+                      })()}
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Findings table */}
               <div id="section-findings" className="bg-white rounded-xl border border-[var(--border)] mb-6 overflow-hidden">

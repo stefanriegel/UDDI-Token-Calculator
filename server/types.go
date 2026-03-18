@@ -132,6 +132,19 @@ type NiosUploadResponse struct {
 	BackupToken  string           `json:"backupToken,omitempty"`
 }
 
+// ADServerMetric is per-DC sizing data returned in the results when the
+// microsoft (AD) provider was scanned. Used by the AD Migration Planner panel.
+type ADServerMetric struct {
+	Hostname              string `json:"hostname"`
+	DNSObjects            int    `json:"dnsObjects"`
+	DHCPObjects           int    `json:"dhcpObjects"`
+	DHCPObjectsWithOverhead int  `json:"dhcpObjectsWithOverhead"` // ceil(DHCPObjects * 1.2)
+	QPS                   int    `json:"qps"`
+	LPS                   int    `json:"lps"`
+	Tier                  string `json:"tier"`     // 2XS, XS, S, M, L, XL
+	ServerTokens          int    `json:"serverTokens"`
+}
+
 // NiosServerMetric is per-Grid-Member performance data returned in the results
 // when the NIOS provider was included in a scan. See API_CONTRACT.md §6.
 type NiosServerMetric struct {
@@ -225,4 +238,7 @@ type ScanResultsResponse struct {
 	// NiosServerMetrics is populated when the nios provider was scanned.
 	// Omitted from the response when NIOS was not included in the scan.
 	NiosServerMetrics []NiosServerMetric `json:"niosServerMetrics,omitempty"`
+	// ADServerMetrics is populated when the microsoft (AD) provider was scanned.
+	// Omitted from the response when AD was not included in the scan.
+	ADServerMetrics []ADServerMetric `json:"adServerMetrics,omitempty"`
 }

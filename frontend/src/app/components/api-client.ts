@@ -355,6 +355,17 @@ export interface NiosServerMetricAPI {
   objectCount: number;
 }
 
+export interface ADServerMetricAPI {
+  hostname: string;
+  dnsObjects: number;
+  dhcpObjects: number;
+  dhcpObjectsWithOverhead: number;
+  qps: number;
+  lps: number;
+  tier: string;
+  serverTokens: number;
+}
+
 export interface FindingRowAPI {
   provider: string;
   source: string;
@@ -377,6 +388,7 @@ export interface ScanResultsResponse {
   findings: FindingRowAPI[];
   errors: { provider: string; resource: string; message: string }[];
   niosServerMetrics?: NiosServerMetricAPI[];
+  adServerMetrics?: ADServerMetricAPI[];
 }
 
 export async function getScanResults(scanId: string): Promise<ScanResultsResponse> {

@@ -177,3 +177,59 @@ func TestBuild_ErrorsTabOmitted(t *testing.T) {
 		t.Errorf("expected sheet %q to NOT exist; got sheets: %v", "Errors", f.GetSheetList())
 	}
 }
+
+// TestBuild_ADMigrationPlannerSheet asserts that when ADServerMetricsJSON is set,
+// the "AD Migration Planner" sheet is created with expected headers and data.
+func TestBuild_ADMigrationPlannerSheet(t *testing.T) {
+	adFindings := []calculator.FindingRow{
+		{Provider: "ad", Source: "DC01", Category: calculator.CategoryDDIObjects, Item: "dns_zone", Count: 10, TokensPerUnit: calculator.TokensPerDDIObject, ManagementTokens: 1},
+		{Provider: "ad", Source: "DC01", Category: calculator.CategoryManagedAssets, Item: "user_account", Count: 500, TokensPerUnit: calculator.TokensPerManagedAsset, ManagementTokens: 5},
+		{Provider: "ad", Source: "DC01", Category: calculator.CategoryManagedAssets, Item: "computer_count", Count: 200, TokensPerUnit: calculator.TokensPerManagedAsset, ManagementTokens: 2},
+		{Provider: "ad", Source: "DC01", Category: calculator.CategoryActiveIPs, Item: "static_ip_count", Count: 50, TokensPerUnit: calculator.TokensPerActiveIP, ManagementTokens: 1},
+	}
+
+	sess := testSession(adFindings, nil, true)
+	sess.ADServerMetricsJSON = []byte(`[
+		{"hostname":"DC01","dnsObjects":100,"dhcpObjects":50,"dhcpObjectsWithOverhead":60,"qps":0,"lps":0,"tier":"2XS","serverTokens":130},
+		{"hostname":"DC02","dnsObjects":5000,"dhcpObjects":3000,"dhcpObjectsWithOverhead":3600,"qps":1000,"lps":50,"tier":"XS","serverTokens":250}
+	]`)
+
+	f := openResult(t, sess)
+	if !sheetExists(f, "AD Migration Planner") {
+		t.Fatalf("expected sheet %q to exist; got sheets: %v", "AD Migration Planner", f.GetSheetList())
+	}
+
+	// Verify header row
+	cellA1, _ := f.GetCellValue("AD Migration Planner", "A1")
+	if cellA1 != "DC Hostname" {
+		t.Errorf("A1 = %q, want 'DC Hostname'", cellA1)
+	}
+	cellH1, _ := f.GetCellValue("AD Migration Planner", "H1")
+	if cellH1 != "Server Tokens" {
+		t.Errorf("H1 = %q, want 'Server Tokens'", cellH1)
+	}
+
+	// Verify data rows
+	cellA2, _ := f.GetCellValue("AD Migration Planner", "A2")
+	if cellA2 != "DC01" {
+		t.Errorf("A2 = %q, want 'DC01'", cellA2)
+	}
+	cellA3, _ := f.GetCellValue("AD Migration Planner", "A3")
+	if cellA3 != "DC02" {
+		t.Errorf("A3 = %q, want 'DC02'", cellA3)
+	}
+	cellG2, _ := f.GetCellValue("AD Migration Planner", "G2")
+	if cellG2 != "2XS" {
+		t.Errorf("G2 (tier) = %q, want '2XS'", cellG2)
+	}
+}
+
+// TestBuild_ADMigrationPlannerOmitted asserts that when ADServerMetricsJSON is nil/empty,
+// no "AD Migration Planner" sheet is created.
+func TestBuild_ADMigrationPlannerOmitted(t *testing.T) {
+	sess := testSession(awsFindings(), nil, true)
+	f := openResult(t, sess)
+	if sheetExists(f, "AD Migration Planner") {
+		t.Errorf("expected sheet %q to NOT exist when ADServerMetricsJSON is empty; got sheets: %v", "AD Migration Planner", f.GetSheetList())
+	}
+}

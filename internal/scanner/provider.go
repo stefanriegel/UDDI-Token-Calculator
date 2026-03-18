@@ -96,3 +96,12 @@ type Scanner interface {
 type NiosResultScanner interface {
 	GetNiosServerMetricsJSON() []byte
 }
+
+// ADResultScanner is an optional interface implemented by the AD scanner.
+// After Scan() completes, GetADServerMetricsJSON() returns JSON-encoded
+// per-DC sizing data (or nil if no metrics available).
+// The interface is defined here (not in the ad package) so the orchestrator
+// can reference it without creating an import cycle.
+type ADResultScanner interface {
+	GetADServerMetricsJSON() []byte
+}

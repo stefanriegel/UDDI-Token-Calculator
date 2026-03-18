@@ -450,6 +450,15 @@ func (h *ScanHandler) HandleScanResults(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
+	// Decode ADServerMetricsJSON if an AD scan was performed.
+	var adMetrics []ADServerMetric
+	if len(sess.ADServerMetricsJSON) > 0 {
+		if err := json.Unmarshal(sess.ADServerMetricsJSON, &adMetrics); err != nil {
+			fmt.Fprintf(os.Stderr, "server: failed to decode ADServerMetricsJSON: %v\n", err)
+			adMetrics = nil
+		}
+	}
+
 	writeJSON(w, http.StatusOK, ScanResultsResponse{
 		ScanID:                scanID,
 		CompletedAt:           completedAt,
@@ -461,6 +470,7 @@ func (h *ScanHandler) HandleScanResults(w http.ResponseWriter, r *http.Request) 
 		Findings:              findings,
 		Errors:                errors,
 		NiosServerMetrics:     niosMetrics, // nil → omitted by omitempty
+		ADServerMetrics:       adMetrics,   // nil → omitted by omitempty
 	})
 }
 

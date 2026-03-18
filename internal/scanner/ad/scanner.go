@@ -9,6 +9,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -28,10 +30,15 @@ const (
 )
 
 // Scanner implements scanner.Scanner for Active Directory using WinRM over NTLM.
-type Scanner struct{}
+type Scanner struct {
+	adServerMetricsJSON []byte // set after Scan() completes
+}
 
 // New returns a ready-to-use AD Scanner.
 func New() *Scanner { return &Scanner{} }
+
+// GetADServerMetricsJSON implements scanner.ADResultScanner.
+func (s *Scanner) GetADServerMetricsJSON() []byte { return s.adServerMetricsJSON }
 
 // dcResult holds the per-DC deduplicated resource keys discovered from one DC.
 // Each field is a set (map[string]struct{}) so merging across DCs is a trivial
@@ -43,7 +50,15 @@ type dcResult struct {
 	leaseKeys       map[string]struct{}
 	reservationKeys map[string]struct{}
 	userKeys        map[string]struct{}
+	computerKeys    map[string]struct{} // Get-ADComputer results
+	staticIPKeys    map[string]struct{} // Computers with IPv4Address (static IPs)
 	computerName    string
+
+	// Per-DC raw counts (before cross-DC dedup) for ADServerMetric construction.
+	dnsObjectCount  int // zones + records on this DC
+	dhcpObjectCount int // scopes + leases + reservations on this DC
+	qps             int // DNS QPS from event log
+	lps             int // DHCP LPS from event log
 }
 
 // dcAggregator accumulates dcResult values from multiple DCs under a caller-held mutex.
@@ -54,7 +69,10 @@ type dcAggregator struct {
 	leaseKeys       map[string]struct{}
 	reservationKeys map[string]struct{}
 	userKeys        map[string]struct{}
+	computerKeys    map[string]struct{}
+	staticIPKeys    map[string]struct{}
 	dcNames         []string
+	dcResults       []*dcResult // per-DC results for ADServerMetric construction
 }
 
 // init allocates all maps. Call before the first merge.
@@ -65,6 +83,8 @@ func (a *dcAggregator) init() {
 	a.leaseKeys = make(map[string]struct{})
 	a.reservationKeys = make(map[string]struct{})
 	a.userKeys = make(map[string]struct{})
+	a.computerKeys = make(map[string]struct{})
+	a.staticIPKeys = make(map[string]struct{})
 }
 
 // merge performs a set-union of r into a. The caller must hold any required mutex.
@@ -87,9 +107,16 @@ func (a *dcAggregator) merge(r *dcResult) {
 	for k := range r.userKeys {
 		a.userKeys[k] = struct{}{}
 	}
+	for k := range r.computerKeys {
+		a.computerKeys[k] = struct{}{}
+	}
+	for k := range r.staticIPKeys {
+		a.staticIPKeys[k] = struct{}{}
+	}
 	if r.computerName != "" {
 		a.dcNames = append(a.dcNames, r.computerName)
 	}
+	a.dcResults = append(a.dcResults, r)
 }
 
 // normalizeZoneName lowercases s, strips surrounding whitespace, and removes a
@@ -114,9 +141,59 @@ func userKey(sid, upn, sam string) string {
 	}
 }
 
+// adServerMetricInternal mirrors server.ADServerMetric to avoid an import cycle.
+// Marshaled to JSON and stored on the scanner; the server package decodes it.
+type adServerMetricInternal struct {
+	Hostname              string `json:"hostname"`
+	DNSObjects            int    `json:"dnsObjects"`
+	DHCPObjects           int    `json:"dhcpObjects"`
+	DHCPObjectsWithOverhead int  `json:"dhcpObjectsWithOverhead"`
+	QPS                   int    `json:"qps"`
+	LPS                   int    `json:"lps"`
+	Tier                  string `json:"tier"`
+	ServerTokens          int    `json:"serverTokens"`
+}
+
+// serverTokenTier is an NIOS-X on-prem tier definition for AD DC sizing.
+// Mirrors SERVER_TOKEN_TIERS from nios-calc.ts.
+type serverTokenTier struct {
+	name         string
+	maxQPS       int
+	maxLPS       int
+	maxObjects   int
+	serverTokens int
+}
+
+// adServerTiers is the NIOS-X on-prem tier table used for AD DC sizing.
+// Values match SERVER_TOKEN_TIERS in frontend/src/app/components/nios-calc.ts.
+var adServerTiers = []serverTokenTier{
+	{name: "2XS", maxQPS: 5_000, maxLPS: 75, maxObjects: 3_000, serverTokens: 130},
+	{name: "XS", maxQPS: 10_000, maxLPS: 150, maxObjects: 7_500, serverTokens: 250},
+	{name: "S", maxQPS: 20_000, maxLPS: 200, maxObjects: 29_000, serverTokens: 470},
+	{name: "M", maxQPS: 40_000, maxLPS: 300, maxObjects: 110_000, serverTokens: 880},
+	{name: "L", maxQPS: 70_000, maxLPS: 400, maxObjects: 440_000, serverTokens: 1_900},
+	{name: "XL", maxQPS: 115_000, maxLPS: 675, maxObjects: 880_000, serverTokens: 2_700},
+}
+
+// calcADTier finds the smallest NIOS-X on-prem tier that fits all three metrics.
+// Uses the DHCP object count (with +20% overhead already applied) as the objectCount input.
+func calcADTier(qps, lps, objectCount int) serverTokenTier {
+	for _, t := range adServerTiers {
+		if qps <= t.maxQPS && lps <= t.maxLPS && objectCount <= t.maxObjects {
+			return t
+		}
+	}
+	return adServerTiers[len(adServerTiers)-1] // cap at XL
+}
+
+// dhcpWithOverhead applies +20% overhead: ceil(count * 1.2).
+func dhcpWithOverhead(count int) int {
+	return int(math.Ceil(float64(count) * 1.2))
+}
+
 // Scan satisfies scanner.Scanner. It reads req.Credentials["servers"] (comma-separated
 // list of DC hostnames), fans out concurrently (up to maxConcurrentDCs), aggregates
-// results via dcAggregator, then emits 6 FindingRows.
+// results via dcAggregator, then emits FindingRows and builds per-DC ADServerMetrics.
 func (s *Scanner) Scan(ctx context.Context, req scanner.ScanRequest, publish func(scanner.Event)) ([]calculator.FindingRow, error) {
 	serversStr := req.Credentials["servers"]
 	var hosts []string
@@ -132,6 +209,12 @@ func (s *Scanner) Scan(ctx context.Context, req scanner.ScanRequest, publish fun
 	username := req.Credentials["username"]
 	password := req.Credentials["password"]
 
+	// Parse eventLogWindowHours (default 72 = 3 days).
+	eventLogWindowHours := 72
+	if v, err := strconv.Atoi(req.Credentials["eventLogWindowHours"]); err == nil && v > 0 {
+		eventLogWindowHours = v
+	}
+
 	var clientOpts []ClientOption
 	if req.Credentials["use_ssl"] == "true" {
 		clientOpts = append(clientOpts, WithHTTPS())
@@ -140,7 +223,7 @@ func (s *Scanner) Scan(ctx context.Context, req scanner.ScanRequest, publish fun
 		clientOpts = append(clientOpts, WithInsecureSkipVerify())
 	}
 
-	agg := scanAllDCs(ctx, hosts, username, password, publish, clientOpts...)
+	agg := scanAllDCs(ctx, hosts, username, password, eventLogWindowHours, publish, clientOpts...)
 
 	// If no DC connected at all, return a top-level error so the orchestrator
 	// records a ProviderError that is surfaced in the results API.
@@ -160,6 +243,8 @@ func (s *Scanner) Scan(ctx context.Context, req scanner.ScanRequest, publish fun
 	leaseCount := len(agg.leaseKeys)
 	reservationCount := len(agg.reservationKeys)
 	userCount := len(agg.userKeys)
+	computerCount := len(agg.computerKeys)
+	staticIPCount := len(agg.staticIPKeys)
 
 	publish(scanner.Event{
 		Type:     "resource_progress",
@@ -203,6 +288,31 @@ func (s *Scanner) Scan(ctx context.Context, req scanner.ScanRequest, publish fun
 		Count:    userCount,
 		Status:   "done",
 	})
+
+	// Build per-DC ADServerMetric from per-DC raw counts.
+	var adMetrics []adServerMetricInternal
+	for _, dc := range agg.dcResults {
+		dhcpOverhead := dhcpWithOverhead(dc.dhcpObjectCount)
+		totalObjects := dc.dnsObjectCount + dhcpOverhead
+		tier := calcADTier(dc.qps, dc.lps, totalObjects)
+		adMetrics = append(adMetrics, adServerMetricInternal{
+			Hostname:              dc.computerName,
+			DNSObjects:            dc.dnsObjectCount,
+			DHCPObjects:           dc.dhcpObjectCount,
+			DHCPObjectsWithOverhead: dhcpOverhead,
+			QPS:                   dc.qps,
+			LPS:                   dc.lps,
+			Tier:                  tier.name,
+			ServerTokens:          tier.serverTokens,
+		})
+	}
+
+	// Marshal and store on scanner for retrieval via GetADServerMetricsJSON().
+	if len(adMetrics) > 0 {
+		if encoded, err := json.Marshal(adMetrics); err == nil {
+			s.adServerMetricsJSON = encoded
+		}
+	}
 
 	allRows := []calculator.FindingRow{
 		{
@@ -259,6 +369,24 @@ func (s *Scanner) Scan(ctx context.Context, req scanner.ScanRequest, publish fun
 			TokensPerUnit:    calculator.TokensPerManagedAsset,
 			ManagementTokens: ceilDiv(userCount, calculator.TokensPerManagedAsset),
 		},
+		{
+			Provider:         scanner.ProviderAD,
+			Source:           source,
+			Category:         calculator.CategoryManagedAssets,
+			Item:             "computer_count",
+			Count:            computerCount,
+			TokensPerUnit:    calculator.TokensPerManagedAsset,
+			ManagementTokens: ceilDiv(computerCount, calculator.TokensPerManagedAsset),
+		},
+		{
+			Provider:         scanner.ProviderAD,
+			Source:           source,
+			Category:         calculator.CategoryActiveIPs,
+			Item:             "static_ip_count",
+			Count:            staticIPCount,
+			TokensPerUnit:    calculator.TokensPerActiveIP,
+			ManagementTokens: ceilDiv(staticIPCount, calculator.TokensPerActiveIP),
+		},
 	}
 
 	// Filter out zero-count rows so empty results don't clutter the table.
@@ -276,7 +404,7 @@ func (s *Scanner) Scan(ctx context.Context, req scanner.ScanRequest, publish fun
 
 // scanAllDCs fans out to all DCs concurrently (up to maxConcurrentDCs), merges
 // results via dcAggregator, and returns the aggregated totals.
-func scanAllDCs(ctx context.Context, hosts []string, username, password string, publish func(scanner.Event), opts ...ClientOption) *dcAggregator {
+func scanAllDCs(ctx context.Context, hosts []string, username, password string, eventLogWindowHours int, publish func(scanner.Event), opts ...ClientOption) *dcAggregator {
 	var (
 		mu  sync.Mutex
 		wg  sync.WaitGroup
@@ -310,7 +438,7 @@ func scanAllDCs(ctx context.Context, hosts []string, username, password string, 
 				return
 			}
 
-			result := scanOneDC(ctx, host, username, password, publish, opts...)
+			result := scanOneDC(ctx, host, username, password, eventLogWindowHours, publish, opts...)
 			if result == nil {
 				return
 			}
@@ -325,10 +453,10 @@ func scanAllDCs(ctx context.Context, hosts []string, username, password string, 
 	return &agg
 }
 
-// scanOneDC connects to a single DC and collects DNS, DHCP, and user data.
+// scanOneDC connects to a single DC and collects DNS, DHCP, user, computer, and event log data.
 // Returns nil on connection failure (error is published as an event). Per-resource
 // errors are isolated: a DNS failure does not prevent DHCP or user collection.
-func scanOneDC(ctx context.Context, host, username, password string, publish func(scanner.Event), opts ...ClientOption) *dcResult {
+func scanOneDC(ctx context.Context, host, username, password string, eventLogWindowHours int, publish func(scanner.Event), opts ...ClientOption) *dcResult {
 	client, err := BuildNTLMClient(host, username, password, opts...)
 	if err != nil {
 		publish(scanner.Event{
@@ -352,6 +480,8 @@ func scanOneDC(ctx context.Context, host, username, password string, publish fun
 		leaseKeys:       make(map[string]struct{}),
 		reservationKeys: make(map[string]struct{}),
 		userKeys:        make(map[string]struct{}),
+		computerKeys:    make(map[string]struct{}),
+		staticIPKeys:    make(map[string]struct{}),
 	}
 	result.computerName = computerName
 
@@ -405,6 +535,32 @@ func scanOneDC(ctx context.Context, host, username, password string, publish fun
 	} else {
 		result.userKeys = userResult.userKeys
 	}
+
+	// Computers — error isolated
+	compResult, err := collectComputers(ctx, client)
+	if err != nil {
+		publish(scanner.Event{
+			Type:     "resource_progress",
+			Provider: scanner.ProviderAD,
+			Resource: "computer_count",
+			Count:    0,
+			Status:   "error",
+			Message:  fmt.Sprintf("%s: %s", host, err.Error()),
+		})
+	} else {
+		result.computerKeys = compResult.computerKeys
+		result.staticIPKeys = compResult.staticIPKeys
+	}
+
+	// Per-DC raw counts for ADServerMetric construction.
+	result.dnsObjectCount = len(result.zoneNames) + len(result.recordKeys)
+	result.dhcpObjectCount = len(result.scopeIDs) + len(result.leaseKeys) + len(result.reservationKeys)
+
+	// Event log QPS — graceful fallback to 0
+	result.qps, _ = collectEventLogQPS(ctx, client, eventLogWindowHours)
+
+	// Event log LPS — graceful fallback to 0
+	result.lps, _ = collectEventLogLPS(ctx, client, eventLogWindowHours)
 
 	return result
 }
@@ -567,6 +723,122 @@ func collectUsers(ctx context.Context, client *winrm.Client) (*dcResult, error) 
 	}
 
 	return result, nil
+}
+
+// collectComputers runs Get-ADComputer -Filter * and returns a *dcResult with
+// computerKeys and staticIPKeys populated.
+func collectComputers(ctx context.Context, client *winrm.Client) (*dcResult, error) {
+	const script = `Get-ADComputer -Filter * -Properties IPv4Address -ErrorAction Stop | ` +
+		`Select-Object @{Name='Name';Expression={$_.Name}},` +
+		`@{Name='IPv4Address';Expression={$_.IPv4Address}} | ` +
+		`ConvertTo-Json -Compress`
+
+	payload, err := runPSJSON(ctx, client, script)
+	if err != nil {
+		return nil, fmt.Errorf("ad computers: %w", err)
+	}
+
+	result := &dcResult{
+		computerKeys: make(map[string]struct{}),
+		staticIPKeys: make(map[string]struct{}),
+	}
+
+	for _, comp := range toObjectList(payload) {
+		name := strings.ToLower(strings.TrimSpace(str(comp["Name"])))
+		if name == "" {
+			continue
+		}
+		result.computerKeys[name] = struct{}{}
+
+		ip := strings.TrimSpace(str(comp["IPv4Address"]))
+		if ip != "" {
+			result.staticIPKeys[strings.ToLower(ip)] = struct{}{}
+		}
+	}
+
+	return result, nil
+}
+
+// collectEventLogQPS queries the DNS Server analytical event log for the specified
+// time window and returns the average queries per second. Returns (0, nil) when
+// the log is disabled, empty, or inaccessible — never fails the scan.
+//
+// The DNS analytical log (Microsoft-Windows-DNS-Server/Analytical) is disabled by
+// default on most DCs. Get-WinEvent returns a specific error for disabled logs.
+// We catch this and return 0 gracefully.
+var collectEventLogQPSFunc = collectEventLogQPS
+
+func collectEventLogQPS(ctx context.Context, client *winrm.Client, windowHours int) (int, error) {
+	script := fmt.Sprintf(
+		`try { `+
+			`$start = (Get-Date).AddHours(-%d); `+
+			`$count = (Get-WinEvent -FilterHashtable @{LogName='DNS Server';StartTime=$start} -ErrorAction Stop | Measure-Object).Count; `+
+			`$seconds = %d * 3600; `+
+			`[math]::Ceiling($count / $seconds) `+
+			`} catch { `+
+			`if ($_.Exception.Message -match 'No events were found' -or `+
+			`$_.Exception.Message -match 'could not be found' -or `+
+			`$_.Exception.Message -match 'is not enabled' -or `+
+			`$_.Exception.Message -match 'There is not an event log') { 0 } `+
+			`else { 0 } }`,
+		windowHours, windowHours,
+	)
+
+	output, err := runPS(ctx, client, script)
+	if err != nil {
+		// Graceful fallback — event log access failed entirely.
+		return 0, nil
+	}
+
+	output = strings.TrimSpace(output)
+	if output == "" {
+		return 0, nil
+	}
+
+	qps, err := strconv.Atoi(output)
+	if err != nil {
+		return 0, nil
+	}
+	return qps, nil
+}
+
+// collectEventLogLPS queries the DHCP Server event log for the specified time
+// window and returns the average leases per second. Returns (0, nil) when
+// the log is disabled, empty, or inaccessible — never fails the scan.
+var collectEventLogLPSFunc = collectEventLogLPS
+
+func collectEventLogLPS(ctx context.Context, client *winrm.Client, windowHours int) (int, error) {
+	script := fmt.Sprintf(
+		`try { `+
+			`$start = (Get-Date).AddHours(-%d); `+
+			`$count = (Get-WinEvent -FilterHashtable @{LogName='DhcpAdminEvents';StartTime=$start} -ErrorAction Stop | Measure-Object).Count; `+
+			`$seconds = %d * 3600; `+
+			`[math]::Ceiling($count / $seconds) `+
+			`} catch { `+
+			`if ($_.Exception.Message -match 'No events were found' -or `+
+			`$_.Exception.Message -match 'could not be found' -or `+
+			`$_.Exception.Message -match 'is not enabled' -or `+
+			`$_.Exception.Message -match 'There is not an event log') { 0 } `+
+			`else { 0 } }`,
+		windowHours, windowHours,
+	)
+
+	output, err := runPS(ctx, client, script)
+	if err != nil {
+		// Graceful fallback — event log access failed entirely.
+		return 0, nil
+	}
+
+	output = strings.TrimSpace(output)
+	if output == "" {
+		return 0, nil
+	}
+
+	lps, err := strconv.Atoi(output)
+	if err != nil {
+		return 0, nil
+	}
+	return lps, nil
 }
 
 // str extracts a string value from an interface{}, returning "" for nil or non-string.

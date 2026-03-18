@@ -184,6 +184,14 @@ func (o *Orchestrator) Run(ctx context.Context, sess *session.Session, providers
 						sess.SetNiosServerMetricsJSON(encoded)
 					}
 				}
+
+				// After a successful AD scan, type-assert to ADResultScanner
+				// to retrieve per-DC metrics JSON and store it in the session.
+				if ars, ok := s.(scanner.ADResultScanner); ok {
+					if encoded := ars.GetADServerMetricsJSON(); len(encoded) > 0 {
+						sess.SetADServerMetricsJSON(encoded)
+					}
+				}
 			}
 
 			// Always publish provider_complete with duration.
