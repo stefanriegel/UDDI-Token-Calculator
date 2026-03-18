@@ -335,6 +335,7 @@ type adMetricExport struct {
 	DHCPObjectsWithOverhead int  `json:"dhcpObjectsWithOverhead"`
 	QPS                   int    `json:"qps"`
 	LPS                   int    `json:"lps"`
+	FormFactor            string `json:"formFactor"`
 	Tier                  string `json:"tier"`
 	ServerTokens          int    `json:"serverTokens"`
 }
@@ -366,6 +367,7 @@ func buildADMigrationSheet(f *excelize.File, headerStyle int, sess *session.Sess
 		excelize.Cell{StyleID: headerStyle, Value: "DHCP Objects (+20%)"},
 		excelize.Cell{StyleID: headerStyle, Value: "QPS"},
 		excelize.Cell{StyleID: headerStyle, Value: "LPS"},
+		excelize.Cell{StyleID: headerStyle, Value: "Form Factor"},
 		excelize.Cell{StyleID: headerStyle, Value: "NIOS-X Tier"},
 		excelize.Cell{StyleID: headerStyle, Value: "Server Tokens"},
 	}
@@ -377,6 +379,10 @@ func buildADMigrationSheet(f *excelize.File, headerStyle int, sess *session.Sess
 	totalServerTokens := 0
 	for i, m := range metrics {
 		cell, _ := excelize.CoordinatesToCellName(1, i+2)
+		formFactor := m.FormFactor
+		if formFactor == "" {
+			formFactor = "NIOS-X"
+		}
 		if err := sw.SetRow(cell, []interface{}{
 			m.Hostname,
 			m.DNSObjects,
@@ -384,6 +390,7 @@ func buildADMigrationSheet(f *excelize.File, headerStyle int, sess *session.Sess
 			m.DHCPObjectsWithOverhead,
 			m.QPS,
 			m.LPS,
+			formFactor,
 			m.Tier,
 			m.ServerTokens,
 		}); err != nil {
@@ -397,7 +404,7 @@ func buildADMigrationSheet(f *excelize.File, headerStyle int, sess *session.Sess
 	cell, _ := excelize.CoordinatesToCellName(1, row)
 	_ = sw.SetRow(cell, []interface{}{
 		excelize.Cell{StyleID: headerStyle, Value: "TOTAL"},
-		"", "", "", "", "", "",
+		"", "", "", "", "", "", "",
 		excelize.Cell{StyleID: headerStyle, Value: totalServerTokens},
 	})
 
@@ -484,6 +491,11 @@ func buildADMigrationSheet(f *excelize.File, headerStyle int, sess *session.Sess
 	row++
 	cell, _ = excelize.CoordinatesToCellName(1, row)
 	_ = sw.SetRow(cell, []interface{}{"Static IPs (Active IPs)", staticIPCount})
+
+	// Note about form factor defaults
+	row += 2
+	cell, _ = excelize.CoordinatesToCellName(1, row)
+	_ = sw.SetRow(cell, []interface{}{"Note: Form Factor defaults to NIOS-X. Use the interactive planner for per-DC XaaS scenarios."})
 
 	return sw.Flush()
 }

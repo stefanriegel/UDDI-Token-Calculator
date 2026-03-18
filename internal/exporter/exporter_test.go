@@ -204,9 +204,17 @@ func TestBuild_ADMigrationPlannerSheet(t *testing.T) {
 	if cellA1 != "DC Hostname" {
 		t.Errorf("A1 = %q, want 'DC Hostname'", cellA1)
 	}
+	cellG1, _ := f.GetCellValue("AD Migration Planner", "G1")
+	if cellG1 != "Form Factor" {
+		t.Errorf("G1 = %q, want 'Form Factor'", cellG1)
+	}
 	cellH1, _ := f.GetCellValue("AD Migration Planner", "H1")
-	if cellH1 != "Server Tokens" {
-		t.Errorf("H1 = %q, want 'Server Tokens'", cellH1)
+	if cellH1 != "NIOS-X Tier" {
+		t.Errorf("H1 = %q, want 'NIOS-X Tier'", cellH1)
+	}
+	cellI1, _ := f.GetCellValue("AD Migration Planner", "I1")
+	if cellI1 != "Server Tokens" {
+		t.Errorf("I1 = %q, want 'Server Tokens'", cellI1)
 	}
 
 	// Verify data rows
@@ -219,8 +227,12 @@ func TestBuild_ADMigrationPlannerSheet(t *testing.T) {
 		t.Errorf("A3 = %q, want 'DC02'", cellA3)
 	}
 	cellG2, _ := f.GetCellValue("AD Migration Planner", "G2")
-	if cellG2 != "2XS" {
-		t.Errorf("G2 (tier) = %q, want '2XS'", cellG2)
+	if cellG2 != "NIOS-X" {
+		t.Errorf("G2 (form factor) = %q, want 'NIOS-X'", cellG2)
+	}
+	cellH2, _ := f.GetCellValue("AD Migration Planner", "H2")
+	if cellH2 != "2XS" {
+		t.Errorf("H2 (tier) = %q, want '2XS'", cellH2)
 	}
 }
 

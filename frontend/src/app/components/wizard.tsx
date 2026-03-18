@@ -263,6 +263,8 @@ export function Wizard() {
   // NIOS-X migration planner: which NIOS sources (grid members) to migrate, with per-member form factor
   const [niosMigrationMap, setNiosMigrationMap] = useState<Map<string, ServerFormFactor>>(new Map());
   const [memberSearchFilter, setMemberSearchFilter] = useState('');
+  const [adMigrationMap, setAdMigrationMap] = useState<Map<string, ServerFormFactor>>(new Map());
+  const [adMemberSearchFilter, setAdMemberSearchFilter] = useState('');
 
   // Backend wiring: NIOS backup token returned from upload, and live server metrics from scan results
   const [backupToken, setBackupToken] = useState<string>('');
@@ -873,6 +875,46 @@ export function Wizard() {
         }
       }
     }
+    // AD Server Token Calculator CSV section
+    if (selectedProviders.includes('microsoft') && effectiveADMetrics.length > 0) {
+      const toNiosMetrics = (m: ADServerMetricAPI): NiosServerMetrics => ({
+        memberId: m.hostname, memberName: m.hostname, role: 'DC',
+        qps: m.qps, lps: m.lps, objectCount: m.dnsObjects + m.dhcpObjectsWithOverhead,
+      });
+      const metricsToExport = adMigrationMap.size > 0
+        ? effectiveADMetrics.filter(m => adMigrationMap.has(m.hostname))
+        : effectiveADMetrics;
+      if (metricsToExport.length > 0) {
+        const niosXDcs = metricsToExport.filter(m => (adMigrationMap.get(m.hostname) || 'nios-x') === 'nios-x');
+        const xaasDcs = metricsToExport.filter(m => adMigrationMap.get(m.hostname) === 'nios-xaas');
+        const xaasInst = consolidateXaasInstances(xaasDcs.map(toNiosMetrics));
+        const hasAnyXaas = xaasDcs.length > 0;
+        summary += `\n\nAD Server Token Calculator`;
+        summary += `\nHostname,Role,Form Factor,QPS (Peak),LPS (Peak),Objects,Connections,Server Size,Allocated Tokens`;
+        niosXDcs.forEach(m => {
+          const objCount = m.dnsObjects + m.dhcpObjectsWithOverhead;
+          const tier = calcServerTokenTier(m.qps, m.lps, objCount, 'nios-x');
+          summary += `\n${m.hostname},DC,NIOS-X,${m.qps},${m.lps},${objCount},—,${tier.name},${tier.serverTokens}`;
+        });
+        xaasInst.forEach(inst => {
+          summary += `\n--- XaaS Instance ${xaasInst.length > 1 ? inst.index + 1 : ''} (replaces ${inst.connectionsUsed} DCs) ---`;
+          inst.members.forEach(mem => {
+            summary += `\n  ${mem.memberName},DC,XaaS (1 conn),${mem.qps},${mem.lps},${mem.objectCount},,,(consolidated)`;
+          });
+          summary += `\n  AGGREGATE,,XaaS,${inst.totalQps},${inst.totalLps},${inst.totalObjects},${inst.connectionsUsed}/${inst.tier.maxConnections} conn,${inst.tier.name},${inst.totalTokens}`;
+          if (inst.extraConnections > 0) {
+            summary += ` (incl. ${inst.extraConnectionTokens} extra connection tokens)`;
+          }
+        });
+        const adNiosXTokens = niosXDcs.reduce((s, m) => s + calcServerTokenTier(m.qps, m.lps, m.dnsObjects + m.dhcpObjectsWithOverhead, 'nios-x').serverTokens, 0);
+        const adXaasTokens = xaasInst.reduce((s, inst) => s + inst.totalTokens, 0);
+        const adTotalST = adNiosXTokens + adXaasTokens;
+        summary += `\nTotal AD Allocated Server Tokens,,,,,,,,${adTotalST}`;
+        if (hasAnyXaas) {
+          summary += `\nConsolidation: ${xaasDcs.length} DCs → ${xaasInst.length} XaaS instance${xaasInst.length > 1 ? 's' : ''} (${xaasDcs.length}:${xaasInst.length} ratio)`;
+        }
+      }
+    }
     const csv = [header, ...rows].join('\n') + summary;
     downloadFile(csv, 'ddi-token-assessment.csv', 'text/csv');
   };
@@ -943,6 +985,45 @@ export function Wizard() {
         if (hasAnyXaas) {
           html += `<p><b>Consolidation:</b> ${xaasMetrics.length} NIOS member${xaasMetrics.length > 1 ? 's' : ''} \u2192 ${xaasInst.length} XaaS instance${xaasInst.length > 1 ? 's' : ''} (${xaasMetrics.length}:${xaasInst.length} ratio). Each connection replaces 1 NIOS member or branch office appliance.</p>`;
           html += '<p><i>Note: Up to 400 additional connections can be added per XaaS instance at 100 tokens each.</i></p>';
+        }
+      }
+    }
+    // AD Server Token Calculator HTML section
+    if (selectedProviders.includes('microsoft') && effectiveADMetrics.length > 0) {
+      const toNiosMetrics = (m: ADServerMetricAPI): NiosServerMetrics => ({
+        memberId: m.hostname, memberName: m.hostname, role: 'DC',
+        qps: m.qps, lps: m.lps, objectCount: m.dnsObjects + m.dhcpObjectsWithOverhead,
+      });
+      const metricsToExport = adMigrationMap.size > 0
+        ? effectiveADMetrics.filter(m => adMigrationMap.has(m.hostname))
+        : effectiveADMetrics;
+      if (metricsToExport.length > 0) {
+        const niosXDcs = metricsToExport.filter(m => (adMigrationMap.get(m.hostname) || 'nios-x') === 'nios-x');
+        const xaasDcs = metricsToExport.filter(m => adMigrationMap.get(m.hostname) === 'nios-xaas');
+        const xaasInst = consolidateXaasInstances(xaasDcs.map(toNiosMetrics));
+        const hasAnyXaas = xaasDcs.length > 0;
+        html += `<br/><h3>AD Server Token Calculator</h3>`;
+        html += '<table border="1" cellpadding="4" cellspacing="0">';
+        html += `<tr style="background:#1e40af;color:white"><th>Hostname</th><th>Role</th><th>Form Factor</th><th>QPS (Peak)</th><th>LPS (Peak)</th><th>Objects</th><th>Size</th><th>Allocated Tokens</th></tr>`;
+        niosXDcs.forEach(m => {
+          const objCount = m.dnsObjects + m.dhcpObjectsWithOverhead;
+          const tier = calcServerTokenTier(m.qps, m.lps, objCount, 'nios-x');
+          html += `<tr><td>${m.hostname}</td><td>DC</td><td>NIOS-X</td><td>${m.qps.toLocaleString()}</td><td>${m.lps.toLocaleString()}</td><td>${objCount.toLocaleString()}</td><td>${tier.name}</td><td style="text-align:center;font-weight:bold">${tier.serverTokens.toLocaleString()}</td></tr>`;
+        });
+        xaasInst.forEach(inst => {
+          html += `<tr style="background:#f3e8ff"><td colspan="8" style="font-weight:bold;color:#6b21a8">XaaS Instance${xaasInst.length > 1 ? ' ' + (inst.index + 1) : ''} — replaces ${inst.connectionsUsed} DC${inst.connectionsUsed > 1 ? 's' : ''}</td></tr>`;
+          inst.members.forEach(mem => {
+            html += `<tr style="background:#faf5ff"><td style="padding-left:20px">${mem.memberName}</td><td>DC</td><td style="color:#7c3aed">1 conn</td><td style="color:#7c3aed">${mem.qps.toLocaleString()}</td><td style="color:#7c3aed">${mem.lps.toLocaleString()}</td><td style="color:#7c3aed">${mem.objectCount.toLocaleString()}</td><td colspan="2" style="text-align:center;color:#999">(consolidated)</td></tr>`;
+          });
+          html += `<tr style="background:#ede9fe"><td style="padding-left:20px;font-weight:600">Aggregate (${inst.connectionsUsed}/${inst.tier.maxConnections} connections${inst.extraConnections > 0 ? ', +' + inst.extraConnections + ' extra' : ''})</td><td style="font-weight:600">XaaS</td><td style="font-weight:600">${inst.connectionsUsed} conn</td><td style="font-weight:600">${inst.totalQps.toLocaleString()}</td><td style="font-weight:600">${inst.totalLps.toLocaleString()}</td><td style="font-weight:600">${inst.totalObjects.toLocaleString()}</td><td style="font-weight:600">${inst.tier.name}</td><td style="text-align:center;font-weight:bold;color:#6b21a8">${inst.totalTokens.toLocaleString()}${inst.extraConnectionTokens > 0 ? ' (incl. ' + inst.extraConnectionTokens.toLocaleString() + ' extra conn)' : ''}</td></tr>`;
+        });
+        const adNiosXTokens = niosXDcs.reduce((s, m) => s + calcServerTokenTier(m.qps, m.lps, m.dnsObjects + m.dhcpObjectsWithOverhead, 'nios-x').serverTokens, 0);
+        const adXaasTokens = xaasInst.reduce((s, inst) => s + inst.totalTokens, 0);
+        const adTotalST = adNiosXTokens + adXaasTokens;
+        html += `<tr style="background:#dbeafe;font-weight:bold"><td colspan="7">Total AD Allocated Server Tokens</td><td style="text-align:center">${adTotalST.toLocaleString()}</td></tr>`;
+        html += '</table>';
+        if (hasAnyXaas) {
+          html += `<p><b>Consolidation:</b> ${xaasDcs.length} DC${xaasDcs.length > 1 ? 's' : ''} → ${xaasInst.length} XaaS instance${xaasInst.length > 1 ? 's' : ''} (${xaasDcs.length}:${xaasInst.length} ratio).</p>`;
         }
       }
     }
@@ -2320,12 +2401,18 @@ export function Wizard() {
               </div>
 
               {/* Section jump navigation — only for NIOS scans */}
-              {selectedProviders.includes('nios') && (
+              {(selectedProviders.includes('nios') || (selectedProviders.includes('microsoft') && effectiveADMetrics.length > 0)) && (
                 <div className="sticky top-0 z-10 bg-white border-b border-[var(--border)] rounded-xl mb-6 px-4 py-2.5 flex items-center gap-2 flex-wrap">
                   {[
-                    { id: 'section-overview', label: 'Overview' },
-                    { id: 'section-migration-planner', label: 'Migration Planner' },
-                    { id: 'section-server-tokens', label: 'Server Token Calculator' },
+                    ...(selectedProviders.includes('nios') ? [
+                      { id: 'section-overview', label: 'Overview' },
+                      { id: 'section-migration-planner', label: 'Migration Planner' },
+                      { id: 'section-server-tokens', label: 'Server Token Calculator' },
+                    ] : []),
+                    ...(selectedProviders.includes('microsoft') && effectiveADMetrics.length > 0 ? [
+                      { id: 'section-ad-migration', label: 'AD Migration Planner' },
+                      { id: 'section-ad-server-tokens', label: 'AD Server Token Calculator' },
+                    ] : []),
                     { id: 'section-findings', label: 'Detailed Findings' },
                     { id: 'section-export', label: 'Export' },
                   ].map((nav) => (
@@ -3203,120 +3290,602 @@ export function Wizard() {
                 );
               })()}
 
-              {/* AD Migration Planner — shown when microsoft provider is selected and AD metrics exist */}
-              {selectedProviders.includes('microsoft') && effectiveADMetrics.length > 0 && (
-                <div id="section-ad-migration" className="bg-white rounded-xl border-2 border-[var(--infoblox-blue)]/30 mb-6 overflow-hidden">
-                  <div className="px-6 py-4 border-b border-[var(--border)] bg-gradient-to-r from-blue-50 to-indigo-50">
-                    <h3 className="text-[16px] flex items-center gap-2" style={{ fontWeight: 700 }}>
-                      <span className="text-[var(--infoblox-blue)]">📊</span>
-                      AD Migration Planner
-                    </h3>
-                    <p className="text-[12px] text-[var(--muted-foreground)] mt-1">
-                      Per-DC NIOS-X tier recommendations with DHCP +20% overhead applied
-                    </p>
-                  </div>
-                  <div className="px-6 py-4">
-                    {/* Per-DC table */}
-                    <div className="overflow-x-auto mb-6">
-                      <table className="w-full text-[13px]">
-                        <thead>
-                          <tr className="border-b-2 border-[var(--border)]">
-                            <th className="text-left py-2 px-3" style={{ fontWeight: 600 }}>DC Hostname</th>
-                            <th className="text-right py-2 px-3" style={{ fontWeight: 600 }}>DNS Objects</th>
-                            <th className="text-right py-2 px-3" style={{ fontWeight: 600 }}>DHCP Objects</th>
-                            <th className="text-right py-2 px-3" style={{ fontWeight: 600 }}>DHCP (+20%)</th>
-                            <th className="text-right py-2 px-3" style={{ fontWeight: 600 }}>QPS</th>
-                            <th className="text-right py-2 px-3" style={{ fontWeight: 600 }}>LPS</th>
-                            <th className="text-center py-2 px-3" style={{ fontWeight: 600 }}>NIOS-X Tier</th>
-                            <th className="text-right py-2 px-3" style={{ fontWeight: 600 }}>Server Tokens</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {effectiveADMetrics.map((m, i) => {
-                            const tierColors: Record<string, string> = {
-                              '2XS': 'bg-gray-100 text-gray-700',
-                              'XS': 'bg-sky-100 text-sky-700',
-                              'S': 'bg-green-100 text-green-700',
-                              'M': 'bg-yellow-100 text-yellow-700',
-                              'L': 'bg-orange-100 text-orange-700',
-                              'XL': 'bg-red-100 text-red-700',
-                            };
-                            return (
-                              <tr key={i} className="border-b border-[var(--border)] hover:bg-gray-50">
-                                <td className="py-2 px-3" style={{ fontWeight: 500 }}>{m.hostname}</td>
-                                <td className="py-2 px-3 text-right">{m.dnsObjects.toLocaleString()}</td>
-                                <td className="py-2 px-3 text-right">{m.dhcpObjects.toLocaleString()}</td>
-                                <td className="py-2 px-3 text-right">{m.dhcpObjectsWithOverhead.toLocaleString()}</td>
-                                <td className="py-2 px-3 text-right">{m.qps.toLocaleString()}</td>
-                                <td className="py-2 px-3 text-right">{m.lps.toLocaleString()}</td>
-                                <td className="py-2 px-3 text-center">
-                                  <span className={`inline-block px-2 py-0.5 rounded-full text-[11px] ${tierColors[m.tier] || 'bg-gray-100 text-gray-700'}`} style={{ fontWeight: 600 }}>
-                                    {m.tier}
-                                  </span>
-                                </td>
-                                <td className="py-2 px-3 text-right" style={{ fontWeight: 600 }}>{m.serverTokens.toLocaleString()}</td>
-                              </tr>
-                            );
-                          })}
-                          <tr className="border-t-2 border-[var(--infoblox-blue)]/20 bg-blue-50/50">
-                            <td className="py-2 px-3" style={{ fontWeight: 700 }}>TOTAL</td>
-                            <td className="py-2 px-3 text-right" style={{ fontWeight: 600 }}>{effectiveADMetrics.reduce((s, m) => s + m.dnsObjects, 0).toLocaleString()}</td>
-                            <td className="py-2 px-3 text-right" style={{ fontWeight: 600 }}>{effectiveADMetrics.reduce((s, m) => s + m.dhcpObjects, 0).toLocaleString()}</td>
-                            <td className="py-2 px-3 text-right" style={{ fontWeight: 600 }}>{effectiveADMetrics.reduce((s, m) => s + m.dhcpObjectsWithOverhead, 0).toLocaleString()}</td>
-                            <td className="py-2 px-3 text-right" style={{ fontWeight: 600 }}>{effectiveADMetrics.reduce((s, m) => s + m.qps, 0).toLocaleString()}</td>
-                            <td className="py-2 px-3 text-right" style={{ fontWeight: 600 }}>{effectiveADMetrics.reduce((s, m) => s + m.lps, 0).toLocaleString()}</td>
-                            <td className="py-2 px-3"></td>
-                            <td className="py-2 px-3 text-right" style={{ fontWeight: 700, color: 'var(--infoblox-blue)' }}>{effectiveADMetrics.reduce((s, m) => s + m.serverTokens, 0).toLocaleString()}</td>
-                          </tr>
-                        </tbody>
-                      </table>
+              {/* AD Migration Planner — interactive, mirrors NIOS Grid Migration Planner */}
+              {selectedProviders.includes('microsoft') && effectiveADMetrics.length > 0 && (() => {
+                const adHostnames = effectiveADMetrics.map(m => m.hostname);
+
+                const toggleAdMigration = (hostname: string) => {
+                  setAdMigrationMap((prev) => {
+                    const next = new Map(prev);
+                    if (next.has(hostname)) next.delete(hostname); else next.set(hostname, 'nios-x');
+                    return next;
+                  });
+                };
+
+                const setAdFormFactor = (hostname: string, ff: ServerFormFactor) => {
+                  setAdMigrationMap((prev) => {
+                    const next = new Map(prev);
+                    next.set(hostname, ff);
+                    return next;
+                  });
+                };
+
+                const filteredADHosts = adMemberSearchFilter
+                  ? adHostnames.filter(h => h.toLowerCase().includes(adMemberSearchFilter.toLowerCase()))
+                  : adHostnames;
+
+                const toggleAllAdMigration = () => {
+                  const targets = adMemberSearchFilter ? filteredADHosts : adHostnames;
+                  const allTargetsMigrated = targets.every(h => adMigrationMap.has(h));
+                  if (allTargetsMigrated) {
+                    setAdMigrationMap(prev => {
+                      const next = new Map(prev);
+                      targets.forEach(h => next.delete(h));
+                      return next;
+                    });
+                  } else {
+                    setAdMigrationMap(prev => {
+                      const next = new Map(prev);
+                      targets.forEach(h => next.set(h, next.get(h) || 'nios-x'));
+                      return next;
+                    });
+                  }
+                };
+
+                // Scenario token calculations
+                const totalServerTokens = effectiveADMetrics.reduce((s, m) => s + m.serverTokens, 0);
+                const hybridServerTokens = effectiveADMetrics
+                  .filter(m => adMigrationMap.has(m.hostname))
+                  .reduce((s, m) => s + m.serverTokens, 0);
+
+                const adNiosXCount = Array.from(adMigrationMap.values()).filter(v => v === 'nios-x').length;
+                const adXaasCount = Array.from(adMigrationMap.values()).filter(v => v === 'nios-xaas').length;
+
+                const scenarioCurrent = { label: 'Current', tokens: 0, desc: 'All DCs remain on Windows DNS/DHCP licensing. No NIOS-X server tokens required.' };
+                const scenarioHybrid = {
+                  label: 'Hybrid',
+                  tokens: hybridServerTokens,
+                  desc: adMigrationMap.size > 0
+                    ? `${adMigrationMap.size} of ${adHostnames.length} DCs migrated${adNiosXCount > 0 && adXaasCount > 0 ? ` (${adNiosXCount} NIOS-X, ${adXaasCount} XaaS)` : adNiosXCount > 0 ? ' to NIOS-X' : ' to XaaS'}. Remainder stay on Windows.`
+                    : 'Select DCs to migrate. Remainder stay on Windows licensing.'
+                };
+                const scenarioFull = { label: 'Full Migration', tokens: totalServerTokens, desc: `All ${adHostnames.length} DCs migrated to NIOS-X for unified DDI management.` };
+
+                const tierColors: Record<string, string> = {
+                  '2XS': 'bg-gray-100 text-gray-700',
+                  'XS': 'bg-sky-100 text-sky-700',
+                  'S': 'bg-green-100 text-green-700',
+                  'M': 'bg-yellow-100 text-yellow-700',
+                  'L': 'bg-orange-100 text-orange-700',
+                  'XL': 'bg-red-100 text-red-700',
+                };
+
+                return (
+                  <div id="section-ad-migration" className="bg-white rounded-xl border-2 border-[var(--infoblox-blue)]/30 mb-6 overflow-hidden">
+                    <div className="px-4 py-3 border-b border-[var(--border)] bg-gradient-to-r from-blue-50 to-indigo-50 flex items-center gap-2">
+                      <span className="text-[var(--infoblox-blue)] text-[16px]">📊</span>
+                      <ArrowRightLeft className="w-4 h-4 text-[var(--infoblox-blue)]" />
+                      <h3 className="text-[14px]" style={{ fontWeight: 600 }}>
+                        AD Migration Planner
+                      </h3>
+                      <span className="ml-auto text-[11px] text-[var(--muted-foreground)]">
+                        Select domain controllers &amp; target form factor
+                      </span>
                     </div>
 
-                    {/* Scenario comparison */}
-                    <div className="grid grid-cols-3 gap-4">
-                      {(() => {
-                        const totalTokens = effectiveADMetrics.reduce((s, m) => s + m.serverTokens, 0);
-                        const half = Math.max(1, Math.floor(effectiveADMetrics.length / 2));
-                        const hybridTokens = effectiveADMetrics.slice(0, half).reduce((s, m) => s + m.serverTokens, 0);
-                        return [
-                          { title: 'Current', subtitle: 'No Migration', tokens: 0, desc: 'All DCs remain on Windows DNS/DHCP licensing.', color: 'gray' },
-                          { title: 'Hybrid', subtitle: `${half} of ${effectiveADMetrics.length} DCs`, tokens: hybridTokens, desc: `Migrate ${half} DC${half > 1 ? 's' : ''} to NIOS-X, remainder stay on Windows.`, color: 'amber' },
-                          { title: 'Full Migration', subtitle: `All ${effectiveADMetrics.length} DCs`, tokens: totalTokens, desc: 'Migrate all DCs to NIOS-X for unified DDI management.', color: 'green' },
-                        ].map((scenario, i) => (
-                          <div key={i} className={`rounded-lg border-2 ${i === 2 ? 'border-green-200 bg-green-50/50' : i === 1 ? 'border-amber-200 bg-amber-50/50' : 'border-gray-200 bg-gray-50/50'} p-4`}>
-                            <div className="text-[14px]" style={{ fontWeight: 700 }}>{scenario.title}</div>
-                            <div className="text-[11px] text-[var(--muted-foreground)]">{scenario.subtitle}</div>
-                            <div className="text-[24px] mt-2" style={{ fontWeight: 800, color: 'var(--infoblox-blue)' }}>{scenario.tokens.toLocaleString()}</div>
-                            <div className="text-[11px] text-[var(--muted-foreground)]">Server Tokens</div>
-                            <div className="text-[11px] text-[var(--muted-foreground)] mt-2">{scenario.desc}</div>
-                          </div>
-                        ));
-                      })()}
+                    {/* DC selector */}
+                    <div className="px-4 py-3 border-b border-[var(--border)]">
+                      {/* Search filter */}
+                      <div className="relative mb-2">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
+                        <input
+                          type="text"
+                          placeholder="Filter domain controllers..."
+                          value={adMemberSearchFilter}
+                          onChange={(e) => setAdMemberSearchFilter(e.target.value)}
+                          className="w-full pl-8 pr-3 py-2 text-[12px] rounded-lg border border-[var(--border)] focus:outline-none focus:ring-1 focus:ring-[var(--infoblox-blue)] focus:border-[var(--infoblox-blue)]"
+                        />
+                      </div>
+                      <div className="flex items-center gap-2 mb-3">
+                        <button
+                          onClick={toggleAllAdMigration}
+                          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[12px] border border-[var(--border)] hover:bg-gray-50 transition-colors"
+                          style={{ fontWeight: 500 }}
+                        >
+                          {(() => {
+                            const targets = adMemberSearchFilter ? filteredADHosts : adHostnames;
+                            const allTargetsMigrated = targets.length > 0 && targets.every(h => adMigrationMap.has(h));
+                            const someTargetsMigrated = targets.some(h => adMigrationMap.has(h));
+                            return (
+                              <>
+                                <div className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition-colors ${
+                                  allTargetsMigrated
+                                    ? 'bg-[var(--infoblox-blue)] border-[var(--infoblox-blue)]'
+                                    : someTargetsMigrated
+                                      ? 'bg-[var(--infoblox-blue)]/60 border-[var(--infoblox-blue)]'
+                                      : 'border-gray-300'
+                                }`}>
+                                  {allTargetsMigrated && <Check className="w-2.5 h-2.5 text-white" />}
+                                  {someTargetsMigrated && !allTargetsMigrated && <Minus className="w-2.5 h-2.5 text-white" />}
+                                </div>
+                                {allTargetsMigrated ? 'Deselect All' : 'Migrate All'}
+                              </>
+                            );
+                          })()}
+                        </button>
+                        <span className="text-[11px] text-[var(--muted-foreground)]">
+                          {adMemberSearchFilter
+                            ? `${filteredADHosts.length} of ${adHostnames.length} DCs`
+                            : `${adMigrationMap.size} of ${adHostnames.length} DCs selected`}
+                          {adMigrationMap.size > 0 && !adMemberSearchFilter && (() => {
+                            if (adNiosXCount > 0 && adXaasCount > 0) return ` (${adNiosXCount} NIOS-X, ${adXaasCount} XaaS)`;
+                            if (adXaasCount > 0) return ` (${adXaasCount} XaaS)`;
+                            return ` (${adNiosXCount} NIOS-X)`;
+                          })()}
+                        </span>
+                      </div>
+                      <div className="max-h-[320px] overflow-y-auto border-t border-b border-gray-100">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 py-1">
+                          {filteredADHosts.map((hostname) => {
+                            const m = effectiveADMetrics.find(met => met.hostname === hostname)!;
+                            const isMigrating = adMigrationMap.has(hostname);
+                            const dcFF = adMigrationMap.get(hostname) || 'nios-x';
+                            return (
+                              <div
+                                key={hostname}
+                                className={`flex items-center gap-2.5 px-3 py-2 rounded-lg transition-colors ${
+                                  isMigrating
+                                    ? dcFF === 'nios-xaas'
+                                      ? 'bg-purple-50 border border-purple-200'
+                                      : 'bg-blue-50 border border-blue-200'
+                                    : 'border border-[var(--border)] hover:bg-gray-50'
+                                }`}
+                              >
+                                <button
+                                  onClick={() => toggleAdMigration(hostname)}
+                                  className="flex items-center gap-0 shrink-0"
+                                >
+                                  <div className={`w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 transition-colors ${
+                                    isMigrating
+                                      ? dcFF === 'nios-xaas'
+                                        ? 'bg-purple-600 border-purple-600'
+                                        : 'bg-[var(--infoblox-blue)] border-[var(--infoblox-blue)]'
+                                      : 'border-gray-300'
+                                  }`}>
+                                    {isMigrating && <Check className="w-3 h-3 text-white" />}
+                                  </div>
+                                </button>
+                                <div className="flex-1 min-w-0">
+                                  <div className="text-[12px] truncate" style={{ fontWeight: 500 }}>{hostname}</div>
+                                  <div className="text-[10px] text-[var(--muted-foreground)] flex items-center gap-2">
+                                    <span>{m.qps.toLocaleString()} QPS</span>
+                                    <span>{m.lps.toLocaleString()} LPS</span>
+                                    <span className={`inline-block px-1.5 py-0 rounded-full text-[9px] ${tierColors[m.tier] || 'bg-gray-100 text-gray-700'}`} style={{ fontWeight: 600 }}>{m.tier}</span>
+                                    <span>{m.serverTokens.toLocaleString()} tokens</span>
+                                  </div>
+                                </div>
+                                {isMigrating && (
+                                  <div className="flex items-center bg-white rounded-md border border-gray-200 p-0.5 shrink-0">
+                                    <button
+                                      onClick={() => setAdFormFactor(hostname, 'nios-x')}
+                                      className={`px-2 py-0.5 rounded text-[9px] transition-all ${
+                                        dcFF === 'nios-x'
+                                          ? 'bg-[var(--infoblox-navy)] text-white shadow-sm'
+                                          : 'text-gray-400 hover:text-gray-600'
+                                      }`}
+                                      style={{ fontWeight: 600 }}
+                                    >
+                                      NIOS-X
+                                    </button>
+                                    <button
+                                      onClick={() => setAdFormFactor(hostname, 'nios-xaas')}
+                                      className={`px-2 py-0.5 rounded text-[9px] transition-all ${
+                                        dcFF === 'nios-xaas'
+                                          ? 'bg-purple-600 text-white shadow-sm'
+                                          : 'text-gray-400 hover:text-gray-600'
+                                      }`}
+                                      style={{ fontWeight: 600 }}
+                                    >
+                                      XaaS
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Scenario comparison cards */}
+                    <div className="px-4 py-4">
+                      <h3 className="text-[14px] font-semibold text-[var(--foreground)] mb-3">Server Tokens</h3>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        {[scenarioCurrent, scenarioHybrid, scenarioFull].map((scenario, idx) => {
+                          const isHybrid = idx === 1;
+                          const isFull = idx === 2;
+                          const isActive = isHybrid
+                            ? adMigrationMap.size > 0 && adMigrationMap.size < adHostnames.length
+                            : isFull
+                              ? adMigrationMap.size === adHostnames.length
+                              : adMigrationMap.size === 0;
+                          return (
+                            <div
+                              key={scenario.label}
+                              className={`rounded-xl border-2 p-4 transition-colors ${
+                                isActive
+                                  ? 'border-[var(--infoblox-orange)] bg-orange-50/30 shadow-sm'
+                                  : 'border-[var(--border)] bg-white'
+                              }`}
+                            >
+                              <div className="flex items-center gap-2 mb-2">
+                                {isActive && <span className="w-2 h-2 rounded-full bg-[var(--infoblox-orange)]" />}
+                                <span className="text-[12px] uppercase tracking-wider text-[var(--muted-foreground)]" style={{ fontWeight: 600 }}>
+                                  {scenario.label}
+                                </span>
+                              </div>
+                              <div className="text-[28px] text-[var(--infoblox-orange)]" style={{ fontWeight: 700 }}>
+                                {scenario.tokens.toLocaleString()}
+                              </div>
+                              <div className="text-[11px] text-[var(--muted-foreground)] mb-2">
+                                Server Tokens
+                              </div>
+                              <p className="text-[11px] text-[var(--muted-foreground)] border-t border-[var(--border)] pt-2 mt-2">
+                                {scenario.desc}
+                              </p>
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
 
                     {/* Knowledge Worker / Computer / Static IP summary */}
-                    <div className="mt-6 grid grid-cols-3 gap-4">
-                      {(() => {
-                        const kwCount = findings.filter(f => f.item === 'user_account' && (f.provider as string) === 'ad').reduce((s, f) => s + f.count, 0);
-                        const compCount = findings.filter(f => f.item === 'computer_count' && (f.provider as string) === 'ad').reduce((s, f) => s + f.count, 0);
-                        const staticCount = findings.filter(f => f.item === 'static_ip_count' && (f.provider as string) === 'ad').reduce((s, f) => s + f.count, 0);
-                        return [
-                          { label: 'Knowledge Workers', value: kwCount, icon: '👥', desc: 'AD User Accounts' },
-                          { label: 'Computer Inventory', value: compCount, icon: '💻', desc: 'Managed Assets' },
-                          { label: 'Static IPs', value: staticCount, icon: '🌐', desc: 'Active IPs' },
-                        ].map((metric, i) => (
-                          <div key={i} className="bg-gray-50 rounded-lg p-3 text-center">
-                            <div className="text-[20px]">{metric.icon}</div>
-                            <div className="text-[20px] mt-1" style={{ fontWeight: 700 }}>{metric.value.toLocaleString()}</div>
-                            <div className="text-[12px]" style={{ fontWeight: 600 }}>{metric.label}</div>
-                            <div className="text-[11px] text-[var(--muted-foreground)]">{metric.desc}</div>
-                          </div>
-                        ));
-                      })()}
+                    <div className="px-4 pb-4">
+                      <div className="grid grid-cols-3 gap-4">
+                        {(() => {
+                          const kwCount = findings.filter(f => f.item === 'user_account' && (f.provider as string) === 'ad').reduce((s, f) => s + f.count, 0);
+                          const compCount = findings.filter(f => f.item === 'computer_count' && (f.provider as string) === 'ad').reduce((s, f) => s + f.count, 0);
+                          const staticCount = findings.filter(f => f.item === 'static_ip_count' && (f.provider as string) === 'ad').reduce((s, f) => s + f.count, 0);
+                          return [
+                            { label: 'Knowledge Workers', value: kwCount, icon: '👥', desc: 'AD User Accounts' },
+                            { label: 'Computer Inventory', value: compCount, icon: '💻', desc: 'Managed Assets' },
+                            { label: 'Static IPs', value: staticCount, icon: '🌐', desc: 'Active IPs' },
+                          ].map((metric, i) => (
+                            <div key={i} className="bg-gray-50 rounded-lg p-3 text-center">
+                              <div className="text-[20px]">{metric.icon}</div>
+                              <div className="text-[20px] mt-1" style={{ fontWeight: 700 }}>{metric.value.toLocaleString()}</div>
+                              <div className="text-[12px]" style={{ fontWeight: 600 }}>{metric.label}</div>
+                              <div className="text-[11px] text-[var(--muted-foreground)]">{metric.desc}</div>
+                            </div>
+                          ));
+                        })()}
+                      </div>
                     </div>
                   </div>
-                </div>
-              )}
+                );
+              })()}
+
+              {/* AD Server Token Calculator — per-DC QPS/LPS/Object sizing */}
+              {selectedProviders.includes('microsoft') && effectiveADMetrics.length > 0 && (() => {
+                const toNiosMetrics = (m: ADServerMetricAPI): NiosServerMetrics => ({
+                  memberId: m.hostname,
+                  memberName: m.hostname,
+                  role: 'DC',
+                  qps: m.qps,
+                  lps: m.lps,
+                  objectCount: m.dnsObjects + m.dhcpObjectsWithOverhead,
+                });
+
+                const displayMembers = adMigrationMap.size > 0
+                  ? effectiveADMetrics.filter(m => adMigrationMap.has(m.hostname))
+                  : effectiveADMetrics;
+
+                const getDcFF = (hostname: string): ServerFormFactor =>
+                  adMigrationMap.get(hostname) || 'nios-x';
+
+                const hasAnyXaas = displayMembers.some(m => getDcFF(m.hostname) === 'nios-xaas');
+                const xaasDcs = displayMembers.filter(m => getDcFF(m.hostname) === 'nios-xaas');
+                const niosXDcs = displayMembers.filter(m => getDcFF(m.hostname) === 'nios-x');
+                const niosXDcCount = niosXDcs.length;
+                const xaasDcCount = xaasDcs.length;
+
+                const xaasInstances = consolidateXaasInstances(xaasDcs.map(toNiosMetrics));
+                const totalXaasTokens = xaasInstances.reduce((s, inst) => s + inst.totalTokens, 0);
+
+                const niosXTokens = niosXDcs.reduce((sum, m) => {
+                  return sum + calcServerTokenTier(m.qps, m.lps, m.dnsObjects + m.dhcpObjectsWithOverhead, 'nios-x').serverTokens;
+                }, 0);
+
+                const totalServerTokens = niosXTokens + totalXaasTokens;
+                const totalDcsReplaced = xaasDcs.length;
+
+                const tierColorClass = (name: string) =>
+                  name === 'XL' ? 'bg-red-100 text-red-700' :
+                  name === 'L' ? 'bg-orange-100 text-orange-700' :
+                  name === 'M' ? 'bg-yellow-100 text-yellow-700' :
+                  name === 'S' ? 'bg-green-100 text-green-700' :
+                  name === 'XS' ? 'bg-sky-100 text-sky-700' :
+                  'bg-gray-100 text-gray-700';
+
+                return (
+                  <div id="section-ad-server-tokens" className="bg-white rounded-xl border-2 border-blue-200 mb-6 overflow-hidden">
+                    <div className="px-4 py-3 border-b border-[var(--border)] bg-blue-50/50 flex items-center gap-2 flex-wrap">
+                      <ProviderIconEl id="microsoft" className="w-5 h-5" />
+                      <h3 className="text-[14px]" style={{ fontWeight: 600 }}>
+                        AD Server Token Calculator
+                      </h3>
+                      <span className="ml-auto text-[11px] text-[var(--muted-foreground)]">
+                        {adMigrationMap.size > 0
+                          ? `${displayMembers.length} DC${displayMembers.length > 1 ? 's' : ''} selected${niosXDcCount > 0 && xaasDcCount > 0 ? ` (${niosXDcCount} NIOS-X, ${xaasDcCount} XaaS)` : niosXDcCount > 0 ? ' → NIOS-X' : ' → XaaS'}`
+                          : `${effectiveADMetrics.length} DC${effectiveADMetrics.length > 1 ? 's' : ''} detected`}
+                      </span>
+                    </div>
+
+                    {/* Summary hero */}
+                    <div className="px-4 py-4 border-b border-[var(--border)] bg-gradient-to-r from-blue-50/80 to-white">
+                      <div className={`grid ${hasAnyXaas ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-1 sm:grid-cols-2'} gap-4`}>
+                        <div>
+                          <div className="text-[11px] uppercase tracking-wider text-[var(--muted-foreground)] mb-1" style={{ fontWeight: 600 }}>
+                            Allocated Server Tokens
+                          </div>
+                          <div className="text-[28px] text-blue-700" style={{ fontWeight: 700 }}>
+                            {totalServerTokens.toLocaleString()}
+                          </div>
+                          <div className="text-[10px] text-[var(--muted-foreground)]">
+                            {niosXDcCount > 0 && `${niosXTokens.toLocaleString()} NIOS-X`}
+                            {niosXDcCount > 0 && xaasDcCount > 0 && ' + '}
+                            {xaasDcCount > 0 && `${totalXaasTokens.toLocaleString()} XaaS`}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-[11px] uppercase tracking-wider text-[var(--muted-foreground)] mb-1" style={{ fontWeight: 600 }}>
+                            Domain Controllers
+                          </div>
+                          <div className="text-[22px] text-[var(--foreground)]" style={{ fontWeight: 600 }}>
+                            {displayMembers.length}
+                          </div>
+                          <div className="text-[10px] text-[var(--muted-foreground)]">
+                            {niosXDcCount > 0 && `${niosXDcCount} → NIOS-X`}
+                            {niosXDcCount > 0 && xaasDcs.length > 0 && ' · '}
+                            {xaasDcs.length > 0 && `${xaasDcs.length} → XaaS`}
+                          </div>
+                        </div>
+                        {hasAnyXaas && ([
+                          <div key="xaas-inst-summary">
+                            <div className="text-[11px] uppercase tracking-wider text-[var(--muted-foreground)] mb-1" style={{ fontWeight: 600 }}>
+                              XaaS Instances
+                            </div>
+                            <div className="text-[22px] text-purple-700" style={{ fontWeight: 600 }}>
+                              {xaasInstances.length}
+                            </div>
+                            <div className="text-[10px] text-[var(--muted-foreground)]">
+                              replacing {totalDcsReplaced} DC{totalDcsReplaced > 1 ? 's' : ''}
+                            </div>
+                          </div>,
+                          <div key="xaas-consol-ratio">
+                            <div className="text-[11px] uppercase tracking-wider text-[var(--muted-foreground)] mb-1" style={{ fontWeight: 600 }}>
+                              Consolidation Ratio
+                            </div>
+                            <div className="text-[22px] text-purple-700" style={{ fontWeight: 600 }}>
+                              {totalDcsReplaced}:{xaasInstances.length}
+                            </div>
+                            <div className="text-[10px] text-[var(--muted-foreground)]">
+                              {totalDcsReplaced} DC{totalDcsReplaced > 1 ? 's' : ''} → {xaasInstances.length} XaaS instance{xaasInstances.length > 1 ? 's' : ''}
+                            </div>
+                          </div>
+                        ])}
+                      </div>
+                      {hasAnyXaas && (
+                        <div className="mt-3 flex flex-col gap-1.5">
+                          <div className="flex items-start gap-1.5 text-[10px] text-purple-700 bg-purple-50 rounded-lg px-3 py-1.5 border border-purple-200">
+                            <Info className="w-3 h-3 mt-0.5 shrink-0" />
+                            <span>
+                              <b>{xaasDcs.length} DC{xaasDcs.length > 1 ? 's' : ''}</b> consolidated into <b>{xaasInstances.length} XaaS instance{xaasInstances.length > 1 ? 's' : ''}</b>.
+                              {' '}Each XaaS instance uses aggregate QPS/LPS/Objects to determine the T-shirt size.
+                              {' '}1 connection = 1 DC replaced.
+                            </span>
+                          </div>
+                          {xaasInstances.some(inst => inst.extraConnections > 0) && (
+                            <div className="flex items-start gap-1.5 text-[10px] text-amber-700 bg-amber-50 rounded-lg px-3 py-1.5 border border-amber-200">
+                              <Info className="w-3 h-3 mt-0.5 shrink-0" />
+                              <span>
+                                Some instances need extra connections beyond the included tier limit (+{XAAS_EXTRA_CONNECTION_COST} tokens each, up to 400 extra per instance).
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Per-DC table */}
+                    <div className="overflow-x-auto max-h-[500px] overflow-y-auto">
+                      <table className="w-full text-[12px]">
+                        <thead className="sticky top-0 z-10">
+                          <tr className="border-b border-[var(--border)] bg-gray-50">
+                            <th className="text-left px-4 py-2.5" style={{ fontWeight: 600 }}>Hostname</th>
+                            <th className="text-center px-3 py-2.5" style={{ fontWeight: 600 }}>Role</th>
+                            <th className="text-center px-3 py-2.5" style={{ fontWeight: 600 }}>Target</th>
+                            <th className="text-right px-3 py-2.5" style={{ fontWeight: 600 }}>
+                              <span className="flex items-center justify-end gap-1">
+                                <Activity className="w-3 h-3" /> QPS
+                              </span>
+                            </th>
+                            <th className="text-right px-3 py-2.5" style={{ fontWeight: 600 }}>
+                              <span className="flex items-center justify-end gap-1">
+                                <Gauge className="w-3 h-3" /> LPS
+                              </span>
+                            </th>
+                            <th className="text-right px-3 py-2.5" style={{ fontWeight: 600 }}>Objects</th>
+                            <th className="text-center px-3 py-2.5" style={{ fontWeight: 600 }}>Size</th>
+                            <th className="text-center px-3 py-2.5" style={{ fontWeight: 600 }}>
+                              <span className="text-blue-700">Allocated Tokens</span>
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {/* NIOS-X DCs — individual rows */}
+                          {niosXDcs.map((dc) => {
+                            const objCount = dc.dnsObjects + dc.dhcpObjectsWithOverhead;
+                            const tier = calcServerTokenTier(dc.qps, dc.lps, objCount, 'nios-x');
+                            return (
+                              <tr key={dc.hostname} className="border-b border-[var(--border)] hover:bg-gray-50/50 transition-colors">
+                                <td className="px-4 py-2.5">
+                                  <div className="truncate max-w-[260px]" style={{ fontWeight: 500 }}>{dc.hostname}</div>
+                                </td>
+                                <td className="text-center px-3 py-2.5">
+                                  <span className="inline-block px-2 py-0.5 rounded text-[10px] bg-blue-100 text-blue-700" style={{ fontWeight: 600 }}>
+                                    DC
+                                  </span>
+                                </td>
+                                <td className="text-center px-3 py-2.5">
+                                  <span className="inline-block px-2 py-0.5 rounded text-[10px] bg-blue-100 text-blue-700" style={{ fontWeight: 600 }}>
+                                    NIOS-X
+                                  </span>
+                                </td>
+                                <td className="text-right px-3 py-2.5 tabular-nums">
+                                  {dc.qps > 0 ? dc.qps.toLocaleString() : <span className="text-gray-300">&mdash;</span>}
+                                </td>
+                                <td className="text-right px-3 py-2.5 tabular-nums">
+                                  {dc.lps > 0 ? dc.lps.toLocaleString() : <span className="text-gray-300">&mdash;</span>}
+                                </td>
+                                <td className="text-right px-3 py-2.5 tabular-nums">
+                                  {objCount > 0 ? objCount.toLocaleString() : <span className="text-gray-300">&mdash;</span>}
+                                </td>
+                                <td className="text-center px-3 py-2.5">
+                                  <span className={`inline-block px-2 py-0.5 rounded text-[10px] ${tierColorClass(tier.name)}`} style={{ fontWeight: 600 }}>
+                                    {tier.name}
+                                  </span>
+                                </td>
+                                <td className="text-center px-3 py-2.5">
+                                  <span className="inline-flex items-center justify-center min-w-[36px] h-7 px-1.5 rounded-full bg-blue-100 text-blue-700 text-[12px]" style={{ fontWeight: 700 }}>
+                                    {tier.serverTokens.toLocaleString()}
+                                  </span>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                          {/* XaaS consolidated instances */}
+                          {xaasInstances.map((inst) => (
+                            <tbody key={`ad-xaas-inst-${inst.index}`}>
+                              {/* Instance header row */}
+                              <tr className="bg-purple-50 border-b border-purple-200">
+                                <td className="px-4 py-2 text-[11px] text-purple-800" style={{ fontWeight: 700 }} colSpan={8}>
+                                  <div className="flex items-center gap-2">
+                                    <span className="inline-flex items-center gap-1.5">
+                                      <span className="inline-block w-2.5 h-2.5 rounded-full bg-purple-500" />
+                                      XaaS Instance {xaasInstances.length > 1 ? inst.index + 1 : ''}
+                                    </span>
+                                    <span className="text-purple-500" style={{ fontWeight: 400 }}>—</span>
+                                    <span className="text-purple-600" style={{ fontWeight: 500 }}>
+                                      replaces {inst.connectionsUsed} DC{inst.connectionsUsed > 1 ? 's' : ''}
+                                    </span>
+                                    <span className="ml-auto flex items-center gap-2">
+                                      <span className={`inline-block px-2 py-0.5 rounded text-[10px] ${tierColorClass(inst.tier.name)}`} style={{ fontWeight: 600 }}>
+                                        {inst.tier.name}
+                                      </span>
+                                      <span className="inline-flex items-center justify-center min-w-[36px] h-6 px-1.5 rounded-full bg-purple-200 text-purple-800 text-[11px]" style={{ fontWeight: 700 }}>
+                                        {inst.totalTokens.toLocaleString()}
+                                      </span>
+                                    </span>
+                                  </div>
+                                </td>
+                              </tr>
+                              {/* Individual DC rows within this instance */}
+                              {inst.members.map((member) => (
+                                <tr key={member.memberId} className="border-b border-purple-100 hover:bg-purple-50/30 transition-colors">
+                                  <td className="pl-8 pr-4 py-2">
+                                    <div className="truncate max-w-[240px] text-[11px] text-purple-700" style={{ fontWeight: 500 }}>{member.memberName}</div>
+                                  </td>
+                                  <td className="text-center px-3 py-2">
+                                    <span className="inline-block px-2 py-0.5 rounded text-[10px] bg-blue-100 text-blue-700" style={{ fontWeight: 600 }}>
+                                      DC
+                                    </span>
+                                  </td>
+                                  <td className="text-center px-3 py-2">
+                                    <span className="inline-block px-2 py-0.5 rounded text-[9px] bg-purple-100 text-purple-600" style={{ fontWeight: 500 }}>
+                                      1 conn
+                                    </span>
+                                  </td>
+                                  <td className="text-right px-3 py-2 tabular-nums text-[11px] text-purple-600">
+                                    {member.qps > 0 ? member.qps.toLocaleString() : <span className="text-gray-300">&mdash;</span>}
+                                  </td>
+                                  <td className="text-right px-3 py-2 tabular-nums text-[11px] text-purple-600">
+                                    {member.lps > 0 ? member.lps.toLocaleString() : <span className="text-gray-300">&mdash;</span>}
+                                  </td>
+                                  <td className="text-right px-3 py-2 tabular-nums text-[11px] text-purple-600">
+                                    {member.objectCount > 0 ? member.objectCount.toLocaleString() : <span className="text-gray-300">&mdash;</span>}
+                                  </td>
+                                  <td className="text-center px-3 py-2" colSpan={2}>
+                                    <span className="text-[10px] text-gray-400">(consolidated)</span>
+                                  </td>
+                                </tr>
+                              ))}
+                              {/* Consolidated aggregate row */}
+                              <tr className="border-b border-purple-300 bg-purple-50/80">
+                                <td className="pl-8 pr-4 py-2 text-[11px] text-purple-800" style={{ fontWeight: 600 }}>
+                                  Aggregate ({inst.connectionsUsed} connection{inst.connectionsUsed > 1 ? 's' : ''} used / {inst.tier.maxConnections} included)
+                                  {inst.extraConnections > 0 && (
+                                    <span className="text-amber-600 ml-1">+{inst.extraConnections} extra</span>
+                                  )}
+                                </td>
+                                <td className="text-center px-3 py-2">
+                                  <span className="inline-block px-2 py-0.5 rounded text-[10px] bg-purple-100 text-purple-700" style={{ fontWeight: 600 }}>
+                                    XaaS
+                                  </span>
+                                </td>
+                                <td className="text-center px-3 py-2 text-[10px] text-purple-700" style={{ fontWeight: 600 }}>
+                                  {inst.connectionsUsed} conn
+                                </td>
+                                <td className="text-right px-3 py-2 tabular-nums text-purple-800" style={{ fontWeight: 600 }}>
+                                  {inst.totalQps > 0 ? inst.totalQps.toLocaleString() : <span className="text-gray-300">&mdash;</span>}
+                                </td>
+                                <td className="text-right px-3 py-2 tabular-nums text-purple-800" style={{ fontWeight: 600 }}>
+                                  {inst.totalLps > 0 ? inst.totalLps.toLocaleString() : <span className="text-gray-300">&mdash;</span>}
+                                </td>
+                                <td className="text-right px-3 py-2 tabular-nums text-purple-800" style={{ fontWeight: 600 }}>
+                                  {inst.totalObjects > 0 ? inst.totalObjects.toLocaleString() : <span className="text-gray-300">&mdash;</span>}
+                                </td>
+                                <td className="text-center px-3 py-2">
+                                  <span className={`inline-block px-2 py-0.5 rounded text-[10px] ${tierColorClass(inst.tier.name)}`} style={{ fontWeight: 600 }}>
+                                    {inst.tier.name}
+                                  </span>
+                                </td>
+                                <td className="text-center px-3 py-2">
+                                  <span className="inline-flex items-center justify-center min-w-[36px] h-7 px-1.5 rounded-full bg-purple-200 text-purple-800 text-[12px]" style={{ fontWeight: 700 }}>
+                                    {inst.totalTokens.toLocaleString()}
+                                  </span>
+                                  {inst.extraConnectionTokens > 0 && (
+                                    <div className="text-[9px] text-amber-600 mt-0.5">
+                                      incl. {inst.extraConnectionTokens.toLocaleString()} extra conn
+                                    </div>
+                                  )}
+                                </td>
+                              </tr>
+                            </tbody>
+                          ))}
+                        <tfoot className="sticky bottom-0 z-10">
+                          <tr className="bg-blue-50">
+                            <td className="px-4 py-2.5 text-[12px]" style={{ fontWeight: 700 }} colSpan={7}>
+                              Total Allocated Server Tokens
+                              {hasAnyXaas && (
+                                <span className="text-[10px] text-[var(--muted-foreground)] ml-2" style={{ fontWeight: 400 }}>
+                                  ({niosXDcCount > 0 ? `${niosXDcCount} NIOS-X` : ''}{niosXDcCount > 0 && xaasInstances.length > 0 ? ' + ' : ''}{xaasInstances.length > 0 ? `${xaasInstances.length} XaaS instance${xaasInstances.length > 1 ? 's' : ''} replacing ${totalDcsReplaced} DCs` : ''})
+                                </span>
+                              )}
+                            </td>
+                            <td className="text-center px-3 py-2.5">
+                              <span className="inline-flex items-center justify-center min-w-[40px] h-8 px-2 rounded-full bg-blue-600 text-white text-[14px]" style={{ fontWeight: 700 }}>
+                                {totalServerTokens.toLocaleString()}
+                              </span>
+                            </td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* Findings table */}
               <div id="section-findings" className="bg-white rounded-xl border border-[var(--border)] mb-6 overflow-hidden">
