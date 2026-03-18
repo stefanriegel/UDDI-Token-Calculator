@@ -4,14 +4,13 @@
 ![License](https://img.shields.io/badge/License-Proprietary-red)
 ![Platforms](https://img.shields.io/badge/Platforms-Windows%20%7C%20macOS%20%7C%20Linux-blue)
 
-Estimates Infoblox Universal DDI management tokens by scanning your existing infrastructure — cloud providers, Active Directory, NIOS Grids, and third-party DDI systems. Single self-contained binary with an embedded web UI. No runtime, no installer, no setup.
+Estimates Infoblox Universal DDI management tokens by scanning your existing infrastructure — cloud providers, Active Directory, NIOS Grids, and third-party DDI systems. Single self-contained binary with an embedded web UI.
 
 ## Highlights
 
 - 🔍 **8 providers** — AWS, Azure, GCP, Active Directory, NIOS Grid, NIOS WAPI, Bluecat, EfficientIP
-- 🏢 **Enterprise-scale** — Multi-account AWS (Organizations), multi-subscription Azure, multi-project GCP with parallel scanning
-- 📊 **Migration planning** — NIOS-X tier recommendations, 3-scenario migration planner (Current / Hybrid / Full)
-- 📈 **Per-server sizing** — Per-DC NIOS-X tier calculation for AD with DHCP +20% overhead
+- 🏢 **Enterprise-scale** — Multi-account AWS, multi-subscription Azure, multi-project GCP with parallel scanning
+- 📊 **Migration planning** — NIOS-X tier recommendations, 3-scenario migration planner
 - 🔐 **9 auth methods** — Access keys, SSO, CLI profiles, service principals, device code, Kerberos, and more
 - 📁 **Excel export** — `.xlsx` with summary, per-provider breakdown, migration planner, and error traceability
 - 🛡️ **Security** — Credentials stay in-memory only, never written to disk
@@ -40,22 +39,19 @@ irm https://raw.githubusercontent.com/stefanriegel/UDDI-Token-Calculator/main/sc
 
 ### macOS
 
-<details open>
-<summary><strong>Homebrew (recommended)</strong></summary>
+```bash
+curl -sL https://raw.githubusercontent.com/stefanriegel/UDDI-Token-Calculator/main/scripts/install.sh | sh
+```
+
+<details>
+<summary><strong>Homebrew (alternative)</strong></summary>
 
 ```bash
 brew tap stefanriegel/tap
 brew install uddi-token-calculator
 ```
 
-</details>
-
-<details>
-<summary><strong>Shell script</strong></summary>
-
-```bash
-curl -sL https://raw.githubusercontent.com/stefanriegel/UDDI-Token-Calculator/main/scripts/install.sh | sh
-```
+> **Note:** The shell script installer supports auto-update. Homebrew installs do not receive auto-updates.
 
 </details>
 
@@ -63,20 +59,6 @@ curl -sL https://raw.githubusercontent.com/stefanriegel/UDDI-Token-Calculator/ma
 
 ```bash
 curl -sL https://raw.githubusercontent.com/stefanriegel/UDDI-Token-Calculator/main/scripts/install.sh | sh
-```
-
-### Dev Channel
-
-Pre-release builds are available for testing new features before stable release.
-
-```powershell
-# Windows
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/stefanriegel/UDDI-Token-Calculator/main/scripts/install.ps1))) -Channel dev
-```
-
-```bash
-# macOS / Linux
-curl -sL https://raw.githubusercontent.com/stefanriegel/UDDI-Token-Calculator/main/scripts/install.sh | sh -s -- --channel dev
 ```
 
 ## Usage
@@ -90,18 +72,11 @@ The web UI opens automatically in your default browser. From there:
 1. **Select providers** — Choose which infrastructure to scan
 2. **Enter credentials** — Authenticate to each provider (credentials stay in-memory)
 3. **Configure sources** — Select accounts, subscriptions, Grid Members, or DCs to scan
-4. **Scan** — The tool discovers and counts resources across all selected providers
-5. **Review results** — Token estimates, migration planner, Excel export
+4. **Scan & review** — Token estimates, migration planner, Excel export
 
 ## Windows Security Note
 
-The binary is not code-signed, so Windows SmartScreen may show a warning on first run.
-
-| Method | Steps |
-|--------|-------|
-| **SmartScreen dialog** | Click **More info** → **Run anyway** |
-| **PowerShell unblock** | `Unblock-File .\uddi-token-calculator.exe` |
-| **Installer script** | Already handled — the install script calls `Unblock-File` automatically |
+The binary is not code-signed. Windows SmartScreen may warn on first run — click **More info** → **Run anyway**. The PowerShell installer calls `Unblock-File` automatically.
 
 ## Supported Providers
 
@@ -118,40 +93,13 @@ The binary is not code-signed, so Windows SmartScreen may show a warning on firs
 
 ## Token Calculation
 
-Resources are grouped into three categories:
-
 | Category | Ratio | Examples |
 |----------|-------|---------|
-| **DDI Objects** | 25 objects per token | DNS zones, DNS records, DHCP scopes, IP networks |
-| **Active IPs** | 13 IPs per token | DHCP leases, static host IPs, NIC IPs |
-| **Managed Assets** | 3 assets per token | VMs, load balancers, Grid Members, HA pairs |
+| **DDI Objects** | 25 per token | DNS zones, DNS records, DHCP scopes, IP networks |
+| **Active IPs** | 13 per token | DHCP leases, static host IPs, NIC IPs |
+| **Managed Assets** | 3 per token | VMs, load balancers, Grid Members, HA pairs |
 
 The grand total is the **maximum** across all three categories.
-
-## Features
-
-### Migration Planning
-
-- **NIOS Migration Planner** — 3-scenario comparison (Current / Hybrid / Full UDDI) with per-member server token calculation
-- **AD Migration Planner** — Per-DC NIOS-X tier recommendations (2XS–XL) with DHCP +20% overhead, event log QPS/LPS extraction
-- **Server Token Calculator** — Per-member form factor selection (NIOS-X on-prem vs XaaS) with tier-based token math
-- **XaaS Consolidation** — Bin-packing across S/M/L/XL tiers with connection limits
-
-### Enterprise Scanning
-
-- **Multi-account AWS** — Organizations discovery + AssumeRole fan-out with per-account progress
-- **Multi-subscription Azure** — Parallel subscription scanning with per-subscription progress
-- **Multi-project GCP** — Org/folder traversal + parallel project scanning
-- **Retry & backoff** — Exponential backoff for API throttling across all cloud providers
-- **Checkpoint/resume** — Resume interrupted scans from the last completed unit
-
-### Results & Export
-
-- **Top Consumer Cards** — DNS, DHCP, IP/Network breakdowns (expandable, top 5 per category)
-- **Per-type DNS records** — A, AAAA, CNAME, MX, TXT, SRV, and more — across all cloud providers
-- **Excel export** — `.xlsx` with summary, per-provider sheets, migration planner, and error traceability
-- **Knowledge Worker count** — AD user account sizing metric
-- **Computer inventory & static IPs** — Managed asset and active IP counts from AD
 
 ## Building from Source
 
@@ -182,6 +130,23 @@ CGO_ENABLED=1 CC=x86_64-w64-mingw32-gcc GOOS=windows GOARCH=amd64 \
 
 ```bash
 go test ./... -count=1
+```
+
+</details>
+
+### Dev Channel
+
+<details>
+<summary>Pre-release builds for testing</summary>
+
+```powershell
+# Windows
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/stefanriegel/UDDI-Token-Calculator/main/scripts/install.ps1))) -Channel dev
+```
+
+```bash
+# macOS / Linux
+curl -sL https://raw.githubusercontent.com/stefanriegel/UDDI-Token-Calculator/main/scripts/install.sh | sh -s -- --channel dev
 ```
 
 </details>
