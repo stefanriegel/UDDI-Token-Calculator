@@ -2,10 +2,10 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
     tags: ["v*.*.*"]
   pull_request:
-    branches: [main]
+    branches: [main, dev]
 
 jobs:
   # Job 1: Run tests on every push and PR
@@ -21,11 +21,15 @@ jobs:
         working-directory: frontend
         run: pnpm install --frozen-lockfile && pnpm build
 
-      - name: Run tests
+      - name: Run Go tests
         run: go test ./... -race -count=1
 
-      - name: Run vet
+      - name: Run Go vet
         run: go vet ./...
+
+      - name: Run frontend tests
+        working-directory: frontend
+        run: npx vitest run
 
   # Job 2: GoReleaser release — only on semver tags (v*.*.*)
   release:
