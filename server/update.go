@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -334,12 +335,25 @@ func HandleSelfUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Detect Homebrew-managed installs — self-update won't have write permission
+	// Detect Homebrew-managed installs — use brew upgrade instead of direct binary replacement
 	if isHomebrewManaged(execPath) {
+		if err := brewUpgrade(); err != nil {
+			json.NewEncoder(w).Encode(SelfUpdateResponse{
+				Success: false,
+				Error:   fmt.Sprintf("Homebrew upgrade failed: %v", err),
+			})
+			return
+		}
+
+		// Invalidate cache so next check picks up new version
+		cacheMu.Lock()
+		cachedUpdate = nil
+		cacheMu.Unlock()
+
 		json.NewEncoder(w).Encode(SelfUpdateResponse{
-			Success:   false,
-			ManagedBy: "homebrew",
-			Message:   "Run `brew update && brew upgrade uddi-token-calculator` to update.",
+			Success:        true,
+			Message:        fmt.Sprintf("Updated to %s via Homebrew. Press 'Restart Now' to apply.", result.LatestVersion),
+			RestartPending: true,
 		})
 		return
 	}
@@ -469,6 +483,32 @@ func isHomebrewManaged(execPath string) bool {
 	// Homebrew symlinks: /opt/homebrew/bin/x -> ../Cellar/x/version/bin/x
 	// or: /usr/local/bin/x -> ../Cellar/x/version/bin/x
 	return strings.Contains(execPath, "/Cellar/")
+}
+
+// brewUpgrade runs `brew update && brew upgrade uddi-token-calculator`.
+// Returns an error if brew is not found or the upgrade fails.
+func brewUpgrade() error {
+	brewPath, err := exec.LookPath("brew")
+	if err != nil {
+		return fmt.Errorf("brew not found in PATH: %w", err)
+	}
+
+	// brew update (refresh tap)
+	updateCmd := exec.Command(brewPath, "update")
+	updateCmd.Stdout = io.Discard
+	updateCmd.Stderr = io.Discard
+	if err := updateCmd.Run(); err != nil {
+		return fmt.Errorf("brew update failed: %w", err)
+	}
+
+	// brew upgrade uddi-token-calculator
+	upgradeCmd := exec.Command(brewPath, "upgrade", "uddi-token-calculator")
+	out, err := upgradeCmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("brew upgrade failed: %s — %w", strings.TrimSpace(string(out)), err)
+	}
+
+	return nil
 }
 
 // HandleRestart handles POST /api/v1/update/restart.
