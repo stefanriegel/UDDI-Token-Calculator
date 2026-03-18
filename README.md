@@ -23,7 +23,7 @@ irm https://raw.githubusercontent.com/stefanriegel/UDDI-Token-Calculator/main/sc
 
 </details>
 
-### macOS / Linux
+### macOS
 
 ```bash
 brew tap stefanriegel/tap
@@ -39,7 +39,13 @@ curl -sL https://raw.githubusercontent.com/stefanriegel/UDDI-Token-Calculator/ma
 
 </details>
 
-Both methods support auto-update — the app checks for new versions on launch and updates in-place.
+### Linux
+
+```bash
+curl -sL https://raw.githubusercontent.com/stefanriegel/UDDI-Token-Calculator/main/scripts/install.sh | sh
+```
+
+All install methods support auto-update — the app checks for new versions on launch and updates in-place.
 
 ## Usage
 
