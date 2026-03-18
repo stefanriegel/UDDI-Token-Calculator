@@ -286,6 +286,12 @@ func buildScanRequest(p ScanProviderRequest, sess *session.Session) scanner.Scan
 				req.Credentials["insecure_skip_verify"] = "true"
 			}
 		}
+		// Pass selected DCs from the wizard subscriptions list — same pattern as
+		// NIOS selected_members. Allows filtering which DCs contribute rows to the
+		// report and ensures per-DC source attribution in findings.
+		if len(p.Subscriptions) > 0 {
+			req.Credentials["selected_dcs"] = strings.Join(p.Subscriptions, ",")
+		}
 	case scanner.ProviderNIOS:
 		if p.Mode == "wapi" {
 			// WAPI live scan: populate credentials from session.NiosWAPI.

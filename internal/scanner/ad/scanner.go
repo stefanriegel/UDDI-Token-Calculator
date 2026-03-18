@@ -53,6 +53,7 @@ type dcResult struct {
 	computerKeys    map[string]struct{} // Get-ADComputer results
 	staticIPKeys    map[string]struct{} // Computers with IPv4Address (static IPs)
 	computerName    string
+	inputHost       string // original host string supplied by the user (IP or FQDN)
 
 	// Per-DC raw counts (before cross-DC dedup) for ADServerMetric construction.
 	dnsObjectCount  int // zones + records on this DC
@@ -223,6 +224,18 @@ func (s *Scanner) Scan(ctx context.Context, req scanner.ScanRequest, publish fun
 		clientOpts = append(clientOpts, WithInsecureSkipVerify())
 	}
 
+	// Parse selected DCs filter — analogous to NIOS selected_members.
+	// The wizard passes the user-selected DC hostnames (from SubscriptionItems)
+	// in req.Credentials["selected_dcs"]. An empty string means "scan all".
+	selectedDCSet := make(map[string]struct{})
+	if sdcs := req.Credentials["selected_dcs"]; sdcs != "" {
+		for _, h := range strings.Split(sdcs, ",") {
+			if h = strings.TrimSpace(h); h != "" {
+				selectedDCSet[h] = struct{}{}
+			}
+		}
+	}
+
 	agg := scanAllDCs(ctx, hosts, username, password, eventLogWindowHours, publish, clientOpts...)
 
 	// If no DC connected at all, return a top-level error so the orchestrator
@@ -231,79 +244,163 @@ func (s *Scanner) Scan(ctx context.Context, req scanner.ScanRequest, publish fun
 		return nil, fmt.Errorf("ad: failed to connect to any server (%s)", strings.Join(hosts, ", "))
 	}
 
-	// source uses resolved DC computer names so the Detailed Findings table shows
-	// meaningful names (DC01, DC02) instead of raw IPs. Falls back to user-entered
-	// host if COMPUTERNAME query failed for that DC.
-	source := strings.Join(agg.dcNames, ", ")
-
-	// Emit final resource_progress events from aggregated counts.
-	zoneCount := len(agg.zoneNames)
-	recordCount := len(agg.recordKeys)
-	scopeCount := len(agg.scopeIDs)
-	leaseCount := len(agg.leaseKeys)
-	reservationCount := len(agg.reservationKeys)
-	userCount := len(agg.userKeys)
-	computerCount := len(agg.computerKeys)
-	staticIPCount := len(agg.staticIPKeys)
-
+	// Emit final resource_progress events from aggregated counts (for progress UI).
 	publish(scanner.Event{
 		Type:     "resource_progress",
 		Provider: scanner.ProviderAD,
 		Resource: "dns_zone",
-		Count:    zoneCount,
+		Count:    len(agg.zoneNames),
 		Status:   "done",
 	})
 	publish(scanner.Event{
 		Type:     "resource_progress",
 		Provider: scanner.ProviderAD,
 		Resource: "dns_record",
-		Count:    recordCount,
+		Count:    len(agg.recordKeys),
 		Status:   "done",
 	})
 	publish(scanner.Event{
 		Type:     "resource_progress",
 		Provider: scanner.ProviderAD,
 		Resource: "dhcp_scope",
-		Count:    scopeCount,
+		Count:    len(agg.scopeIDs),
 		Status:   "done",
 	})
 	publish(scanner.Event{
 		Type:     "resource_progress",
 		Provider: scanner.ProviderAD,
 		Resource: "dhcp_lease",
-		Count:    leaseCount,
+		Count:    len(agg.leaseKeys),
 		Status:   "done",
 	})
 	publish(scanner.Event{
 		Type:     "resource_progress",
 		Provider: scanner.ProviderAD,
 		Resource: "dhcp_reservation",
-		Count:    reservationCount,
+		Count:    len(agg.reservationKeys),
 		Status:   "done",
 	})
 	publish(scanner.Event{
 		Type:     "resource_progress",
 		Provider: scanner.ProviderAD,
 		Resource: "user_account",
-		Count:    userCount,
+		Count:    len(agg.userKeys),
 		Status:   "done",
 	})
 
-	// Build per-DC ADServerMetric from per-DC raw counts.
+	// Build per-DC FindingRows and ADServerMetrics — one entry per DC, matching
+	// the NIOS per-member pattern so the report shows individual DC rows.
+	var findings []calculator.FindingRow
 	var adMetrics []adServerMetricInternal
+
 	for _, dc := range agg.dcResults {
+		// Apply selected DCs filter: if a filter is set, skip DCs not in it.
+		// Match against both the resolved computerName and the original input host
+		// (IP or FQDN) since the wizard subscription IDs use the raw host entry.
+		// An empty selectedDCSet means "include all".
+		if len(selectedDCSet) > 0 {
+			_, nameMatch := selectedDCSet[dc.computerName]
+			_, hostMatch := selectedDCSet[dc.inputHost]
+			if !nameMatch && !hostMatch {
+				continue
+			}
+		}
+
+		dcRows := []calculator.FindingRow{
+			{
+				Provider:         scanner.ProviderAD,
+				Source:           dc.computerName,
+				Category:         calculator.CategoryDDIObjects,
+				Item:             "dns_zone",
+				Count:            len(dc.zoneNames),
+				TokensPerUnit:    calculator.TokensPerDDIObject,
+				ManagementTokens: ceilDiv(len(dc.zoneNames), calculator.TokensPerDDIObject),
+			},
+			{
+				Provider:         scanner.ProviderAD,
+				Source:           dc.computerName,
+				Category:         calculator.CategoryDDIObjects,
+				Item:             "dns_record",
+				Count:            len(dc.recordKeys),
+				TokensPerUnit:    calculator.TokensPerDDIObject,
+				ManagementTokens: ceilDiv(len(dc.recordKeys), calculator.TokensPerDDIObject),
+			},
+			{
+				Provider:         scanner.ProviderAD,
+				Source:           dc.computerName,
+				Category:         calculator.CategoryDDIObjects,
+				Item:             "dhcp_scope",
+				Count:            len(dc.scopeIDs),
+				TokensPerUnit:    calculator.TokensPerDDIObject,
+				ManagementTokens: ceilDiv(len(dc.scopeIDs), calculator.TokensPerDDIObject),
+			},
+			{
+				Provider:         scanner.ProviderAD,
+				Source:           dc.computerName,
+				Category:         calculator.CategoryActiveIPs,
+				Item:             "dhcp_lease",
+				Count:            len(dc.leaseKeys),
+				TokensPerUnit:    calculator.TokensPerActiveIP,
+				ManagementTokens: ceilDiv(len(dc.leaseKeys), calculator.TokensPerActiveIP),
+			},
+			{
+				Provider:         scanner.ProviderAD,
+				Source:           dc.computerName,
+				Category:         calculator.CategoryActiveIPs,
+				Item:             "dhcp_reservation",
+				Count:            len(dc.reservationKeys),
+				TokensPerUnit:    calculator.TokensPerActiveIP,
+				ManagementTokens: ceilDiv(len(dc.reservationKeys), calculator.TokensPerActiveIP),
+			},
+			{
+				Provider:         scanner.ProviderAD,
+				Source:           dc.computerName,
+				Category:         calculator.CategoryManagedAssets,
+				Item:             "user_account",
+				Count:            len(dc.userKeys),
+				TokensPerUnit:    calculator.TokensPerManagedAsset,
+				ManagementTokens: ceilDiv(len(dc.userKeys), calculator.TokensPerManagedAsset),
+			},
+			{
+				Provider:         scanner.ProviderAD,
+				Source:           dc.computerName,
+				Category:         calculator.CategoryManagedAssets,
+				Item:             "computer_count",
+				Count:            len(dc.computerKeys),
+				TokensPerUnit:    calculator.TokensPerManagedAsset,
+				ManagementTokens: ceilDiv(len(dc.computerKeys), calculator.TokensPerManagedAsset),
+			},
+			{
+				Provider:         scanner.ProviderAD,
+				Source:           dc.computerName,
+				Category:         calculator.CategoryActiveIPs,
+				Item:             "static_ip_count",
+				Count:            len(dc.staticIPKeys),
+				TokensPerUnit:    calculator.TokensPerActiveIP,
+				ManagementTokens: ceilDiv(len(dc.staticIPKeys), calculator.TokensPerActiveIP),
+			},
+		}
+
+		// Append only non-zero rows for this DC (skip resource types not present).
+		for _, row := range dcRows {
+			if row.Count > 0 {
+				findings = append(findings, row)
+			}
+		}
+
+		// ADServerMetric for this DC.
 		dhcpOverhead := dhcpWithOverhead(dc.dhcpObjectCount)
 		totalObjects := dc.dnsObjectCount + dhcpOverhead
 		tier := calcADTier(dc.qps, dc.lps, totalObjects)
 		adMetrics = append(adMetrics, adServerMetricInternal{
-			Hostname:              dc.computerName,
-			DNSObjects:            dc.dnsObjectCount,
-			DHCPObjects:           dc.dhcpObjectCount,
+			Hostname:                dc.computerName,
+			DNSObjects:              dc.dnsObjectCount,
+			DHCPObjects:             dc.dhcpObjectCount,
 			DHCPObjectsWithOverhead: dhcpOverhead,
-			QPS:                   dc.qps,
-			LPS:                   dc.lps,
-			Tier:                  tier.name,
-			ServerTokens:          tier.serverTokens,
+			QPS:                     dc.qps,
+			LPS:                     dc.lps,
+			Tier:                    tier.name,
+			ServerTokens:            tier.serverTokens,
 		})
 	}
 
@@ -314,90 +411,9 @@ func (s *Scanner) Scan(ctx context.Context, req scanner.ScanRequest, publish fun
 		}
 	}
 
-	allRows := []calculator.FindingRow{
-		{
-			Provider:         scanner.ProviderAD,
-			Source:           source,
-			Category:         calculator.CategoryDDIObjects,
-			Item:             "dns_zone",
-			Count:            zoneCount,
-			TokensPerUnit:    calculator.TokensPerDDIObject,
-			ManagementTokens: ceilDiv(zoneCount, calculator.TokensPerDDIObject),
-		},
-		{
-			Provider:         scanner.ProviderAD,
-			Source:           source,
-			Category:         calculator.CategoryDDIObjects,
-			Item:             "dns_record",
-			Count:            recordCount,
-			TokensPerUnit:    calculator.TokensPerDDIObject,
-			ManagementTokens: ceilDiv(recordCount, calculator.TokensPerDDIObject),
-		},
-		{
-			Provider:         scanner.ProviderAD,
-			Source:           source,
-			Category:         calculator.CategoryDDIObjects,
-			Item:             "dhcp_scope",
-			Count:            scopeCount,
-			TokensPerUnit:    calculator.TokensPerDDIObject,
-			ManagementTokens: ceilDiv(scopeCount, calculator.TokensPerDDIObject),
-		},
-		{
-			Provider:         scanner.ProviderAD,
-			Source:           source,
-			Category:         calculator.CategoryActiveIPs,
-			Item:             "dhcp_lease",
-			Count:            leaseCount,
-			TokensPerUnit:    calculator.TokensPerActiveIP,
-			ManagementTokens: ceilDiv(leaseCount, calculator.TokensPerActiveIP),
-		},
-		{
-			Provider:         scanner.ProviderAD,
-			Source:           source,
-			Category:         calculator.CategoryActiveIPs,
-			Item:             "dhcp_reservation",
-			Count:            reservationCount,
-			TokensPerUnit:    calculator.TokensPerActiveIP,
-			ManagementTokens: ceilDiv(reservationCount, calculator.TokensPerActiveIP),
-		},
-		{
-			Provider:         scanner.ProviderAD,
-			Source:           source,
-			Category:         calculator.CategoryManagedAssets,
-			Item:             "user_account",
-			Count:            userCount,
-			TokensPerUnit:    calculator.TokensPerManagedAsset,
-			ManagementTokens: ceilDiv(userCount, calculator.TokensPerManagedAsset),
-		},
-		{
-			Provider:         scanner.ProviderAD,
-			Source:           source,
-			Category:         calculator.CategoryManagedAssets,
-			Item:             "computer_count",
-			Count:            computerCount,
-			TokensPerUnit:    calculator.TokensPerManagedAsset,
-			ManagementTokens: ceilDiv(computerCount, calculator.TokensPerManagedAsset),
-		},
-		{
-			Provider:         scanner.ProviderAD,
-			Source:           source,
-			Category:         calculator.CategoryActiveIPs,
-			Item:             "static_ip_count",
-			Count:            staticIPCount,
-			TokensPerUnit:    calculator.TokensPerActiveIP,
-			ManagementTokens: ceilDiv(staticIPCount, calculator.TokensPerActiveIP),
-		},
-	}
-
-	// Filter out zero-count rows so empty results don't clutter the table.
-	var findings []calculator.FindingRow
-	for _, row := range allRows {
-		if row.Count > 0 {
-			findings = append(findings, row)
-		}
-	}
 	if len(findings) == 0 {
-		return findings, fmt.Errorf("ad: no resources discovered on %s (DNS, DHCP, and AD User queries all returned empty results)", source)
+		connectedNames := strings.Join(agg.dcNames, ", ")
+		return findings, fmt.Errorf("ad: no resources discovered on %s (DNS, DHCP, and AD User queries all returned empty results)", connectedNames)
 	}
 	return findings, nil
 }
@@ -484,6 +500,7 @@ func scanOneDC(ctx context.Context, host, username, password string, eventLogWin
 		staticIPKeys:    make(map[string]struct{}),
 	}
 	result.computerName = computerName
+	result.inputHost = host
 
 	// DNS — error isolated
 	dnsResult, err := collectDNS(ctx, client)

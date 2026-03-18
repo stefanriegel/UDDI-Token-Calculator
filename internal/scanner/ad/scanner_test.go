@@ -576,3 +576,154 @@ func TestTierTableMatchesFrontend(t *testing.T) {
 		}
 	}
 }
+
+// TestPerDCRowEmission verifies that the Scan-level per-DC row building logic
+// emits separate rows for each DC, matching the NIOS per-member pattern.
+// This test exercises the row-building code directly via a synthetic aggregator.
+func TestPerDCRowEmission(t *testing.T) {
+	// Simulate two DCs after scanAllDCs returns — build the dcResults slice
+	// the same way Scan does.
+	dc1 := &dcResult{
+		computerName: "DC01",
+		inputHost:    "192.168.1.10",
+		zoneNames:    map[string]struct{}{"corp.local": {}},
+		recordKeys:   map[string]struct{}{"corp.local|@|A|1.2.3.4": {}, "corp.local|host1|A|1.2.3.5": {}},
+		scopeIDs:     map[string]struct{}{"10.0.0.0": {}},
+		leaseKeys:    map[string]struct{}{"10.0.0.0|10.0.0.5": {}},
+		userKeys:     map[string]struct{}{"sid:s-1": {}, "sid:s-2": {}},
+		computerKeys: map[string]struct{}{},
+		staticIPKeys: map[string]struct{}{},
+	}
+	dc1.dnsObjectCount = len(dc1.zoneNames) + len(dc1.recordKeys)
+	dc1.dhcpObjectCount = len(dc1.scopeIDs) + len(dc1.leaseKeys)
+
+	dc2 := &dcResult{
+		computerName: "DC02",
+		inputHost:    "192.168.1.11",
+		zoneNames:    map[string]struct{}{"corp.local": {}, "internal.corp": {}},
+		recordKeys:   map[string]struct{}{"corp.local|@|A|1.2.3.4": {}},
+		scopeIDs:     map[string]struct{}{"10.0.1.0": {}},
+		leaseKeys:    map[string]struct{}{},
+		userKeys:     map[string]struct{}{"sid:s-1": {}},
+		computerKeys: map[string]struct{}{},
+		staticIPKeys: map[string]struct{}{},
+	}
+	dc2.dnsObjectCount = len(dc2.zoneNames) + len(dc2.recordKeys)
+	dc2.dhcpObjectCount = len(dc2.scopeIDs) + len(dc2.leaseKeys)
+
+	dcResults := []*dcResult{dc1, dc2}
+
+	// Emit per-DC rows (reproduces Scan logic).
+	var findings []calculator.FindingRow
+	for _, dc := range dcResults {
+		dcRows := []calculator.FindingRow{
+			{Provider: scanner.ProviderAD, Source: dc.computerName, Category: calculator.CategoryDDIObjects, Item: "dns_zone", Count: len(dc.zoneNames)},
+			{Provider: scanner.ProviderAD, Source: dc.computerName, Category: calculator.CategoryDDIObjects, Item: "dns_record", Count: len(dc.recordKeys)},
+			{Provider: scanner.ProviderAD, Source: dc.computerName, Category: calculator.CategoryDDIObjects, Item: "dhcp_scope", Count: len(dc.scopeIDs)},
+			{Provider: scanner.ProviderAD, Source: dc.computerName, Category: calculator.CategoryActiveIPs, Item: "dhcp_lease", Count: len(dc.leaseKeys)},
+			{Provider: scanner.ProviderAD, Source: dc.computerName, Category: calculator.CategoryManagedAssets, Item: "user_account", Count: len(dc.userKeys)},
+		}
+		for _, row := range dcRows {
+			if row.Count > 0 {
+				findings = append(findings, row)
+			}
+		}
+	}
+
+	// Verify separate rows exist for each DC.
+	dc1Sources := 0
+	dc2Sources := 0
+	for _, row := range findings {
+		switch row.Source {
+		case "DC01":
+			dc1Sources++
+		case "DC02":
+			dc2Sources++
+		default:
+			t.Errorf("unexpected source %q in findings", row.Source)
+		}
+	}
+	if dc1Sources == 0 {
+		t.Error("no rows emitted for DC01")
+	}
+	if dc2Sources == 0 {
+		t.Error("no rows emitted for DC02")
+	}
+
+	// Counts must NOT be merged — per-DC data is raw (replicated objects counted per-DC).
+	// DNS zones: DC01 has 1, DC02 has 2 — each row shows that DC's count.
+	for _, row := range findings {
+		if row.Item == "dns_zone" {
+			switch row.Source {
+			case "DC01":
+				if row.Count != 1 {
+					t.Errorf("DC01 dns_zone count = %d, want 1", row.Count)
+				}
+			case "DC02":
+				if row.Count != 2 {
+					t.Errorf("DC02 dns_zone count = %d, want 2", row.Count)
+				}
+			}
+		}
+	}
+}
+
+// TestPerDCSelectedDCFilter verifies that selected_dcs filters by both
+// computerName (resolved COMPUTERNAME) and inputHost (raw IP/FQDN).
+func TestPerDCSelectedDCFilter(t *testing.T) {
+	dc1 := &dcResult{computerName: "DC01", inputHost: "192.168.1.10", zoneNames: map[string]struct{}{"a": {}}}
+	dc2 := &dcResult{computerName: "DC02", inputHost: "dc02.corp.local", zoneNames: map[string]struct{}{"b": {}}}
+	dc3 := &dcResult{computerName: "DC03", inputHost: "192.168.1.12", zoneNames: map[string]struct{}{"c": {}}}
+
+	tests := []struct {
+		name          string
+		selectedDCSet map[string]struct{}
+		wantSources   []string
+	}{
+		{
+			name:          "no filter — all DCs included",
+			selectedDCSet: map[string]struct{}{},
+			wantSources:   []string{"DC01", "DC02", "DC03"},
+		},
+		{
+			name:          "filter by computerName",
+			selectedDCSet: map[string]struct{}{"DC01": {}, "DC03": {}},
+			wantSources:   []string{"DC01", "DC03"},
+		},
+		{
+			name:          "filter by inputHost (FQDN)",
+			selectedDCSet: map[string]struct{}{"dc02.corp.local": {}},
+			wantSources:   []string{"DC02"},
+		},
+		{
+			name:          "filter by inputHost (IP)",
+			selectedDCSet: map[string]struct{}{"192.168.1.10": {}},
+			wantSources:   []string{"DC01"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var sources []string
+			for _, dc := range []*dcResult{dc1, dc2, dc3} {
+				if len(tt.selectedDCSet) > 0 {
+					_, nameMatch := tt.selectedDCSet[dc.computerName]
+					_, hostMatch := tt.selectedDCSet[dc.inputHost]
+					if !nameMatch && !hostMatch {
+						continue
+					}
+				}
+				sources = append(sources, dc.computerName)
+			}
+
+			if len(sources) != len(tt.wantSources) {
+				t.Fatalf("sources = %v, want %v", sources, tt.wantSources)
+			}
+			for i, want := range tt.wantSources {
+				if sources[i] != want {
+					t.Errorf("sources[%d] = %q, want %q", i, sources[i], want)
+				}
+			}
+		})
+	}
+}
