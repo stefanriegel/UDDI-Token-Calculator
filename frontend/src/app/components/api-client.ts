@@ -67,11 +67,12 @@ export async function validateCredentials(
   provider: string,
   authMethod: string,
   credentials: Record<string, string>,
+  forestIndex?: number,
 ): Promise<ValidateResponse> {
   const res = await fetch(apiUrl(`/providers/${provider}/validate`), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ authMethod, credentials }),
+    body: JSON.stringify({ authMethod, credentials, ...(forestIndex !== undefined && forestIndex > 0 ? { forestIndex } : {}) }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));

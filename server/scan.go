@@ -524,6 +524,19 @@ func toOrchestratorProviders(specs []ScanProviderSpec) []orchestrator.ScanProvid
 			CheckpointPath: s.CheckpointPath,
 		}
 
+		// For AD provider: if the frontend sent per-forest subscriptions, apply
+		// forest 0 subscriptions to the primary request. Additional forests are
+		// expanded by the orchestrator using sess.ADForests — but we need to
+		// carry their per-forest subscriptions through via ADForestSubscriptions.
+		// For the primary request, use ADForestSubscriptions[0] if present.
+		if s.Provider == "ad" && len(s.ADForestSubscriptions) > 0 {
+			for _, fs := range s.ADForestSubscriptions {
+				if fs.ForestIndex == 0 {
+					req.Subscriptions = fs.Subscriptions
+				}
+			}
+		}
+
 		// For NIOS provider: dispatch based on Mode field.
 		if s.Provider == "nios" {
 			if s.Mode == "wapi" {

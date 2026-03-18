@@ -39,6 +39,17 @@ type ScanProviderSpec struct {
 	RequestTimeout int `json:"requestTimeout,omitempty"`
 	// CheckpointPath is the file path for checkpoint persistence. Empty means no checkpointing.
 	CheckpointPath string `json:"checkpointPath,omitempty"`
+	// ADForestSubscriptions carries per-forest selected DC lists for multi-forest AD scans.
+	// Index 0 corresponds to the primary forest (sess.AD); index 1+ map to sess.ADForests.
+	// When nil/empty, the primary forest subscriptions field is used as normal.
+	ADForestSubscriptions []ADForestScanSpec `json:"adForestSubscriptions,omitempty"`
+}
+
+// ADForestScanSpec carries the selected DCs for one AD forest in a multi-forest scan.
+type ADForestScanSpec struct {
+	// ForestIndex is 0 for the primary forest, 1+ for additional forests.
+	ForestIndex   int      `json:"forestIndex"`
+	Subscriptions []string `json:"subscriptions"`
 }
 
 // ScanStartResponse is returned immediately by POST /api/v1/scan.
@@ -73,6 +84,10 @@ type ProviderErrorResponse struct {
 type ValidateRequest struct {
 	AuthMethod  string            `json:"authMethod"`
 	Credentials map[string]string `json:"credentials"`
+	// ForestIndex is used only for the "ad" provider. 0 = primary forest (sess.AD),
+	// 1+ = additional forests appended to sess.ADForests. The frontend sends this
+	// when the user validates a second/third AD forest with different credentials.
+	ForestIndex int `json:"forestIndex,omitempty"`
 }
 
 // SubscriptionItem is one entry in the subscriptions array returned by validate.

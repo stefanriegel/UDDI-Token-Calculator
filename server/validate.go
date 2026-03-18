@@ -198,7 +198,7 @@ func (h *ValidateHandler) HandleValidate(w http.ResponseWriter, r *http.Request)
 			MaxAge:   3600,
 		})
 	}
-	storeCredentials(sess, provider, req.AuthMethod, merged)
+	storeCredentials(sess, provider, req.AuthMethod, merged, req.ForestIndex)
 
 	if subs == nil {
 		subs = []SubscriptionItem{}
@@ -212,7 +212,9 @@ func (h *ValidateHandler) HandleValidate(w http.ResponseWriter, r *http.Request)
 // storeCredentials writes the validated credentials into the session.
 // Credentials are write-once — they must never be read back out of the session
 // into any HTTP response body.
-func storeCredentials(sess *session.Session, provider, authMethod string, creds map[string]string) {
+// forestIndex is only meaningful for the "ad" provider: 0 = primary forest,
+// 1+ = additional forests stored in sess.ADForests.
+func storeCredentials(sess *session.Session, provider, authMethod string, creds map[string]string, forestIndex int) {
 	switch provider {
 	case "aws":
 		// Frontend sends "profile", backend historically read "profileName".
@@ -280,17 +282,29 @@ func storeCredentials(sess *session.Session, provider, authMethod string, creds 
 				hosts = []string{h}
 			}
 		}
-		sess.AD = &session.ADCredentials{
-			AuthMethod:         authMethod,
-			Hosts:              hosts,
-			Username:           creds["username"],
-			Password:           creds["password"],
-			Domain:             creds["domain"],
-			UseSSL:             creds["useSSL"] == "true",
-			InsecureSkipVerify: creds["insecureSkipVerify"] == "true",
-			Realm:              creds["realm"],
-			KDC:                creds["kdc"],
+		adCreds := session.ADCredentials{
+			AuthMethod:          authMethod,
+			Hosts:               hosts,
+			Username:            creds["username"],
+			Password:            creds["password"],
+			Domain:              creds["domain"],
+			UseSSL:              creds["useSSL"] == "true",
+			InsecureSkipVerify:  creds["insecureSkipVerify"] == "true",
+			Realm:               creds["realm"],
+			KDC:                 creds["kdc"],
 			EventLogWindowHours: parseEventLogWindowHours(creds["eventLogWindowHours"]),
+		}
+		if forestIndex == 0 {
+			// Primary forest — stored in sess.AD (existing behaviour).
+			sess.AD = &adCreds
+		} else {
+			// Additional forest — grow ADForests slice to accommodate the index.
+			// Index 1 → ADForests[0], index 2 → ADForests[1], etc.
+			slot := forestIndex - 1
+			for len(sess.ADForests) <= slot {
+				sess.ADForests = append(sess.ADForests, session.ADCredentials{})
+			}
+			sess.ADForests[slot] = adCreds
 		}
 	case "bluecat":
 		var configIDs []string

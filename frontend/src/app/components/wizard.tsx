@@ -283,6 +283,18 @@ export function Wizard() {
   } | null>(null);
   const [adDiscoveryDismissed, setAdDiscoveryDismissed] = useState(false);
 
+  // Additional AD forests (beyond the primary forest in credentials.microsoft).
+  // Each entry is a separate forest with its own credential set and validation state.
+  type ADForestEntry = {
+    id: string; // stable local ID (e.g. "forest-1")
+    authMethod: string;
+    credentials: Record<string, string>;
+    status: 'idle' | 'validating' | 'valid' | 'error';
+    error: string;
+    subscriptions: { id: string; name: string; selected: boolean }[];
+  };
+  const [adForests, setAdForests] = useState<ADForestEntry[]>([]);
+
   // Use live metrics when available from real scan, fall back to mock data in demo mode
   const effectiveNiosMetrics = niosServerMetrics.length > 0 ? niosServerMetrics : MOCK_NIOS_SERVER_METRICS;
 
@@ -320,12 +332,16 @@ export function Wizard() {
     switch (currentStep) {
       case 'providers':
         return selectedProviders.length > 0;
-      case 'credentials':
-        return selectedProviders.every((p) => credentialStatus[p] === 'valid');
+      case 'credentials': {
+        const primaryValid = selectedProviders.every((p) => credentialStatus[p] === 'valid');
+        // All additional AD forests must also be validated (or removed) before proceeding.
+        const forestsValid = adForests.every((f) => f.status === 'valid');
+        return primaryValid && forestsValid;
+      }
       case 'sources':
         return selectedProviders.some((p) =>
           getEffectiveSelectedCount(p) > 0
-        );
+        ) || adForests.some((f) => f.subscriptions.some((s) => s.selected));
       case 'scanning':
         return scanProgress >= 100;
       default:
@@ -377,6 +393,7 @@ export function Wizard() {
     setNiosServerMetrics([]);
     setAdDiscoveryResult(null);
     setAdDiscoveryDismissed(false);
+    setAdForests([]);
     setFindingsProviderFilter(new Set());
     setFindingsCategoryFilter(new Set());
     setFindingsSort(null);
@@ -561,6 +578,34 @@ export function Wizard() {
     }
   }, [backend.isDemo, selectedAuthMethod, credentials, niosUploadedFile, niosMode]);
 
+  // Validate an additional AD forest by its local array index (0-based in adForests,
+  // mapped to forestIndex=index+1 for the backend).
+  const validateAdForest = useCallback(async (forestLocalIdx: number) => {
+    setAdForests((prev) => prev.map((f, i) =>
+      i === forestLocalIdx ? { ...f, status: 'validating', error: '' } : f,
+    ));
+    const forest = adForests[forestLocalIdx];
+    if (!forest) return;
+    try {
+      const result = await apiValidate('ad', forest.authMethod, forest.credentials, forestLocalIdx + 1);
+      if (result.valid) {
+        setAdForests((prev) => prev.map((f, i) =>
+          i === forestLocalIdx
+            ? { ...f, status: 'valid', error: '', subscriptions: result.subscriptions.map((s) => ({ ...s, selected: true })) }
+            : f,
+        ));
+      } else {
+        setAdForests((prev) => prev.map((f, i) =>
+          i === forestLocalIdx ? { ...f, status: 'error', error: result.error || 'Validation failed' } : f,
+        ));
+      }
+    } catch (err: any) {
+      setAdForests((prev) => prev.map((f, i) =>
+        i === forestLocalIdx ? { ...f, status: 'error', error: err?.message || 'Connection error' } : f,
+      ));
+    }
+  }, [adForests]);
+
   // Auto-parse NIOS backup when file is selected/dropped (backup mode only)
   useEffect(() => {
     if (niosMode === 'backup' && niosUploadedFile && credentialStatus.nios !== 'validating' && credentialStatus.nios !== 'valid') {
@@ -656,6 +701,7 @@ export function Wizard() {
               selectedMembers?: string[];
               mode?: 'backup' | 'wapi';
               maxWorkers?: number;
+              adForestSubscriptions?: { forestIndex: number; subscriptions: string[] }[];
             } = {
               provider: backendId,
               subscriptions: Array.from(getEffectiveSelected(provId)),
@@ -665,6 +711,17 @@ export function Wizard() {
             const mw = advancedOptions[provId]?.maxWorkers;
             if (mw && mw > 0) {
               entry.maxWorkers = mw;
+            }
+            // AD multi-forest: attach per-forest subscriptions so backend can route correctly
+            if (provId === 'microsoft' && adForests.length > 0) {
+              const forestSubs: { forestIndex: number; subscriptions: string[] }[] = [
+                { forestIndex: 0, subscriptions: Array.from(getEffectiveSelected(provId)) },
+                ...adForests.map((f, i) => ({
+                  forestIndex: i + 1,
+                  subscriptions: f.subscriptions.filter((s) => s.selected).map((s) => s.id),
+                })),
+              ];
+              entry.adForestSubscriptions = forestSubs;
             }
             // NIOS-specific fields
             if (provId === 'nios') {
@@ -1947,6 +2004,117 @@ export function Wizard() {
                           </div>
                         )}
                       </div>
+
+                      {/* Add Forest — shown when microsoft primary is validated */}
+                      {provId === 'microsoft' && status === 'valid' && (
+                        <div className="mt-3">
+                          {/* Existing additional forests */}
+                          {adForests.map((forest, forestIdx) => {
+                            const microsoftProvider = PROVIDERS.find((p) => p.id === 'microsoft')!;
+                            const forestAuthMethod = forest.authMethod || 'ntlm';
+                            const forestAuthDef = microsoftProvider.authMethods.find((m) => m.id === forestAuthMethod) || microsoftProvider.authMethods[1];
+                            return (
+                              <div key={forest.id} className="mb-3 p-3 bg-[var(--surface-2)] rounded-xl border border-[var(--border)]">
+                                <div className="flex items-center justify-between mb-2">
+                                  <span className="text-[12px] font-semibold text-[var(--foreground)]">
+                                    Forest {forestIdx + 2}
+                                    {forest.credentials.servers ? ` — ${forest.credentials.servers.split(',')[0].trim()}` : ''}
+                                  </span>
+                                  <div className="flex items-center gap-2">
+                                    {forest.status === 'valid' && (
+                                      <span className="text-[10px] text-green-600 font-medium flex items-center gap-1">
+                                        <CheckCircle2 className="w-3 h-3" /> Valid
+                                      </span>
+                                    )}
+                                    {forest.status === 'error' && (
+                                      <span className="text-[10px] text-red-500 font-medium flex items-center gap-1">
+                                        <AlertCircle className="w-3 h-3" /> Error
+                                      </span>
+                                    )}
+                                    <button
+                                      type="button"
+                                      onClick={() => setAdForests((prev) => prev.filter((_, i) => i !== forestIdx))}
+                                      className="text-[var(--muted-foreground)] hover:text-red-500 transition-colors"
+                                      aria-label="Remove forest"
+                                    >
+                                      <X className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                </div>
+                                {/* Auth method selector for this forest */}
+                                <div className="mb-2">
+                                  <label className="block text-[11px] text-[var(--muted-foreground)] mb-1">Auth Method</label>
+                                  <select
+                                    value={forestAuthMethod}
+                                    onChange={(e) => setAdForests((prev) => prev.map((f, i) =>
+                                      i === forestIdx ? { ...f, authMethod: e.target.value, credentials: {}, status: 'idle', error: '', subscriptions: [] } : f
+                                    ))}
+                                    className="w-full px-2 py-1.5 bg-[var(--input-background)] border border-[var(--border)] rounded-lg text-[12px] focus:outline-none"
+                                  >
+                                    {microsoftProvider.authMethods
+                                      .filter((m) => !m.windowsOnly)
+                                      .map((m) => (
+                                        <option key={m.id} value={m.id}>{m.name}</option>
+                                      ))}
+                                  </select>
+                                </div>
+                                {/* Credential fields */}
+                                {forestAuthDef.fields.map((field) => (
+                                  <div key={field.key} className="mb-2">
+                                    <label className="block text-[11px] text-[var(--muted-foreground)] mb-1">{field.label}</label>
+                                    {field.serverList ? (
+                                      <ServerListInput
+                                        servers={(forest.credentials[field.key] || '').split(',').map((s: string) => s.trim()).filter(Boolean)}
+                                        onChange={(list) => setAdForests((prev) => prev.map((f, i) =>
+                                          i === forestIdx ? { ...f, credentials: { ...f.credentials, [field.key]: list.join(', ') }, status: 'idle' } : f
+                                        ))}
+                                        placeholder={field.placeholder}
+                                      />
+                                    ) : (
+                                      <input
+                                        type={field.secret ? 'password' : 'text'}
+                                        placeholder={field.placeholder}
+                                        value={forest.credentials[field.key] || ''}
+                                        onChange={(e) => setAdForests((prev) => prev.map((f, i) =>
+                                          i === forestIdx ? { ...f, credentials: { ...f.credentials, [field.key]: e.target.value }, status: 'idle' } : f
+                                        ))}
+                                        className="w-full px-3 py-2 bg-[var(--input-background)] border border-[var(--border)] rounded-lg text-[12px] focus:outline-none focus:ring-2 focus:ring-[var(--infoblox-blue)]/30 focus:border-[var(--infoblox-blue)]"
+                                      />
+                                    )}
+                                  </div>
+                                ))}
+                                {forest.error && (
+                                  <p className="text-[11px] text-red-500 mb-2">{forest.error}</p>
+                                )}
+                                <button
+                                  type="button"
+                                  disabled={forest.status === 'validating'}
+                                  onClick={() => validateAdForest(forestIdx)}
+                                  className="flex items-center gap-1.5 px-3 py-1.5 bg-[var(--infoblox-blue)] text-white text-[12px] font-medium rounded-lg hover:bg-[var(--infoblox-blue)]/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                                >
+                                  {forest.status === 'validating' ? (
+                                    <><Loader2 className="w-3 h-3 animate-spin" /> Validating…</>
+                                  ) : (
+                                    'Validate Forest'
+                                  )}
+                                </button>
+                              </div>
+                            );
+                          })}
+                          {/* Add Forest button */}
+                          <button
+                            type="button"
+                            onClick={() => setAdForests((prev) => [
+                              ...prev,
+                              { id: `forest-${Date.now()}`, authMethod: 'ntlm', credentials: {}, status: 'idle', error: '', subscriptions: [] },
+                            ])}
+                            className="flex items-center gap-1.5 px-3 py-1.5 border border-dashed border-[var(--border)] text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:border-[var(--infoblox-blue)] text-[12px] rounded-lg transition-colors"
+                          >
+                            <Plus className="w-3.5 h-3.5" />
+                            Add Forest (different credentials)
+                          </button>
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -2246,11 +2414,46 @@ export function Wizard() {
                     </div>
                   );
                 })}
+
+                {/* Additional AD Forests — shown in sources step when forests are validated */}
+                {selectedProviders.includes('microsoft') && adForests.filter((f) => f.status === 'valid').map((forest, forestIdx) => (
+                  <div key={forest.id} className="rounded-xl border border-[var(--border)] bg-[var(--surface)] overflow-hidden">
+                    <div className="px-4 py-3 border-b border-[var(--border)] bg-[var(--surface-2)] flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <ProviderIconEl id="microsoft" className="w-4 h-4" />
+                        <span className="text-[13px] font-semibold">
+                          MS DHCP/DNS — Forest {forestIdx + 2}
+                          {forest.credentials.servers ? ` (${forest.credentials.servers.split(',')[0].trim()})` : ''}
+                        </span>
+                      </div>
+                      <span className="text-[11px] text-[var(--muted-foreground)]">
+                        {forest.subscriptions.filter((s) => s.selected).length} selected
+                      </span>
+                    </div>
+                    <div className="divide-y divide-[var(--border)] max-h-64 overflow-y-auto">
+                      {forest.subscriptions.map((sub) => (
+                        <button
+                          key={sub.id}
+                          type="button"
+                          onClick={() => setAdForests((prev) => prev.map((f, i) =>
+                            i === forestIdx
+                              ? { ...f, subscriptions: f.subscriptions.map((s) => s.id === sub.id ? { ...s, selected: !s.selected } : s) }
+                              : f
+                          ))}
+                          className={`w-full flex items-center gap-3 px-4 py-2.5 hover:bg-[var(--surface-2)] transition-colors text-left ${sub.selected ? 'bg-[var(--infoblox-blue)]/5' : ''}`}
+                        >
+                          <div className={`w-4 h-4 rounded border-2 flex-shrink-0 flex items-center justify-center ${sub.selected ? 'bg-[var(--infoblox-blue)] border-[var(--infoblox-blue)]' : 'border-[var(--border)]'}`}>
+                            {sub.selected && <Check className="w-2.5 h-2.5 text-white" />}
+                          </div>
+                          <span className="text-[13px] truncate">{sub.name}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           )}
-
-          {/* Step 4: Scanning */}
           {currentStep === 'scanning' && (
             <div className="flex flex-col items-center justify-center py-12">
               <div className="w-full max-w-md">

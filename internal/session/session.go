@@ -168,6 +168,10 @@ type Session struct {
 	Azure       *AzureCredentials
 	GCP         *GCPCredentials
 	AD          *ADCredentials
+	// ADForests holds credentials for additional AD forests (index 1, 2, ...).
+	// ADForests[0] is never used — the primary forest is always in AD.
+	// When non-empty the orchestrator fans out across AD + each ADForest entry.
+	ADForests   []ADCredentials
 	Bluecat     *BluecatCredentials
 	EfficientIP *EfficientIPCredentials
 	NiosWAPI    *NiosWAPICredentials
@@ -256,6 +260,7 @@ func (s *Session) ZeroCreds() {
 	s.Azure = nil
 	s.GCP = nil
 	s.AD = nil
+	s.ADForests = nil
 	s.Bluecat = nil
 	s.EfficientIP = nil
 	s.NiosWAPI = nil
