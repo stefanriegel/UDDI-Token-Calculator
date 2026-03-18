@@ -6,6 +6,8 @@
 
 Estimates Infoblox Universal DDI management tokens by scanning your existing infrastructure — cloud providers, Active Directory, NIOS Grids, and third-party DDI systems. Single self-contained binary with an embedded web UI.
 
+![UDDI Token Calculator](docs/images/screenshot.png)
+
 ## Installation
 
 ### Windows
