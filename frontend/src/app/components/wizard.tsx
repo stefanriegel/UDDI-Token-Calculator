@@ -810,11 +810,15 @@ export function Wizard() {
 
   // Full-environment server token count (unfiltered by migration maps) for SKU widget
   const totalServerTokens = useMemo(() => {
-    const niosTokens = effectiveNiosMetrics.reduce((s, m) =>
-      s + calcServerTokenTier(m.qps, m.lps, m.objectCount, 'nios-x').serverTokens, 0);
-    const adTokens = effectiveADMetrics.reduce((s, m) => s + m.serverTokens, 0);
+    const niosTokens = selectedProviders.includes('nios')
+      ? effectiveNiosMetrics.reduce((s, m) =>
+          s + calcServerTokenTier(m.qps, m.lps, m.objectCount, 'nios-x').serverTokens, 0)
+      : 0;
+    const adTokens = selectedProviders.includes('microsoft')
+      ? effectiveADMetrics.reduce((s, m) => s + m.serverTokens, 0)
+      : 0;
     return niosTokens + adTokens;
-  }, [effectiveNiosMetrics, effectiveADMetrics]);
+  }, [effectiveNiosMetrics, effectiveADMetrics, selectedProviders]);
 
   const hasServerMetrics = (selectedProviders.includes('nios') && effectiveNiosMetrics.length > 0)
     || (selectedProviders.includes('microsoft') && effectiveADMetrics.length > 0);
