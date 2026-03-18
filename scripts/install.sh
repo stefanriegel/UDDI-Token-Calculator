@@ -4,6 +4,37 @@ set -e
 REPO="stefanriegel/UDDI-Token-Calculator"
 BINARY="uddi-token-calculator"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
+CHANNEL="stable"
+
+# Parse flags
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --channel)
+      if [ -z "$2" ]; then
+        echo "Error: --channel requires a value (stable or dev)." >&2
+        exit 1
+      fi
+      case "$2" in
+        stable|dev) CHANNEL="$2" ;;
+        *) echo "Error: unknown channel '$2'. Use 'stable' or 'dev'." >&2; exit 1 ;;
+      esac
+      shift 2
+      ;;
+    --help)
+      echo "Usage: install.sh [--channel stable|dev]"
+      echo ""
+      echo "Options:"
+      echo "  --channel stable   Install the latest stable release (default)"
+      echo "  --channel dev      Install the latest dev pre-release"
+      echo "  --help             Show this help message"
+      exit 0
+      ;;
+    *)
+      echo "Error: unknown option '$1'. Use --help for usage." >&2
+      exit 1
+      ;;
+  esac
+done
 
 # Detect OS and architecture
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')
@@ -22,16 +53,35 @@ esac
 
 ASSET="${BINARY}_${OS}_${ARCH}"
 
-# Get latest release tag via GitHub API
-TAG=$(curl -s "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name"' | sed 's/.*"tag_name": *"//;s/".*//')
+# Get release tag via GitHub API
+if [ "$CHANNEL" = "stable" ]; then
+  TAG=$(curl -s "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name"' | sed 's/.*"tag_name": *"//;s/".*//')
+else
+  # Dev channel: find first pre-release from list endpoint
+  TAG=$(curl -s "https://api.github.com/repos/${REPO}/releases?per_page=20" | \
+    python3 -c "
+import json, sys
+for r in json.load(sys.stdin):
+    if r.get('prerelease'):
+        print(r['tag_name'])
+        break
+" 2>/dev/null)
+  if [ -z "$TAG" ]; then
+    # Fallback: find first prerelease tag via grep/sed
+    TAG=$(curl -s "https://api.github.com/repos/${REPO}/releases?per_page=20" | \
+      grep -B5 '"prerelease": true' | grep '"tag_name"' | head -1 | \
+      sed 's/.*"tag_name": *"//;s/".*//')
+  fi
+fi
+
 if [ -z "$TAG" ]; then
-  echo "Failed to determine latest release"
+  echo "Failed to determine latest ${CHANNEL} release"
   exit 1
 fi
 
 URL="https://github.com/${REPO}/releases/download/${TAG}/${ASSET}"
 
-echo "Downloading ${BINARY} ${TAG} for ${OS}/${ARCH}..."
+echo "Downloading ${BINARY} ${TAG} (${CHANNEL}) for ${OS}/${ARCH}..."
 TMPFILE=$(mktemp)
 HTTP_CODE=$(curl -sL -o "$TMPFILE" -w "%{http_code}" "$URL")
 
@@ -60,7 +110,7 @@ else
   sudo mv "$TMPFILE" "${INSTALL_DIR}/${BINARY}"
 fi
 
-echo "Installed ${BINARY} ${TAG} to ${INSTALL_DIR}/${BINARY}"
+echo "Installed ${BINARY} ${TAG} (${CHANNEL}) to ${INSTALL_DIR}/${BINARY}"
 
 # Check if install dir is in PATH
 case ":$PATH:" in

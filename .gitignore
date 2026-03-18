@@ -23,18 +23,23 @@ frontend/node_modules/
 # OS
 .DS_Store
 
-# GSD agent workspace — internal planning, never shipped
+# GSD agent workspace — local only, never committed
 .gsd/
 
+# Editor / IDE
 *.swp
 *.swo
 *~
 .idea/
 .vscode/
 *.code-workspace
+
+# Environment
 .env
 .env.*
 !.env.example
+
+# General build artifacts
 node_modules/
 .next/
 build/
@@ -48,20 +53,4 @@ vendor/
 coverage/
 .cache/
 tmp/
-
-# ── GSD baseline (auto-generated) ──
-.gsd/activity/
-.gsd/runtime/
-.gsd/worktrees/
-.gsd/auto.lock
-.gsd/metrics.json
-.gsd/completed-units.json
-.gsd/STATE.md
-
-# ── GSD baseline (auto-generated) ──
-.gsd/forensics/
-.gsd/parallel/
-.gsd/gsd.db
-.gsd/DISCUSSION-MANIFEST.json
-.gsd/milestones/**/*-CONTINUE.md
-.gsd/milestones/**/continue.md
+Thumbs.db

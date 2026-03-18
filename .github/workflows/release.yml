@@ -31,11 +31,11 @@ jobs:
         working-directory: frontend
         run: npx vitest run
 
-  # Job 2: GoReleaser release — only on semver tags (v*.*.*)
-  release:
-    name: Release
+  # Job 2a: GoReleaser stable release — only on semver tags without -dev.
+  release-stable:
+    name: Release (Stable)
     needs: test
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-dev.')
     runs-on: [self-hosted, linux, x64, gsd-ubuntu]
     timeout-minutes: 30
     permissions:
@@ -73,4 +73,47 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          GPG_FINGERPRINT: ${{ steps.import_gpg.outputs.fingerprint }}
+
+  # Job 2b: GoReleaser dev release — only on semver tags with -dev.
+  release-dev:
+    name: Release (Dev)
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/v') && contains(github.ref, '-dev.')
+    runs-on: [self-hosted, linux, x64, gsd-ubuntu]
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Build frontend
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile && pnpm build
+
+      - name: Prepare release notes
+        id: notes
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          NOTES_FILE=".github/release-notes/${TAG}.md"
+          if [ -f "$NOTES_FILE" ]; then
+            echo "file=${NOTES_FILE}" >> "$GITHUB_OUTPUT"
+          else
+            echo "file=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Import GPG key
+        uses: crazy-max/ghaction-import-gpg@v7
+        id: import_gpg
+        with:
+          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
+
+      - uses: goreleaser/goreleaser-action@v7
+        with:
+          version: "~> v2"
+          args: release --clean --config .goreleaser-dev.yaml ${{ steps.notes.outputs.file && format('--release-notes {0}', steps.notes.outputs.file) || '' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GPG_FINGERPRINT: ${{ steps.import_gpg.outputs.fingerprint }}
