@@ -808,6 +808,17 @@ export function Wizard() {
     return totals;
   }, [findings]);
 
+  // Full-environment server token count (unfiltered by migration maps) for SKU widget
+  const totalServerTokens = useMemo(() => {
+    const niosTokens = effectiveNiosMetrics.reduce((s, m) =>
+      s + calcServerTokenTier(m.qps, m.lps, m.objectCount, 'nios-x').serverTokens, 0);
+    const adTokens = effectiveADMetrics.reduce((s, m) => s + m.serverTokens, 0);
+    return niosTokens + adTokens;
+  }, [effectiveNiosMetrics, effectiveADMetrics]);
+
+  const hasServerMetrics = (selectedProviders.includes('nios') && effectiveNiosMetrics.length > 0)
+    || (selectedProviders.includes('microsoft') && effectiveADMetrics.length > 0);
+
   // Filtered + sorted findings for the table
   const filteredSortedFindings = useMemo(() => {
     let rows = findings;
@@ -2628,6 +2639,33 @@ export function Wizard() {
                     );
                   })()}
                 </div>
+
+              {/* Recommended SKUs */}
+              <div className="mt-4 pt-4 border-t border-[var(--border)]">
+                <div className="text-[12px] font-semibold text-[var(--muted-foreground)] mb-2 uppercase tracking-wider">
+                  Recommended SKUs
+                </div>
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between text-[13px]">
+                    <span className="font-mono text-[11px] bg-orange-50 text-orange-800 px-2 py-0.5 rounded border border-orange-200">
+                      IB-TOKENS-UDDI-MGMT-1000
+                    </span>
+                    <span className="font-semibold text-[var(--infoblox-orange)]">
+                      × {Math.ceil(totalTokens / 1000).toLocaleString()} pack{Math.ceil(totalTokens / 1000) !== 1 ? 's' : ''}
+                    </span>
+                  </div>
+                  {hasServerMetrics && (
+                    <div className="flex items-center justify-between text-[13px]">
+                      <span className="font-mono text-[11px] bg-blue-50 text-blue-800 px-2 py-0.5 rounded border border-blue-200">
+                        IB-TOKENS-UDDI-SERV-500
+                      </span>
+                      <span className="font-semibold text-blue-700">
+                        × {Math.ceil(totalServerTokens / 500).toLocaleString()} pack{Math.ceil(totalServerTokens / 500) !== 1 ? 's' : ''}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
               </div>
 
               {/* Section jump navigation — only for NIOS scans */}
