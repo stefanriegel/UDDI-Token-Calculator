@@ -6,30 +6,16 @@
 
 Estimates Infoblox Universal DDI management tokens by scanning your existing infrastructure — cloud providers, Active Directory, NIOS Grids, and third-party DDI systems. Single self-contained binary with an embedded web UI.
 
-## Highlights
-
-- 🔍 **8 providers** — AWS, Azure, GCP, Active Directory, NIOS Grid, NIOS WAPI, Bluecat, EfficientIP
-- 🏢 **Enterprise-scale** — Multi-account AWS, multi-subscription Azure, multi-project GCP with parallel scanning
-- 📊 **Migration planning** — NIOS-X tier recommendations, 3-scenario migration planner
-- 🔐 **9 auth methods** — Access keys, SSO, CLI profiles, service principals, device code, Kerberos, and more
-- 📁 **Excel export** — `.xlsx` with summary, per-provider breakdown, migration planner, and error traceability
-- 🛡️ **Security** — Credentials stay in-memory only, never written to disk
-
 ## Installation
 
 ### Windows
-
-<details open>
-<summary><strong>PowerShell (recommended)</strong></summary>
 
 ```powershell
 irm https://raw.githubusercontent.com/stefanriegel/UDDI-Token-Calculator/main/scripts/install.ps1 | iex
 ```
 
-</details>
-
 <details>
-<summary><strong>Manual download</strong></summary>
+<summary>Manual download</summary>
 
 1. Download `uddi-token-calculator_windows_amd64.exe` from the [latest release](https://github.com/stefanriegel/UDDI-Token-Calculator/releases/latest)
 2. Unblock the file: right-click → Properties → check **Unblock** → OK
@@ -37,29 +23,23 @@ irm https://raw.githubusercontent.com/stefanriegel/UDDI-Token-Calculator/main/sc
 
 </details>
 
-### macOS
-
-```bash
-curl -sL https://raw.githubusercontent.com/stefanriegel/UDDI-Token-Calculator/main/scripts/install.sh | sh
-```
-
-<details>
-<summary><strong>Homebrew (alternative)</strong></summary>
+### macOS / Linux
 
 ```bash
 brew tap stefanriegel/tap
 brew install uddi-token-calculator
 ```
 
-> **Note:** The shell script installer supports auto-update. Homebrew installs do not receive auto-updates.
-
-</details>
-
-### Linux
+<details>
+<summary>Shell script (alternative)</summary>
 
 ```bash
 curl -sL https://raw.githubusercontent.com/stefanriegel/UDDI-Token-Calculator/main/scripts/install.sh | sh
 ```
+
+</details>
+
+Both methods support auto-update — the app checks for new versions on launch and updates in-place.
 
 ## Usage
 
