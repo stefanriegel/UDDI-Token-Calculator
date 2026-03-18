@@ -530,11 +530,13 @@ export function Wizard() {
         if (result.valid) {
           setCredentialStatus((prev) => ({ ...prev, [providerId]: 'valid' }));
 
-          // Auto-select subscriptions for org-discovered accounts and Azure multi-subscription
+          // Auto-select subscriptions for org-discovered accounts, Azure multi-subscription,
+          // and AD — DCs are explicitly added by the user so all should be scanned by default.
           const autoSelect =
             (providerId === 'aws' && authMethod === 'org') ||
             (providerId === 'gcp' && authMethod === 'org') ||
-            providerId === 'azure';
+            providerId === 'azure' ||
+            providerId === 'microsoft';
 
           setSubscriptions((prev) => ({
             ...prev,
@@ -1806,18 +1808,28 @@ export function Wizard() {
                                             type="button"
                                             onClick={() => {
                                               const existing = (credentials.microsoft?.servers || '').split(',').map((s: string) => s.trim()).filter(Boolean);
-                                              if (!existing.some((s) => s.toLowerCase() === dc.hostname.toLowerCase())) {
+                                              // Prefer IP as the connection address — FQDNs from discovery
+                                              // resolve to internal IPs and may not be reachable externally.
+                                              // If the IP is already in the server list (user entered it), skip
+                                              // adding this DC entirely — it's already covered.
+                                              const connectAddr = dc.ip || dc.hostname;
+                                              const alreadyCovered =
+                                                existing.some((s) => s.toLowerCase() === connectAddr.toLowerCase()) ||
+                                                existing.some((s) => s.toLowerCase() === dc.hostname.toLowerCase()) ||
+                                                (dc.ip !== '' && existing.some((s) => s === dc.ip));
+                                              if (!alreadyCovered) {
                                                 setCredentials((prev) => ({
                                                   ...prev,
-                                                  microsoft: { ...prev.microsoft, servers: [...existing, dc.hostname].join(',') },
+                                                  microsoft: { ...prev.microsoft, servers: [...existing, connectAddr].join(',') },
                                                 }));
                                               }
-                                              // Also add to subscriptions
+                                              // Also add to subscriptions — use connectAddr as ID so
+                                              // the scanner can match it against dc.inputHost.
                                               setSubscriptions((prev) => {
                                                 const subs = prev.microsoft || [];
-                                                if (subs.some((s) => s.id.toLowerCase() === dc.hostname.toLowerCase())) return prev;
+                                                if (subs.some((s) => s.id.toLowerCase() === connectAddr.toLowerCase())) return prev;
                                                 const label = dc.ip ? `${dc.hostname} (${dc.ip})` : dc.hostname;
-                                                return { ...prev, microsoft: [...subs, { id: dc.hostname, name: label, selected: true }] };
+                                                return { ...prev, microsoft: [...subs, { id: connectAddr, name: label, selected: true }] };
                                               });
                                               setAdDiscoveryResult((prev) => prev ? {
                                                 ...prev,
@@ -1849,18 +1861,24 @@ export function Wizard() {
                                             type="button"
                                             onClick={() => {
                                               const existing = (credentials.microsoft?.servers || '').split(',').map((s2: string) => s2.trim()).filter(Boolean);
-                                              if (!existing.some((e) => e.toLowerCase() === s.hostname.toLowerCase())) {
+                                              // Prefer IP as the connection address (same as DC Add logic).
+                                              const connectAddr = s.ip || s.hostname;
+                                              const alreadyCovered =
+                                                existing.some((e) => e.toLowerCase() === connectAddr.toLowerCase()) ||
+                                                existing.some((e) => e.toLowerCase() === s.hostname.toLowerCase()) ||
+                                                (s.ip !== '' && existing.some((e) => e === s.ip));
+                                              if (!alreadyCovered) {
                                                 setCredentials((prev) => ({
                                                   ...prev,
-                                                  microsoft: { ...prev.microsoft, servers: [...existing, s.hostname].join(',') },
+                                                  microsoft: { ...prev.microsoft, servers: [...existing, connectAddr].join(',') },
                                                 }));
                                               }
-                                              // Also add to subscriptions
+                                              // Also add to subscriptions — use connectAddr as ID.
                                               setSubscriptions((prev) => {
                                                 const subs = prev.microsoft || [];
-                                                if (subs.some((sub) => sub.id.toLowerCase() === s.hostname.toLowerCase())) return prev;
+                                                if (subs.some((sub) => sub.id.toLowerCase() === connectAddr.toLowerCase())) return prev;
                                                 const label = s.ip ? `${s.hostname} (${s.ip})` : s.hostname;
-                                                return { ...prev, microsoft: [...subs, { id: s.hostname, name: label, selected: true }] };
+                                                return { ...prev, microsoft: [...subs, { id: connectAddr, name: label, selected: true }] };
                                               });
                                               setAdDiscoveryResult((prev) => prev ? {
                                                 ...prev,
@@ -1881,26 +1899,35 @@ export function Wizard() {
                                   type="button"
                                   onClick={() => {
                                     const existing = (credentials.microsoft?.servers || '').split(',').map((s: string) => s.trim()).filter(Boolean);
-                                    const toAdd = [
-                                      ...adDiscoveryResult!.domainControllers.map((d) => d.hostname),
-                                      ...adDiscoveryResult!.dhcpServers.map((d) => d.hostname),
-                                    ].filter((h) => !existing.some((e) => e.toLowerCase() === h.toLowerCase()));
-                                    setCredentials((prev) => ({
-                                      ...prev,
-                                      microsoft: { ...prev.microsoft, servers: [...existing, ...toAdd].join(',') },
-                                    }));
-                                    // Also add to subscriptions so the sources step shows them
+                                    // Build a list of {connectAddr, srv} pairs — prefer IP over hostname
+                                    // so discovered DCs are reachable even when FQDNs resolve to internal IPs.
+                                    // Skip any entry whose IP or hostname is already in the server list.
+                                    const allDiscovered = [
+                                      ...adDiscoveryResult!.domainControllers,
+                                      ...adDiscoveryResult!.dhcpServers,
+                                    ];
+                                    const toAddEntries = allDiscovered
+                                      .map((d) => ({ srv: d, connectAddr: d.ip || d.hostname }))
+                                      .filter(({ srv, connectAddr }) =>
+                                        !existing.some((e) => e.toLowerCase() === connectAddr.toLowerCase()) &&
+                                        !existing.some((e) => e.toLowerCase() === srv.hostname.toLowerCase()),
+                                      );
+                                    const newAddrs = toAddEntries.map(({ connectAddr }) => connectAddr);
+                                    if (newAddrs.length > 0) {
+                                      setCredentials((prev) => ({
+                                        ...prev,
+                                        microsoft: { ...prev.microsoft, servers: [...existing, ...newAddrs].join(',') },
+                                      }));
+                                    }
+                                    // Add to subscriptions — id = connectAddr so scanner filter matches.
                                     setSubscriptions((prev) => {
                                       const existingSubs = prev.microsoft || [];
                                       const existingIds = new Set(existingSubs.map((s) => s.id.toLowerCase()));
-                                      const newSubs = toAdd
-                                        .filter((h) => !existingIds.has(h.toLowerCase()))
-                                        .map((h) => {
-                                          const dc = adDiscoveryResult!.domainControllers.find((d) => d.hostname === h);
-                                          const dhcp = adDiscoveryResult!.dhcpServers.find((d) => d.hostname === h);
-                                          const srv = dc || dhcp;
-                                          const label = srv?.ip ? `${h} (${srv.ip})` : h;
-                                          return { id: h, name: label, selected: true };
+                                      const newSubs = toAddEntries
+                                        .filter(({ connectAddr }) => !existingIds.has(connectAddr.toLowerCase()))
+                                        .map(({ srv, connectAddr }) => {
+                                          const label = srv.ip ? `${srv.hostname} (${srv.ip})` : srv.hostname;
+                                          return { id: connectAddr, name: label, selected: true };
                                         });
                                       return { ...prev, microsoft: [...existingSubs, ...newSubs] };
                                     });
