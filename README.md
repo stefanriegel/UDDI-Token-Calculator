@@ -77,16 +77,6 @@ The binary is not code-signed. Windows SmartScreen may warn on first run — cli
 | **Bluecat** | Username / Password (v2 API with v1 fallback) | DNS views/zones/records, IPAM blocks/networks/addresses, DHCP ranges |
 | **EfficientIP** | Username / Password (Basic + native fallback) | DNS views/zones/records, IPAM sites/subnets/pools, DHCP scopes/ranges |
 
-## Token Calculation
-
-| Category | Ratio | Examples |
-|----------|-------|---------|
-| **DDI Objects** | 25 per token | DNS zones, DNS records, DHCP scopes, IP networks |
-| **Active IPs** | 13 per token | DHCP leases, static host IPs, NIC IPs |
-| **Managed Assets** | 3 per token | VMs, load balancers, Grid Members, HA pairs |
-
-The grand total is the **maximum** across all three categories.
-
 ## Building from Source
 
 <details>
