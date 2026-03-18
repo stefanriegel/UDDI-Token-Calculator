@@ -396,10 +396,12 @@ export function Wizard() {
         (creds.servers || '').split(',').map((s: string) => s.trim().toLowerCase()).filter(Boolean)
       );
       const newDCs = result.domainControllers.filter(
-        (dc) => !existingServers.has(dc.hostname.toLowerCase())
+        (dc) => !existingServers.has(dc.hostname.toLowerCase()) &&
+                !existingServers.has((dc.ip || '').toLowerCase())
       );
       const newDHCP = result.dhcpServers.filter(
-        (s) => !existingServers.has(s.hostname.toLowerCase())
+        (s) => !existingServers.has(s.hostname.toLowerCase()) &&
+               !existingServers.has((s.ip || '').toLowerCase())
       );
       if (newDCs.length > 0 || newDHCP.length > 0) {
         setAdDiscoveryResult({
@@ -1686,6 +1688,13 @@ export function Wizard() {
                                                   microsoft: { ...prev.microsoft, servers: [...existing, dc.hostname].join(',') },
                                                 }));
                                               }
+                                              // Also add to subscriptions
+                                              setSubscriptions((prev) => {
+                                                const subs = prev.microsoft || [];
+                                                if (subs.some((s) => s.id.toLowerCase() === dc.hostname.toLowerCase())) return prev;
+                                                const label = dc.ip ? `${dc.hostname} (${dc.ip})` : dc.hostname;
+                                                return { ...prev, microsoft: [...subs, { id: dc.hostname, name: label, selected: true }] };
+                                              });
                                               setAdDiscoveryResult((prev) => prev ? {
                                                 ...prev,
                                                 domainControllers: prev.domainControllers.filter((d) => d.hostname !== dc.hostname),
@@ -1722,6 +1731,13 @@ export function Wizard() {
                                                   microsoft: { ...prev.microsoft, servers: [...existing, s.hostname].join(',') },
                                                 }));
                                               }
+                                              // Also add to subscriptions
+                                              setSubscriptions((prev) => {
+                                                const subs = prev.microsoft || [];
+                                                if (subs.some((sub) => sub.id.toLowerCase() === s.hostname.toLowerCase())) return prev;
+                                                const label = s.ip ? `${s.hostname} (${s.ip})` : s.hostname;
+                                                return { ...prev, microsoft: [...subs, { id: s.hostname, name: label, selected: true }] };
+                                              });
                                               setAdDiscoveryResult((prev) => prev ? {
                                                 ...prev,
                                                 dhcpServers: prev.dhcpServers.filter((d) => d.hostname !== s.hostname),
@@ -1749,6 +1765,21 @@ export function Wizard() {
                                       ...prev,
                                       microsoft: { ...prev.microsoft, servers: [...existing, ...toAdd].join(',') },
                                     }));
+                                    // Also add to subscriptions so the sources step shows them
+                                    setSubscriptions((prev) => {
+                                      const existingSubs = prev.microsoft || [];
+                                      const existingIds = new Set(existingSubs.map((s) => s.id.toLowerCase()));
+                                      const newSubs = toAdd
+                                        .filter((h) => !existingIds.has(h.toLowerCase()))
+                                        .map((h) => {
+                                          const dc = adDiscoveryResult!.domainControllers.find((d) => d.hostname === h);
+                                          const dhcp = adDiscoveryResult!.dhcpServers.find((d) => d.hostname === h);
+                                          const srv = dc || dhcp;
+                                          const label = srv?.ip ? `${h} (${srv.ip})` : h;
+                                          return { id: h, name: label, selected: true };
+                                        });
+                                      return { ...prev, microsoft: [...existingSubs, ...newSubs] };
+                                    });
                                     setAdDiscoveryDismissed(true);
                                   }}
                                   className="w-full mt-1 py-1.5 bg-green-600 hover:bg-green-700 text-white text-[12px] font-medium rounded-lg transition-colors"
