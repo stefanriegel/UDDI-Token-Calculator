@@ -837,17 +837,40 @@ export function Wizard() {
     return totals;
   }, [findings]);
 
-  // Full-environment server token count (unfiltered by migration maps) for SKU widget
+  // Migration-map-aware server token count for SKU widget and exports.
+  // When a migration map is set, computes XaaS-consolidated tokens for XaaS DCs
+  // and NIOS-X tier tokens for NIOS-X DCs. Falls back to raw serverTokens when
+  // no migration selections have been made (full-environment baseline).
   const totalServerTokens = useMemo(() => {
     const niosTokens = selectedProviders.includes('nios')
       ? effectiveNiosMetrics.reduce((s, m) =>
           s + calcServerTokenTier(m.qps, m.lps, m.objectCount, 'nios-x').serverTokens, 0)
       : 0;
-    const adTokens = selectedProviders.includes('microsoft')
-      ? effectiveADMetrics.reduce((s, m) => s + m.serverTokens, 0)
-      : 0;
+
+    let adTokens = 0;
+    if (selectedProviders.includes('microsoft') && effectiveADMetrics.length > 0) {
+      if (adMigrationMap.size > 0) {
+        // Use the same logic as the AD Server Token Calculator panel:
+        // split selected DCs by form factor, consolidate XaaS instances.
+        const selectedDcs = effectiveADMetrics.filter(m => adMigrationMap.has(m.hostname));
+        const niosXDcs = selectedDcs.filter(m => adMigrationMap.get(m.hostname) !== 'nios-xaas');
+        const xaasDcs  = selectedDcs.filter(m => adMigrationMap.get(m.hostname) === 'nios-xaas');
+        const niosXTokens = niosXDcs.reduce((s, m) =>
+          s + calcServerTokenTier(m.qps, m.lps, m.dnsObjects + m.dhcpObjectsWithOverhead, 'nios-x').serverTokens, 0);
+        const xaasInstances = consolidateXaasInstances(xaasDcs.map(m => ({
+          memberId: m.hostname, memberName: m.hostname, role: 'DC',
+          qps: m.qps, lps: m.lps, objectCount: m.dnsObjects + m.dhcpObjectsWithOverhead,
+        })));
+        const xaasTokens = xaasInstances.reduce((s, inst) => s + inst.totalTokens, 0);
+        adTokens = niosXTokens + xaasTokens;
+      } else {
+        // No migration selections yet — show full-environment baseline.
+        adTokens = effectiveADMetrics.reduce((s, m) => s + m.serverTokens, 0);
+      }
+    }
+
     return niosTokens + adTokens;
-  }, [effectiveNiosMetrics, effectiveADMetrics, selectedProviders]);
+  }, [effectiveNiosMetrics, effectiveADMetrics, adMigrationMap, selectedProviders]);
 
   const hasServerMetrics = (selectedProviders.includes('nios') && effectiveNiosMetrics.length > 0)
     || (selectedProviders.includes('microsoft') && effectiveADMetrics.length > 0);
