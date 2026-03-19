@@ -20,6 +20,7 @@ import (
 	"github.com/masterzen/winrm"
 
 	"github.com/stefanriegel/UDDI-Token-Calculator/internal/calculator"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/graphclient"
 	"github.com/stefanriegel/UDDI-Token-Calculator/internal/scanner"
 )
 
@@ -408,6 +409,48 @@ func (s *Scanner) Scan(ctx context.Context, req scanner.ScanRequest, publish fun
 	if len(adMetrics) > 0 {
 		if encoded, err := json.Marshal(adMetrics); err == nil {
 			s.adServerMetricsJSON = encoded
+		}
+	}
+
+	// Entra ID enrichment: fetch user and device counts from Microsoft Graph
+	// when an Azure credential is available (browser-SSO flow).
+	if req.CachedAzureCredential != nil {
+		entraUsers, entraDevices, entraErr := graphclient.FetchEntraCounts(ctx, req.CachedAzureCredential)
+		if entraErr != nil {
+			publish(scanner.Event{
+				Type:     "warning",
+				Provider: scanner.ProviderAD,
+				Message:  fmt.Sprintf("Entra ID enrichment skipped: %v", entraErr),
+			})
+		} else if entraUsers == 0 && entraDevices == 0 {
+			publish(scanner.Event{
+				Type:     "warning",
+				Provider: scanner.ProviderAD,
+				Message:  "Entra ID enrichment skipped: Graph returned zero counts (check admin consent)",
+			})
+		} else {
+			if entraUsers > 0 {
+				findings = append(findings, calculator.FindingRow{
+					Provider:         "ad",
+					Source:           "Entra ID",
+					Category:         calculator.CategoryManagedAssets,
+					Item:             "entra_user_count",
+					Count:            int(entraUsers),
+					TokensPerUnit:    calculator.TokensPerManagedAsset,
+					ManagementTokens: ceilDiv(int(entraUsers), calculator.TokensPerManagedAsset),
+				})
+			}
+			if entraDevices > 0 {
+				findings = append(findings, calculator.FindingRow{
+					Provider:         "ad",
+					Source:           "Entra ID",
+					Category:         calculator.CategoryManagedAssets,
+					Item:             "entra_device_count",
+					Count:            int(entraDevices),
+					TokensPerUnit:    calculator.TokensPerManagedAsset,
+					ManagementTokens: ceilDiv(int(entraDevices), calculator.TokensPerManagedAsset),
+				})
+			}
 		}
 	}
 

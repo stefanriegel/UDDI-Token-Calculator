@@ -328,6 +328,11 @@ func buildScanRequest(p ScanProviderRequest, sess *session.Session) scanner.Scan
 		if len(p.Subscriptions) > 0 {
 			req.Credentials["selected_dcs"] = strings.Join(p.Subscriptions, ",")
 		}
+		// Forward cached Azure credential so the AD scanner can enrich
+		// findings with Entra ID user/device counts via Microsoft Graph.
+		if sess.Azure != nil && sess.Azure.CachedCredential != nil {
+			req.CachedAzureCredential = sess.Azure.CachedCredential
+		}
 	case scanner.ProviderNIOS:
 		if p.Mode == "wapi" {
 			// WAPI live scan: populate credentials from session.NiosWAPI.

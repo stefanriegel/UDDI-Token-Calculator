@@ -645,6 +645,9 @@ export function generateMockFindings(selectedProviders: ProviderType[]): Finding
       row('microsoft', 'DC01.corp.example.com', 'Asset', 'Physical Appliances', 2),
       row('microsoft', 'DC01.corp.example.com', 'Asset', 'Virtual Appliances', 4),
       row('microsoft', 'DC01.corp.example.com', 'Asset', 'HA Nodes', 2),
+      // Entra ID (Azure AD) enrichment
+      row('microsoft', 'Entra ID', 'Asset', 'Entra Users', 4200),
+      row('microsoft', 'Entra ID', 'Asset', 'Entra Devices', 1850),
     ],
     nios: [
       // Infoblox NIOS Grid Backup -- per-member findings
