@@ -53,6 +53,7 @@ export interface CredentialField {
   multiline?: boolean;
   serverList?: boolean;
   helpText?: string;
+  type?: 'file';
 }
 
 export interface AuthMethod {
@@ -176,7 +177,7 @@ export const PROVIDERS: ProviderOption[] = [
         fields: [
           { key: 'tenantId', label: 'Tenant ID', placeholder: 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' },
           { key: 'clientId', label: 'Client (App) ID', placeholder: 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' },
-          { key: 'certPath', label: 'Certificate Path (.pem)', placeholder: 'C:\\certs\\scanner-cert.pem', helpText: 'Path to PEM file containing certificate and private key' },
+          { key: 'certificateData', label: 'Certificate File (.pem)', type: 'file', placeholder: '', helpText: 'PEM file containing certificate and private key' },
         ],
       },
       {
@@ -199,7 +200,10 @@ export const PROVIDERS: ProviderOption[] = [
         id: 'browser-oauth',
         name: 'Browser Login (OAuth)',
         description: 'Sign in interactively via your Google Workspace account',
-        fields: [],
+        fields: [
+          { key: 'clientId', label: 'OAuth Client ID', placeholder: 'xxxxxxxxxxxx.apps.googleusercontent.com', helpText: 'OAuth 2.0 client ID from Google Cloud Console' },
+          { key: 'clientSecret', label: 'OAuth Client Secret', placeholder: '********', secret: true, helpText: 'OAuth 2.0 client secret' },
+        ],
       },
       {
         id: 'adc',
@@ -220,10 +224,7 @@ export const PROVIDERS: ProviderOption[] = [
         name: 'Workload Identity Federation',
         description: 'Federated identity from AWS, Azure AD, or OIDC provider',
         fields: [
-          { key: 'projectNumber', label: 'Project Number', placeholder: '123456789012' },
-          { key: 'poolId', label: 'Workload Identity Pool ID', placeholder: 'my-pool' },
-          { key: 'providerId', label: 'Provider ID', placeholder: 'my-provider' },
-          { key: 'serviceAccountEmail', label: 'Service Account Email', placeholder: 'scanner@project.iam.gserviceaccount.com' },
+          { key: 'workloadIdentityJson', label: 'WIF Configuration JSON', multiline: true, placeholder: '{"type": "external_account", ...}', helpText: 'Paste the full external_account JSON configuration' },
         ],
       },
       {

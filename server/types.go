@@ -100,9 +100,10 @@ type SubscriptionItem struct {
 // On success: valid=true, sessionId set in cookie, subscriptions populated.
 // On failure: valid=false, error set, no session created.
 type ValidateResponse struct {
-	Valid         bool               `json:"valid"`
-	Error         string             `json:"error,omitempty"`
-	Subscriptions []SubscriptionItem `json:"subscriptions"`
+	Valid            bool               `json:"valid"`
+	Error            string             `json:"error,omitempty"`
+	Subscriptions    []SubscriptionItem `json:"subscriptions"`
+	DeviceCodeMessage string            `json:"deviceCodeMessage,omitempty"`
 }
 
 // CloneSessionResponse is returned by POST /api/v1/session/clone.

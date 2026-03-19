@@ -243,6 +243,7 @@ export function Wizard() {
   const [credentialError, setCredentialError] = useState<Record<ProviderType, string>>({
     aws: '', azure: '', gcp: '', microsoft: '', nios: '', bluecat: '', efficientip: '',
   });
+  const [deviceCodeMessage, setDeviceCodeMessage] = useState<string>('');
   const [scanError, setScanError] = useState<string>('');
   const scanIntervalsRef = useRef<ReturnType<typeof setInterval>[]>([]);
   const [showSecrets, setShowSecrets] = useState<Record<string, boolean>>({});
@@ -569,6 +570,11 @@ export function Wizard() {
         const result = await apiValidate(backendId, authMethod, creds);
         if (result.valid) {
           setCredentialStatus((prev) => ({ ...prev, [providerId]: 'valid' }));
+
+          // Surface the device code message if the backend returned one (Azure device-code flow).
+          if (result.deviceCodeMessage) {
+            setDeviceCodeMessage(result.deviceCodeMessage);
+          }
 
           // Auto-select subscriptions for org-discovered accounts, Azure multi-subscription,
           // and AD — DCs are explicitly added by the user so all should be scanned by default.
@@ -1598,6 +1604,42 @@ export function Wizard() {
                                         }
                                         placeholder={field.placeholder}
                                       />
+                                    ) : field.type === 'file' ? (
+                                      <div className="flex flex-col gap-1">
+                                        <input
+                                          type="file"
+                                          accept=".pem,.crt,.key"
+                                          onChange={(e) => {
+                                            const file = e.target.files?.[0];
+                                            if (file) {
+                                              const reader = new FileReader();
+                                              reader.onload = () => {
+                                                const content = reader.result as string;
+                                                setCredentials((prev) => ({
+                                                  ...prev,
+                                                  [provId]: {
+                                                    ...prev[provId],
+                                                    [field.key]: content,
+                                                  },
+                                                }));
+                                              };
+                                              reader.onerror = () => {
+                                                setCredentialError((prev) => ({
+                                                  ...prev,
+                                                  [provId]: `Failed to read file: ${file.name}`,
+                                                }));
+                                              };
+                                              reader.readAsText(file);
+                                            }
+                                          }}
+                                          className="w-full px-3 py-2 bg-[var(--input-background)] border border-[var(--border)] rounded-lg text-[13px] focus:outline-none focus:ring-2 focus:ring-[var(--infoblox-blue)]/30 focus:border-[var(--infoblox-blue)] file:mr-3 file:py-1 file:px-3 file:rounded-md file:border-0 file:text-[12px] file:bg-[var(--infoblox-navy)] file:text-white file:cursor-pointer"
+                                        />
+                                        {credentials[provId]?.[field.key] && (
+                                          <span className="text-[11px] text-green-600 flex items-center gap-1">
+                                            <CheckCircle2 className="w-3 h-3" /> File loaded
+                                          </span>
+                                        )}
+                                      </div>
                                     ) : field.multiline ? (
                                       <textarea
                                         placeholder={field.placeholder}
@@ -1858,6 +1900,17 @@ export function Wizard() {
                             </button>
                           );
                         })()}
+                        {status === 'validating' && currentAuthId === 'browser-oauth' && (
+                          <div className="mt-2 flex items-center gap-2 p-2.5 bg-blue-50 rounded-lg border border-blue-100">
+                            <Loader2 className="w-3.5 h-3.5 text-blue-500 animate-spin shrink-0" />
+                            <p className="text-[12px] text-blue-700">Waiting for browser consent in your default browser...</p>
+                          </div>
+                        )}
+                        {deviceCodeMessage && currentAuthId === 'device-code' && (
+                          <div className="mt-2 p-2.5 bg-blue-50 rounded-lg border border-blue-100">
+                            <p className="text-[12px] text-blue-700 font-mono whitespace-pre-wrap">{deviceCodeMessage}</p>
+                          </div>
+                        )}
                         {status === 'error' && credentialError[provId] && (
                           <div className="mt-2 flex items-start gap-2 p-2.5 bg-red-50 rounded-lg border border-red-100">
                             <AlertCircle className="w-3.5 h-3.5 text-red-500 mt-0.5 shrink-0" />

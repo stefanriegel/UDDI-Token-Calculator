@@ -204,8 +204,9 @@ func (h *ValidateHandler) HandleValidate(w http.ResponseWriter, r *http.Request)
 		subs = []SubscriptionItem{}
 	}
 	writeJSON(w, http.StatusOK, ValidateResponse{
-		Valid:         true,
-		Subscriptions: subs,
+		Valid:             true,
+		Subscriptions:     subs,
+		DeviceCodeMessage: merged["device_code_message"],
 	})
 }
 
@@ -805,8 +806,8 @@ func realAzureDeviceCode(ctx context.Context, creds map[string]string) ([]Subscr
 		ClientID: azureCLIClientID,
 		UserPrompt: func(ctx context.Context, msg azidentity.DeviceCodeMessage) error {
 			// The SDK calls this callback with the device code and verification URL.
-			// In a real browser-based UI flow, the frontend would display these.
-			// For now, print to stdout — the frontend polls for the validation result.
+			// Capture the message so the validate handler can include it in the response.
+			creds["device_code_message"] = msg.Message
 			fmt.Printf("Azure Device Code: %s\n", msg.Message)
 			return nil
 		},

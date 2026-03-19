@@ -61,6 +61,7 @@ export interface ValidateResponse {
   valid: boolean;
   error?: string;
   subscriptions: SubscriptionItem[];
+  deviceCodeMessage?: string;
 }
 
 export async function validateCredentials(
