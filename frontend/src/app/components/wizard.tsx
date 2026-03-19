@@ -97,6 +97,97 @@ function formatItemLabel(item: string): string {
   return item;
 }
 
+// ─── ScenarioPlannerCards ─────────────────────────────────────────────────────
+// Shared scenario comparison card row used by every migration planner section.
+// Renders three cards (Current / Hybrid / Full) in a consistent layout.
+//
+// Usage (add a new connector):
+//   1. Compute three scenario values: { label, primaryValue, subLines?, desc }
+//   2. Determine isActive for each scenario based on the connector's migration map
+//   3. Render <ScenarioPlannerCards title="..." color="orange|blue" ... />
+//
+// Template for a new connector planner section:
+//   const scenarioCurrent = { label: 'Current',        primaryValue: 0,             desc: '...' };
+//   const scenarioHybrid  = { label: 'Hybrid',         primaryValue: hybridTokens,  desc: '...' };
+//   const scenarioFull    = { label: 'Full Migration',  primaryValue: fullTokens,    desc: '...' };
+//   const isActive = (idx: number) => idx === 0 ? mapSize === 0 : idx === 1 ? mapSize > 0 && mapSize < total : mapSize === total;
+//   <ScenarioPlannerCards title="Management Tokens" unit="Management Tokens" color="orange"
+//     scenarios={[scenarioCurrent, scenarioHybrid, scenarioFull]}
+//     isActive={isActive} />
+//   <ScenarioPlannerCards title="Server Tokens" unit="Server Tokens" color="blue"
+//     scenarios={[scenarioCurrent, scenarioHybrid, scenarioFull]}
+//     isActive={isActive} />
+
+interface ScenarioCard {
+  label: string;
+  /** The main large number displayed on the card. */
+  primaryValue: number;
+  /** Optional sub-lines shown below the primary value (e.g. UDDI vs NIOS licensing split). */
+  subLines?: { text: string; color: string }[];
+  desc: string;
+}
+
+function ScenarioPlannerCards({
+  title,
+  unit,
+  color,
+  scenarios,
+  isActive,
+}: {
+  title: string;
+  unit: string;
+  color: 'orange' | 'blue';
+  scenarios: ScenarioCard[];
+  isActive: (idx: number) => boolean;
+}) {
+  const activeBorder  = color === 'orange' ? 'border-[var(--infoblox-orange)]' : 'border-blue-500';
+  const activeBg      = color === 'orange' ? 'bg-orange-50/30'                 : 'bg-blue-50/30';
+  const activeDot     = color === 'orange' ? 'bg-[var(--infoblox-orange)]'     : 'bg-blue-500';
+  const activeNumber  = color === 'orange' ? 'text-[var(--infoblox-orange)]'   : 'text-blue-700';
+
+  return (
+    <div className="px-4 py-4 border-t border-[var(--border)]">
+      <h3 className="text-[14px] font-semibold text-[var(--foreground)] mb-3">{title}</h3>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        {scenarios.map((scenario, idx) => {
+          const active = isActive(idx);
+          return (
+            <div
+              key={scenario.label}
+              className={`rounded-xl border-2 p-4 transition-colors ${
+                active ? `${activeBorder} ${activeBg} shadow-sm` : 'border-[var(--border)] bg-white'
+              }`}
+            >
+              <div className="flex items-center gap-2 mb-2">
+                {active && <span className={`w-2 h-2 rounded-full ${activeDot}`} />}
+                <span className="text-[12px] uppercase tracking-wider text-[var(--muted-foreground)]" style={{ fontWeight: 600 }}>
+                  {scenario.label}
+                </span>
+              </div>
+              <div className={`text-[28px] ${activeNumber}`} style={{ fontWeight: 700 }}>
+                {scenario.primaryValue.toLocaleString()}
+              </div>
+              <div className="text-[11px] text-[var(--muted-foreground)] mb-2">{unit}</div>
+              {scenario.subLines && scenario.subLines.length > 0 && (
+                <div className="text-[11px] space-y-0.5 mb-1">
+                  {scenario.subLines.map((line, i) => (
+                    <div key={i} style={{ color: line.color }}>{line.text}</div>
+                  ))}
+                </div>
+              )}
+              <p className="text-[11px] text-[var(--muted-foreground)] border-t border-[var(--border)] pt-2 mt-2">
+                {scenario.desc}
+              </p>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
+
 /** Small info icon that shows a tooltip on hover. Use next to labels that need extra explanation. */
 function FieldTooltip({ text, side = 'top' }: { text: string; side?: 'top' | 'right' | 'bottom' | 'left' }) {
   return (
@@ -3284,52 +3375,77 @@ export function Wizard() {
                     </div>
 
                     {/* Scenario comparison cards */}
-                    <div className="px-4 py-4">
-                      <h3 className="text-[14px] font-semibold text-[var(--foreground)] mb-3">Management Tokens</h3>
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                        {[scenarioCurrent, scenarioHybrid, scenarioFull].map((scenario, idx) => {
-                          const isHybrid = idx === 1;
-                          const isFull = idx === 2;
-                          const isActive = isHybrid ? niosMigrationMap.size > 0 && niosMigrationMap.size < niosSources.length : isFull ? niosMigrationMap.size === niosSources.length : niosMigrationMap.size === 0;
-                          return (
-                            <div
-                              key={scenario.label}
-                              className={`rounded-xl border-2 p-4 transition-colors ${
-                                isActive
-                                  ? 'border-[var(--infoblox-orange)] bg-orange-50/30 shadow-sm'
-                                  : 'border-[var(--border)] bg-white'
-                              }`}
-                            >
-                              <div className="flex items-center gap-2 mb-2">
-                                {isActive && <span className="w-2 h-2 rounded-full bg-[var(--infoblox-orange)]" />}
-                                <span className="text-[12px] uppercase tracking-wider text-[var(--muted-foreground)]" style={{ fontWeight: 600 }}>
-                                  {scenario.label}
-                                </span>
-                              </div>
-                              <div className="text-[28px] text-[var(--infoblox-orange)]" style={{ fontWeight: 700 }}>
-                                {(scenario.uddiTokens + scenario.niosTokens).toLocaleString()}
-                              </div>
-                              <div className="text-[11px] text-[var(--muted-foreground)] mb-2">
-                                Universal DDI Tokens
-                              </div>
-                              {scenario.niosTokens > 0 && (
-                                <div className="text-[11px] space-y-0.5 mb-1">
-                                  <div className="text-blue-600">
-                                    {scenario.uddiTokens.toLocaleString()} on NIOS-X / Universal DDI
-                                  </div>
-                                  <div className="text-gray-500">
-                                    {scenario.niosTokens.toLocaleString()} on NIOS Licensing
-                                  </div>
-                                </div>
-                              )}
-                              <p className="text-[11px] text-[var(--muted-foreground)] border-t border-[var(--border)] pt-2 mt-2">
-                                {scenario.desc}
-                              </p>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
+                    {(() => {
+                      const niosIsActive = (idx: number) =>
+                        idx === 0 ? niosMigrationMap.size === 0
+                        : idx === 1 ? niosMigrationMap.size > 0 && niosMigrationMap.size < niosSources.length
+                        : niosMigrationMap.size === niosSources.length;
+
+                      // Management Token scenarios
+                      const mgmtScenarios: ScenarioCard[] = [
+                        {
+                          label: 'Current (NIOS Only)',
+                          primaryValue: nonNiosTokens,
+                          desc: 'Only cloud/MS sources need UDDI tokens. NIOS stays on traditional licensing.',
+                        },
+                        {
+                          label: 'Hybrid',
+                          primaryValue: nonNiosTokens + migratingTokens + stayingTokens,
+                          subLines: stayingTokens > 0 ? [
+                            { text: `${(nonNiosTokens + migratingTokens).toLocaleString()} on NIOS-X / Universal DDI`, color: '#0078d4' },
+                            { text: `${stayingTokens.toLocaleString()} on NIOS Licensing`, color: '#6b7280' },
+                          ] : [],
+                          desc: hybridDesc,
+                        },
+                        {
+                          label: 'Full Universal DDI',
+                          primaryValue: nonNiosTokens + allNiosUddiTokens,
+                          desc: 'All NIOS members migrated to Universal DDI. Everything on Universal DDI licensing.',
+                        },
+                      ];
+
+                      // Server Token scenarios — compute per-scenario using migration map
+                      const calcNiosServerScenario = (members: typeof effectiveNiosMetrics) => {
+                        const niosXMems = members.filter(m => (niosMigrationMap.get(m.memberName) || 'nios-x') !== 'nios-xaas');
+                        const xaasMems  = members.filter(m => niosMigrationMap.get(m.memberName) === 'nios-xaas');
+                        const nxTok = niosXMems.reduce((s, m) => s + calcServerTokenTier(m.qps, m.lps, m.objectCount, 'nios-x').serverTokens, 0);
+                        const xaasInst = consolidateXaasInstances(xaasMems);
+                        return nxTok + xaasInst.reduce((s, inst) => s + inst.totalTokens, 0);
+                      };
+                      // Full: all members → NIOS-X baseline
+                      const fullSrvTokens = effectiveNiosMetrics.reduce(
+                        (s, m) => s + calcServerTokenTier(m.qps, m.lps, m.objectCount, 'nios-x').serverTokens, 0);
+                      const hybridSrvTokens = effectiveNiosMetrics.filter(m => niosMigrationMap.has(m.memberName)).length > 0
+                        ? calcNiosServerScenario(effectiveNiosMetrics.filter(m => niosMigrationMap.has(m.memberName)))
+                        : 0;
+
+                      const srvScenarios: ScenarioCard[] = [
+                        { label: 'Current (NIOS Only)', primaryValue: 0,               desc: 'NIOS stays on traditional licensing. No NIOS-X server tokens required.' },
+                        { label: 'Hybrid',              primaryValue: hybridSrvTokens,  desc: hybridDesc },
+                        { label: 'Full Universal DDI',  primaryValue: fullSrvTokens,    desc: 'All members migrated. Server tokens cover every NIOS-X appliance or XaaS instance.' },
+                      ];
+
+                      return (
+                        <>
+                          <ScenarioPlannerCards
+                            title="Management Tokens"
+                            unit="Universal DDI Tokens"
+                            color="orange"
+                            scenarios={mgmtScenarios}
+                            isActive={niosIsActive}
+                          />
+                          {effectiveNiosMetrics.length > 0 && (
+                            <ScenarioPlannerCards
+                              title="Server Tokens"
+                              unit="Server Tokens (IB-TOKENS-UDDI-SERV-500)"
+                              color="blue"
+                              scenarios={srvScenarios}
+                              isActive={niosIsActive}
+                            />
+                          )}
+                        </>
+                      );
+                    })()}
                   </div>
                 );
               })()}
@@ -3913,46 +4029,51 @@ export function Wizard() {
                     </div>
 
                     {/* Scenario comparison cards */}
-                    <div className="px-4 py-4">
-                      <h3 className="text-[14px] font-semibold text-[var(--foreground)] mb-3">Server Tokens</h3>
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                        {[scenarioCurrent, scenarioHybrid, scenarioFull].map((scenario, idx) => {
-                          const isHybrid = idx === 1;
-                          const isFull = idx === 2;
-                          const isActive = isHybrid
-                            ? adMigrationMap.size > 0 && adMigrationMap.size < adHostnames.length
-                            : isFull
-                              ? adMigrationMap.size === adHostnames.length
-                              : adMigrationMap.size === 0;
-                          return (
-                            <div
-                              key={scenario.label}
-                              className={`rounded-xl border-2 p-4 transition-colors ${
-                                isActive
-                                  ? 'border-[var(--infoblox-orange)] bg-orange-50/30 shadow-sm'
-                                  : 'border-[var(--border)] bg-white'
-                              }`}
-                            >
-                              <div className="flex items-center gap-2 mb-2">
-                                {isActive && <span className="w-2 h-2 rounded-full bg-[var(--infoblox-orange)]" />}
-                                <span className="text-[12px] uppercase tracking-wider text-[var(--muted-foreground)]" style={{ fontWeight: 600 }}>
-                                  {scenario.label}
-                                </span>
-                              </div>
-                              <div className="text-[28px] text-[var(--infoblox-orange)]" style={{ fontWeight: 700 }}>
-                                {scenario.tokens.toLocaleString()}
-                              </div>
-                              <div className="text-[11px] text-[var(--muted-foreground)] mb-2">
-                                Server Tokens
-                              </div>
-                              <p className="text-[11px] text-[var(--muted-foreground)] border-t border-[var(--border)] pt-2 mt-2">
-                                {scenario.desc}
-                              </p>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
+                    {(() => {
+                      const adIsActive = (idx: number) =>
+                        idx === 0 ? adMigrationMap.size === 0
+                        : idx === 1 ? adMigrationMap.size > 0 && adMigrationMap.size < adHostnames.length
+                        : adMigrationMap.size === adHostnames.length;
+
+                      // Management Token scenarios — AD findings (users, computers, static IPs, Entra)
+                      const adMgmtTotal = findings.filter(f => (f.provider as string) === 'ad').reduce((s, f) => s + f.managementTokens, 0);
+                      const adSelectedMgmt = findings
+                        .filter(f => (f.provider as string) === 'ad' && adMigrationMap.has(f.source))
+                        .reduce((s, f) => s + f.managementTokens, 0);
+                      const nonAdTokens = findings.filter(f => (f.provider as string) !== 'ad').reduce((s, f) => s + f.managementTokens, 0);
+
+                      const adMgmtScenarios: ScenarioCard[] = [
+                        { label: 'Current',        primaryValue: nonAdTokens,                    desc: 'AD stays on Windows licensing. Only other providers need UDDI tokens.' },
+                        { label: 'Hybrid',         primaryValue: nonAdTokens + adSelectedMgmt,  desc: adMigrationMap.size > 0 ? `${adMigrationMap.size} of ${adHostnames.length} DCs migrated. Remainder stay on Windows.` : 'Select DCs to migrate.' },
+                        { label: 'Full Migration', primaryValue: nonAdTokens + adMgmtTotal,     desc: `All ${adHostnames.length} DCs migrated to NIOS-X for unified DDI management.` },
+                      ];
+
+                      // Server Token scenarios — already computed above
+                      const adSrvScenarios: ScenarioCard[] = [
+                        { label: 'Current',        primaryValue: 0,                  desc: 'All DCs remain on Windows DNS/DHCP licensing. No NIOS-X server tokens required.' },
+                        { label: 'Hybrid',         primaryValue: hybridServerTokens, desc: scenarioHybrid.desc },
+                        { label: 'Full Migration', primaryValue: fullMigrationTokens, desc: `All ${adHostnames.length} DCs migrated to NIOS-X for unified DDI management.` },
+                      ];
+
+                      return (
+                        <>
+                          <ScenarioPlannerCards
+                            title="Management Tokens"
+                            unit="Management Tokens"
+                            color="orange"
+                            scenarios={adMgmtScenarios}
+                            isActive={adIsActive}
+                          />
+                          <ScenarioPlannerCards
+                            title="Server Tokens"
+                            unit="Server Tokens (IB-TOKENS-UDDI-SERV-500)"
+                            color="blue"
+                            scenarios={adSrvScenarios}
+                            isActive={adIsActive}
+                          />
+                        </>
+                      );
+                    })()}
 
                     {/* Knowledge Worker / Computer / Static IP summary */}
                     <div className="px-4 pb-4">
