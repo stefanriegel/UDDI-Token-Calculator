@@ -57,21 +57,35 @@ ASSET="${BINARY}_${OS}_${ARCH}"
 if [ "$CHANNEL" = "stable" ]; then
   TAG=$(curl -s "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name"' | sed 's/.*"tag_name": *"//;s/".*//')
 else
-  # Dev channel: find first pre-release from list endpoint
+  # Dev channel: find the highest-versioned pre-release.
+  # GitHub list order is not semver-sorted; compare all and pick the maximum.
   TAG=$(curl -s "https://api.github.com/repos/${REPO}/releases?per_page=20" | \
     python3 -c "
-import json, sys
-for r in json.load(sys.stdin):
+import json, sys, re
+
+def semver_key(tag):
+    tag = tag.lstrip('v')
+    parts = tag.split('-', 1)
+    core = parts[0]
+    pre  = parts[1] if len(parts) > 1 else ''
+    nums = core.split('.')
+    try:
+        major, minor, patch = int(nums[0]), int(nums[1]), int(nums[2])
+    except (IndexError, ValueError):
+        return (0, 0, 0, 0)
+    m = re.search(r'([0-9]+)$', pre)
+    pre_num = int(m.group(1)) if m else 0
+    return (major, minor, patch, pre_num)
+
+releases = json.load(sys.stdin)
+best = None
+for r in releases:
     if r.get('prerelease'):
-        print(r['tag_name'])
-        break
+        if best is None or semver_key(r['tag_name']) > semver_key(best):
+            best = r['tag_name']
+if best:
+    print(best)
 " 2>/dev/null)
-  if [ -z "$TAG" ]; then
-    # Fallback: find first prerelease tag via grep/sed
-    TAG=$(curl -s "https://api.github.com/repos/${REPO}/releases?per_page=20" | \
-      grep -B5 '"prerelease": true' | grep '"tag_name"' | head -1 | \
-      sed 's/.*"tag_name": *"//;s/".*//')
-  fi
 fi
 
 if [ -z "$TAG" ]; then
