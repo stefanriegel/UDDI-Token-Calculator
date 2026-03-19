@@ -2883,11 +2883,9 @@ export function Wizard() {
                     ...(selectedProviders.includes('nios') ? [
                       { id: 'section-overview', label: 'Overview' },
                       { id: 'section-migration-planner', label: 'Migration Planner' },
-                      { id: 'section-server-tokens', label: 'Server Token Calculator' },
                     ] : []),
                     ...(selectedProviders.includes('microsoft') && effectiveADMetrics.length > 0 ? [
                       { id: 'section-ad-migration', label: 'AD Migration Planner' },
-                      { id: 'section-ad-server-tokens', label: 'AD Server Token Calculator' },
                     ] : []),
                     { id: 'section-findings', label: 'Detailed Findings' },
                     { id: 'section-export', label: 'Export' },
@@ -3446,24 +3444,21 @@ export function Wizard() {
                         </>
                       );
                     })()}
-                  </div>
-                );
-              })()}
 
-              {/* Server Token Calculator — per-member QPS/LPS/Object sizing */}
-              {selectedProviders.includes('nios') && (() => {
-                // Only show metrics for members selected for migration
-                const migratingMembers = effectiveNiosMetrics.filter((m) =>
-                  niosMigrationMap.has(m.memberName)
-                );
-                const allMembers = effectiveNiosMetrics.filter((m) => {
-                  const niosSources = new Set(
-                    findings.filter((f) => f.provider === 'nios').map((f) => f.source)
-                  );
-                  return niosSources.has(m.memberName);
-                });
+                    {/* Server Token Calculator — inline within Migration Planner */}
+                    {effectiveNiosMetrics.length > 0 && (() => {
+                      // Only show metrics for members selected for migration
+                      const migratingMembers = effectiveNiosMetrics.filter((m) =>
+                        niosMigrationMap.has(m.memberName)
+                      );
+                      const allMembers = effectiveNiosMetrics.filter((m) => {
+                        const niosSources = new Set(
+                          findings.filter((f) => f.provider === 'nios').map((f) => f.source)
+                        );
+                        return niosSources.has(m.memberName);
+                      });
 
-                const displayMembers = migratingMembers.length > 0 ? migratingMembers : allMembers;
+                      const displayMembers = migratingMembers.length > 0 ? migratingMembers : allMembers;
 
                 // Per-member form factor helper
                 const getMemberFF = (memberName: string): ServerFormFactor =>
@@ -3487,27 +3482,27 @@ export function Wizard() {
                 const totalServerTokens = niosXTokens + totalXaasTokens;
                 const totalNiosReplaced = xaasMembers.length; // 1 connection per NIOS member replaced
 
-                const roleColors: Record<string, string> = {
-                  GM: '#002B49',
-                  GMC: '#1a4a6e',
-                  DNS: '#0078d4',
-                  DHCP: '#00a5e5',
-                  'DNS/DHCP': '#005a9e',
-                  IPAM: '#7fba00',
-                  Reporting: '#8b8b8b',
-                };
+                      const roleColors: Record<string, string> = {
+                        GM: '#002B49',
+                        GMC: '#1a4a6e',
+                        DNS: '#0078d4',
+                        DHCP: '#00a5e5',
+                        'DNS/DHCP': '#005a9e',
+                        IPAM: '#7fba00',
+                        Reporting: '#8b8b8b',
+                      };
 
-                const tierColorClass = (name: string) =>
-                  name === 'XL' ? 'bg-red-100 text-red-700' :
-                  name === 'L' ? 'bg-orange-100 text-orange-700' :
-                  name === 'M' ? 'bg-yellow-100 text-yellow-700' :
-                  name === 'S' ? 'bg-green-100 text-green-700' :
-                  name === 'XS' ? 'bg-sky-100 text-sky-700' :
-                  'bg-gray-100 text-gray-700';
+                      const tierColorClass = (name: string) =>
+                        name === 'XL' ? 'bg-red-100 text-red-700' :
+                        name === 'L' ? 'bg-orange-100 text-orange-700' :
+                        name === 'M' ? 'bg-yellow-100 text-yellow-700' :
+                        name === 'S' ? 'bg-green-100 text-green-700' :
+                        name === 'XS' ? 'bg-sky-100 text-sky-700' :
+                        'bg-gray-100 text-gray-700';
 
-                return (
-                  <div id="section-server-tokens" className="bg-white rounded-xl border-2 border-emerald-200 mb-6 overflow-hidden">
-                    <div className="px-4 py-3 border-b border-[var(--border)] bg-emerald-50/50 flex items-center gap-2 flex-wrap">
+                      return (
+                        <div id="section-server-tokens" className="border-t border-emerald-200 bg-emerald-50/20">
+                          <div className="px-4 py-3 border-b border-emerald-200 bg-emerald-50/50 flex items-center gap-2 flex-wrap">
                       <img src={NIOS_GRID_LOGO} alt="NIOS Grid" className="w-5 h-5 rounded" />
                       <h3 className="text-[14px]" style={{ fontWeight: 600 }}>
                         Server Token Calculator
@@ -3798,6 +3793,9 @@ export function Wizard() {
                     </div>
 
 
+                        </div>
+                      );
+                    })()}
                   </div>
                 );
               })()}
@@ -4035,19 +4033,6 @@ export function Wizard() {
                         : idx === 1 ? adMigrationMap.size > 0 && adMigrationMap.size < adHostnames.length
                         : adMigrationMap.size === adHostnames.length;
 
-                      // Management Token scenarios — AD findings (users, computers, static IPs, Entra)
-                      const adMgmtTotal = findings.filter(f => (f.provider as string) === 'ad').reduce((s, f) => s + f.managementTokens, 0);
-                      const adSelectedMgmt = findings
-                        .filter(f => (f.provider as string) === 'ad' && adMigrationMap.has(f.source))
-                        .reduce((s, f) => s + f.managementTokens, 0);
-                      const nonAdTokens = findings.filter(f => (f.provider as string) !== 'ad').reduce((s, f) => s + f.managementTokens, 0);
-
-                      const adMgmtScenarios: ScenarioCard[] = [
-                        { label: 'Current',        primaryValue: nonAdTokens,                    desc: 'AD stays on Windows licensing. Only other providers need UDDI tokens.' },
-                        { label: 'Hybrid',         primaryValue: nonAdTokens + adSelectedMgmt,  desc: adMigrationMap.size > 0 ? `${adMigrationMap.size} of ${adHostnames.length} DCs migrated. Remainder stay on Windows.` : 'Select DCs to migrate.' },
-                        { label: 'Full Migration', primaryValue: nonAdTokens + adMgmtTotal,     desc: `All ${adHostnames.length} DCs migrated to NIOS-X for unified DDI management.` },
-                      ];
-
                       // Server Token scenarios — already computed above
                       const adSrvScenarios: ScenarioCard[] = [
                         { label: 'Current',        primaryValue: 0,                  desc: 'All DCs remain on Windows DNS/DHCP licensing. No NIOS-X server tokens required.' },
@@ -4055,15 +4040,24 @@ export function Wizard() {
                         { label: 'Full Migration', primaryValue: fullMigrationTokens, desc: `All ${adHostnames.length} DCs migrated to NIOS-X for unified DDI management.` },
                       ];
 
+                      // Management token note — AD management tokens are constant across all migration scenarios
+                      const adMgmtTotal = findings.filter(f => (f.provider as string) === 'ad').reduce((s, f) => s + f.managementTokens, 0);
+                      const nonAdTokens = findings.filter(f => (f.provider as string) !== 'ad').reduce((s, f) => s + f.managementTokens, 0);
+
                       return (
                         <>
-                          <ScenarioPlannerCards
-                            title="Management Tokens"
-                            unit="Management Tokens"
-                            color="orange"
-                            scenarios={adMgmtScenarios}
-                            isActive={adIsActive}
-                          />
+                          {/* Management token note — same value across all scenarios, no row needed */}
+                          <div className="px-4 py-3 border-b border-[var(--border)] bg-orange-50/40 flex items-center gap-3">
+                            <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-orange-700" style={{ fontWeight: 700 }}>
+                              <span className="w-2 h-2 rounded-full bg-orange-500 shrink-0" />
+                              Management Tokens
+                            </div>
+                            <div className="text-[22px] text-orange-600" style={{ fontWeight: 700 }}>{(nonAdTokens + adMgmtTotal).toLocaleString()}</div>
+                            <div className="text-[11px] text-[var(--muted-foreground)] leading-tight">
+                              Management tokens count the same across all migration scenarios —
+                              DDI objects (users, computers, IPs) exist regardless of whether DCs run on Windows or NIOS-X.
+                            </div>
+                          </div>
                           <ScenarioPlannerCards
                             title="Server Tokens"
                             unit="Server Tokens (IB-TOKENS-UDDI-SERV-500)"
@@ -4097,55 +4091,52 @@ export function Wizard() {
                         })()}
                       </div>
                     </div>
-                  </div>
-                );
-              })()}
 
-              {/* AD Server Token Calculator — per-DC QPS/LPS/Object sizing */}
-              {selectedProviders.includes('microsoft') && effectiveADMetrics.length > 0 && (() => {
-                const toNiosMetrics = (m: ADServerMetricAPI): NiosServerMetrics => ({
-                  memberId: m.hostname,
-                  memberName: m.hostname,
-                  role: 'DC',
-                  qps: m.qps,
-                  lps: m.lps,
-                  objectCount: m.dnsObjects + m.dhcpObjectsWithOverhead,
-                });
+                    {/* AD Server Token Calculator — inline within AD Migration Planner */}
+                    {effectiveADMetrics.length > 0 && (() => {
+                      const toNiosMetrics = (m: ADServerMetricAPI): NiosServerMetrics => ({
+                        memberId: m.hostname,
+                        memberName: m.hostname,
+                        role: 'DC',
+                        qps: m.qps,
+                        lps: m.lps,
+                        objectCount: m.dnsObjects + m.dhcpObjectsWithOverhead,
+                      });
 
-                const displayMembers = adMigrationMap.size > 0
-                  ? effectiveADMetrics.filter(m => adMigrationMap.has(m.hostname))
-                  : effectiveADMetrics;
+                      const displayMembers = adMigrationMap.size > 0
+                        ? effectiveADMetrics.filter(m => adMigrationMap.has(m.hostname))
+                        : effectiveADMetrics;
 
-                const getDcFF = (hostname: string): ServerFormFactor =>
-                  adMigrationMap.get(hostname) || 'nios-x';
+                      const getDcFF = (hostname: string): ServerFormFactor =>
+                        adMigrationMap.get(hostname) || 'nios-x';
 
-                const hasAnyXaas = displayMembers.some(m => getDcFF(m.hostname) === 'nios-xaas');
-                const xaasDcs = displayMembers.filter(m => getDcFF(m.hostname) === 'nios-xaas');
-                const niosXDcs = displayMembers.filter(m => getDcFF(m.hostname) === 'nios-x');
-                const niosXDcCount = niosXDcs.length;
-                const xaasDcCount = xaasDcs.length;
+                      const hasAnyXaas = displayMembers.some(m => getDcFF(m.hostname) === 'nios-xaas');
+                      const xaasDcs = displayMembers.filter(m => getDcFF(m.hostname) === 'nios-xaas');
+                      const niosXDcs = displayMembers.filter(m => getDcFF(m.hostname) === 'nios-x');
+                      const niosXDcCount = niosXDcs.length;
+                      const xaasDcCount = xaasDcs.length;
 
-                const xaasInstances = consolidateXaasInstances(xaasDcs.map(toNiosMetrics));
-                const totalXaasTokens = xaasInstances.reduce((s, inst) => s + inst.totalTokens, 0);
+                      const xaasInstances = consolidateXaasInstances(xaasDcs.map(toNiosMetrics));
+                      const totalXaasTokens = xaasInstances.reduce((s, inst) => s + inst.totalTokens, 0);
 
-                const niosXTokens = niosXDcs.reduce((sum, m) => {
-                  return sum + calcServerTokenTier(m.qps, m.lps, m.dnsObjects + m.dhcpObjectsWithOverhead, 'nios-x').serverTokens;
-                }, 0);
+                      const niosXTokens = niosXDcs.reduce((sum, m) => {
+                        return sum + calcServerTokenTier(m.qps, m.lps, m.dnsObjects + m.dhcpObjectsWithOverhead, 'nios-x').serverTokens;
+                      }, 0);
 
-                const totalServerTokens = niosXTokens + totalXaasTokens;
-                const totalDcsReplaced = xaasDcs.length;
+                      const totalServerTokens = niosXTokens + totalXaasTokens;
+                      const totalDcsReplaced = xaasDcs.length;
 
-                const tierColorClass = (name: string) =>
-                  name === 'XL' ? 'bg-red-100 text-red-700' :
-                  name === 'L' ? 'bg-orange-100 text-orange-700' :
-                  name === 'M' ? 'bg-yellow-100 text-yellow-700' :
-                  name === 'S' ? 'bg-green-100 text-green-700' :
-                  name === 'XS' ? 'bg-sky-100 text-sky-700' :
-                  'bg-gray-100 text-gray-700';
+                      const tierColorClass = (name: string) =>
+                        name === 'XL' ? 'bg-red-100 text-red-700' :
+                        name === 'L' ? 'bg-orange-100 text-orange-700' :
+                        name === 'M' ? 'bg-yellow-100 text-yellow-700' :
+                        name === 'S' ? 'bg-green-100 text-green-700' :
+                        name === 'XS' ? 'bg-sky-100 text-sky-700' :
+                        'bg-gray-100 text-gray-700';
 
-                return (
-                  <div id="section-ad-server-tokens" className="bg-white rounded-xl border-2 border-blue-200 mb-6 overflow-hidden">
-                    <div className="px-4 py-3 border-b border-[var(--border)] bg-blue-50/50 flex items-center gap-2 flex-wrap">
+                      return (
+                        <div id="section-ad-server-tokens" className="border-t border-blue-200 bg-blue-50/10">
+                          <div className="px-4 py-3 border-b border-blue-200 bg-blue-50/50 flex items-center gap-2 flex-wrap">
                       <ProviderIconEl id="microsoft" className="w-5 h-5" />
                       <h3 className="text-[14px]" style={{ fontWeight: 600 }}>
                         AD Server Token Calculator
@@ -4426,7 +4417,10 @@ export function Wizard() {
                           </tr>
                         </tfoot>
                       </table>
-                    </div>
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </div>
                 );
               })()}
