@@ -16,6 +16,7 @@ import {
   Check,
   AlertCircle,
   Info,
+  HelpCircle,
   Globe,
   Search,
   Minus,
@@ -33,6 +34,7 @@ import {
   Shield,
   ArrowUpCircle,
 } from 'lucide-react';
+import { Tooltip, TooltipTrigger, TooltipContent } from './ui/tooltip';
 import { useBackendConnection } from './use-backend';
 import {
   validateCredentials as apiValidate,
@@ -93,6 +95,27 @@ function formatItemLabel(item: string): string {
     return `DNS Record (${suffix.toUpperCase()})`;
   }
   return item;
+}
+
+/** Small info icon that shows a tooltip on hover. Use next to labels that need extra explanation. */
+function FieldTooltip({ text, side = 'top' }: { text: string; side?: 'top' | 'right' | 'bottom' | 'left' }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          tabIndex={-1}
+          className="inline-flex items-center justify-center text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors cursor-help focus:outline-none"
+          aria-label={text}
+        >
+          <HelpCircle className="w-3.5 h-3.5" />
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side={side} className="max-w-[260px] text-[12px] leading-relaxed">
+        {text}
+      </TooltipContent>
+    </Tooltip>
+  );
 }
 
 /** Inline component: add/remove list for server addresses (replaces comma-separated text input). */
@@ -1526,8 +1549,9 @@ export function Wizard() {
                               const isVisible = showSecrets[fieldKey];
                               return (
                                 <div key={field.key}>
-                                  <label className="block text-[12px] text-[var(--muted-foreground)] mb-1">
+                                  <label className="flex items-center gap-1.5 text-[12px] text-[var(--muted-foreground)] mb-1">
                                     {field.label}
+                                    {field.helpText && <FieldTooltip text={field.helpText} />}
                                   </label>
                                   <div className="relative">
                                     {field.serverList ? (
@@ -1596,11 +1620,6 @@ export function Wizard() {
                                       </button>
                                     )}
                                   </div>
-                                  {field.helpText && (
-                                    <p className="text-[11px] text-[var(--muted-foreground)] mt-1">
-                                      {field.helpText}
-                                    </p>
-                                  )}
                                 </div>
                               );
                             })}
@@ -2558,7 +2577,10 @@ export function Wizard() {
               <div id="section-overview" className="bg-white rounded-xl border-2 border-[var(--infoblox-orange)]/30 p-5 mb-6">
                 <div className="flex items-start justify-between mb-4">
                   <div>
-                    <div className="text-[13px] text-[var(--muted-foreground)] mb-1">Total Management Tokens</div>
+                    <div className="flex items-center gap-1.5 text-[13px] text-[var(--muted-foreground)] mb-1">
+                      Total Management Tokens
+                      <FieldTooltip text="The total number of Infoblox Universal DDI management tokens required for your environment. This drives the IB-TOKENS-UDDI-MGMT-1000 pack count." side="right" />
+                    </div>
                     <div className="text-[32px] text-[var(--infoblox-orange)]" style={{ fontWeight: 700 }}>
                       {totalTokens.toLocaleString()}
                     </div>
@@ -2817,10 +2839,10 @@ export function Wizard() {
                   return Array.from(map.values()).sort((a, b) => b.tokens - a.tokens);
                 };
 
-                const categories: { key: TokenCategory; label: string; color: string; bgLight: string; barColor: string; textColor: string; unitLabel: string }[] = [
-                  { key: 'DDI Object', label: 'DDI Objects', color: 'text-blue-600', bgLight: 'bg-blue-50', barColor: 'bg-blue-500', textColor: 'text-blue-700', unitLabel: 'objects' },
-                  { key: 'Active IP', label: 'Active IPs', color: 'text-purple-600', bgLight: 'bg-purple-50', barColor: 'bg-purple-500', textColor: 'text-purple-700', unitLabel: 'IPs' },
-                  { key: 'Asset', label: 'Assets', color: 'text-green-600', bgLight: 'bg-green-50', barColor: 'bg-green-500', textColor: 'text-green-700', unitLabel: 'assets' },
+                const categories: { key: TokenCategory; label: string; color: string; bgLight: string; barColor: string; textColor: string; unitLabel: string; tooltip: string }[] = [
+                  { key: 'DDI Object', label: 'DDI Objects', color: 'text-blue-600', bgLight: 'bg-blue-50', barColor: 'bg-blue-500', textColor: 'text-blue-700', unitLabel: 'objects', tooltip: 'DNS zones, DNS records, DHCP scopes, and IPAM networks — each counts as one DDI object. Rate: 1 management token per 25 DDI objects.' },
+                  { key: 'Active IP', label: 'Active IPs', color: 'text-purple-600', bgLight: 'bg-purple-50', barColor: 'bg-purple-500', textColor: 'text-purple-700', unitLabel: 'IPs', tooltip: 'Active DHCP leases and statically-assigned IP addresses. Rate: 1 management token per 13 active IPs.' },
+                  { key: 'Asset', label: 'Managed Assets', color: 'text-green-600', bgLight: 'bg-green-50', barColor: 'bg-green-500', textColor: 'text-green-700', unitLabel: 'assets', tooltip: 'VMs, EC2 instances, container nodes, AD computers, and other managed endpoints. Rate: 1 management token per 3 managed assets.' },
                 ];
 
                 return (
@@ -2835,7 +2857,10 @@ export function Wizard() {
                         <div key={cat.key} className="bg-white rounded-xl border border-[var(--border)] overflow-hidden flex flex-col">
                           {/* Category header */}
                           <div className={`px-4 py-4 border-b border-[var(--border)] ${cat.bgLight}`}>
-                            <div className="text-[12px] text-[var(--muted-foreground)] mb-1">{cat.label}</div>
+                            <div className="flex items-center gap-1 text-[12px] text-[var(--muted-foreground)] mb-1">
+                              {cat.label}
+                              <FieldTooltip text={cat.tooltip} side="top" />
+                            </div>
                             <div className={`text-[24px] ${cat.color}`} style={{ fontWeight: 700 }}>
                               {catTokens.toLocaleString()}
                               <span className="text-[12px] text-[var(--muted-foreground)] ml-1.5" style={{ fontWeight: 400 }}>tokens</span>
@@ -3250,8 +3275,9 @@ export function Wizard() {
                     <div className="px-4 py-4 border-b border-[var(--border)] bg-gradient-to-r from-emerald-50/80 to-white">
                       <div className={`grid ${hasAnyXaas ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-1 sm:grid-cols-2'} gap-4`}>
                         <div>
-                          <div className="text-[11px] uppercase tracking-wider text-[var(--muted-foreground)] mb-1" style={{ fontWeight: 600 }}>
+                          <div className="flex items-center gap-1 text-[11px] uppercase tracking-wider text-[var(--muted-foreground)] mb-1" style={{ fontWeight: 600 }}>
                             Allocated Server Tokens
+                            <FieldTooltip text="Server tokens (IB-TOKENS-UDDI-SERV-500) are needed for each NIOS-X appliance or XaaS instance based on its performance tier. This is separate from management tokens." side="top" />
                           </div>
                           <div className="text-[28px] text-emerald-700" style={{ fontWeight: 700 }}>
                             {totalServerTokens.toLocaleString()}
@@ -3333,15 +3359,22 @@ export function Wizard() {
                             <th className="text-right px-3 py-2.5" style={{ fontWeight: 600 }}>
                               <span className="flex items-center justify-end gap-1">
                                 <Activity className="w-3 h-3" /> QPS
+                                <FieldTooltip text="Queries per second — DNS query rate observed on this member. Used with LPS and object count to size the NIOS-X appliance tier." side="top" />
                               </span>
                             </th>
                             <th className="text-right px-3 py-2.5" style={{ fontWeight: 600 }}>
                               <span className="flex items-center justify-end gap-1">
                                 <Gauge className="w-3 h-3" /> LPS
+                                <FieldTooltip text="Leases per second — DHCP lease rate. High LPS drives appliance tier up independently of QPS." side="top" />
                               </span>
                             </th>
                             <th className="text-right px-3 py-2.5" style={{ fontWeight: 600 }}>Objects</th>
-                            <th className="text-center px-3 py-2.5" style={{ fontWeight: 600 }}>Size</th>
+                            <th className="text-center px-3 py-2.5" style={{ fontWeight: 600 }}>
+                              <span className="flex items-center justify-center gap-1">
+                                Size
+                                <FieldTooltip text="NIOS-X appliance T-shirt size (2XS → XL) determined by the highest of QPS, LPS, and object thresholds. Each tier has a fixed server token cost." side="top" />
+                              </span>
+                            </th>
                             <th className="text-center px-3 py-2.5" style={{ fontWeight: 600 }}>
                               <span className="text-emerald-700">Allocated Tokens</span>
                             </th>
@@ -3855,8 +3888,9 @@ export function Wizard() {
                     <div className="px-4 py-4 border-b border-[var(--border)] bg-gradient-to-r from-blue-50/80 to-white">
                       <div className={`grid ${hasAnyXaas ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-1 sm:grid-cols-2'} gap-4`}>
                         <div>
-                          <div className="text-[11px] uppercase tracking-wider text-[var(--muted-foreground)] mb-1" style={{ fontWeight: 600 }}>
+                          <div className="flex items-center gap-1 text-[11px] uppercase tracking-wider text-[var(--muted-foreground)] mb-1" style={{ fontWeight: 600 }}>
                             Allocated Server Tokens
+                            <FieldTooltip text="Server tokens (IB-TOKENS-UDDI-SERV-500) are needed for each NIOS-X appliance or XaaS instance based on its performance tier. This is separate from management tokens." side="top" />
                           </div>
                           <div className="text-[28px] text-blue-700" style={{ fontWeight: 700 }}>
                             {totalServerTokens.toLocaleString()}
@@ -3938,15 +3972,22 @@ export function Wizard() {
                             <th className="text-right px-3 py-2.5" style={{ fontWeight: 600 }}>
                               <span className="flex items-center justify-end gap-1">
                                 <Activity className="w-3 h-3" /> QPS
+                                <FieldTooltip text="Queries per second — DNS query rate observed on this DC. Used with LPS and object count to size the NIOS-X appliance tier." side="top" />
                               </span>
                             </th>
                             <th className="text-right px-3 py-2.5" style={{ fontWeight: 600 }}>
                               <span className="flex items-center justify-end gap-1">
                                 <Gauge className="w-3 h-3" /> LPS
+                                <FieldTooltip text="Leases per second — DHCP lease rate on this DC. High LPS drives appliance tier up independently of QPS." side="top" />
                               </span>
                             </th>
                             <th className="text-right px-3 py-2.5" style={{ fontWeight: 600 }}>Objects</th>
-                            <th className="text-center px-3 py-2.5" style={{ fontWeight: 600 }}>Size</th>
+                            <th className="text-center px-3 py-2.5" style={{ fontWeight: 600 }}>
+                              <span className="flex items-center justify-center gap-1">
+                                Size
+                                <FieldTooltip text="NIOS-X appliance T-shirt size (2XS → XL) determined by the highest of QPS, LPS, and object thresholds. Each tier has a fixed server token cost." side="top" />
+                              </span>
+                            </th>
                             <th className="text-center px-3 py-2.5" style={{ fontWeight: 600 }}>
                               <span className="text-blue-700">Allocated Tokens</span>
                             </th>

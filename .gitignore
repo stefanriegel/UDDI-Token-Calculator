@@ -54,3 +54,6 @@ coverage/
 .cache/
 tmp/
 Thumbs.db
+
+# ── GSD baseline (auto-generated) ──
+.gsd
