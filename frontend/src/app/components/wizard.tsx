@@ -3728,11 +3728,30 @@ export function Wizard() {
                   }
                 };
 
-                // Scenario token calculations
-                const totalServerTokens = effectiveADMetrics.reduce((s, m) => s + m.serverTokens, 0);
-                const hybridServerTokens = effectiveADMetrics
-                  .filter(m => adMigrationMap.has(m.hostname))
-                  .reduce((s, m) => s + m.serverTokens, 0);
+                // Scenario token calculations — migration-map-aware, XaaS-consolidated.
+                // Helper: compute tokens for a set of DCs respecting their form factor.
+                const calcAdScenarioTokens = (dcs: typeof effectiveADMetrics) => {
+                  if (dcs.length === 0) return 0;
+                  const niosXDcs = dcs.filter(m => adMigrationMap.get(m.hostname) !== 'nios-xaas');
+                  const xaasDcs  = dcs.filter(m => adMigrationMap.get(m.hostname) === 'nios-xaas');
+                  const niosXTok = niosXDcs.reduce((s, m) =>
+                    s + calcServerTokenTier(m.qps, m.lps, m.dnsObjects + m.dhcpObjectsWithOverhead, 'nios-x').serverTokens, 0);
+                  const xaasInst = consolidateXaasInstances(xaasDcs.map(m => ({
+                    memberId: m.hostname, memberName: m.hostname, role: 'DC',
+                    qps: m.qps, lps: m.lps, objectCount: m.dnsObjects + m.dhcpObjectsWithOverhead,
+                  })));
+                  return niosXTok + xaasInst.reduce((s, inst) => s + inst.totalTokens, 0);
+                };
+
+                // Full Migration: all DCs default to NIOS-X when no map entry exists.
+                // We simulate "all migrated to NIOS-X" for the baseline full scenario.
+                const fullMigrationTokens = effectiveADMetrics.reduce((s, m) =>
+                  s + calcServerTokenTier(m.qps, m.lps, m.dnsObjects + m.dhcpObjectsWithOverhead, 'nios-x').serverTokens, 0);
+
+                // Hybrid: only selected DCs, using their actual form factor.
+                const hybridServerTokens = calcAdScenarioTokens(
+                  effectiveADMetrics.filter(m => adMigrationMap.has(m.hostname))
+                );
 
                 const adNiosXCount = Array.from(adMigrationMap.values()).filter(v => v === 'nios-x').length;
                 const adXaasCount = Array.from(adMigrationMap.values()).filter(v => v === 'nios-xaas').length;
@@ -3745,7 +3764,7 @@ export function Wizard() {
                     ? `${adMigrationMap.size} of ${adHostnames.length} DCs migrated${adNiosXCount > 0 && adXaasCount > 0 ? ` (${adNiosXCount} NIOS-X, ${adXaasCount} XaaS)` : adNiosXCount > 0 ? ' to NIOS-X' : ' to XaaS'}. Remainder stay on Windows.`
                     : 'Select DCs to migrate. Remainder stay on Windows licensing.'
                 };
-                const scenarioFull = { label: 'Full Migration', tokens: totalServerTokens, desc: `All ${adHostnames.length} DCs migrated to NIOS-X for unified DDI management.` };
+                const scenarioFull = { label: 'Full Migration', tokens: fullMigrationTokens, desc: `All ${adHostnames.length} DCs migrated to NIOS-X for unified DDI management.` };
 
                 const tierColors: Record<string, string> = {
                   '2XS': 'bg-gray-100 text-gray-700',
