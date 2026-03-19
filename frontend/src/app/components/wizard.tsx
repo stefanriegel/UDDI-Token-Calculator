@@ -1012,6 +1012,12 @@ export function Wizard() {
         }
       }
     }
+    summary += `\n\nRecommended SKUs`;
+    summary += `\nSKU Code,Description,Pack Count`;
+    summary += `\nIB-TOKENS-UDDI-MGMT-1000,Management Token Pack (1000 tokens),${Math.ceil(totalTokens / 1000)}`;
+    if (hasServerMetrics) {
+      summary += `\nIB-TOKENS-UDDI-SERV-500,Server Token Pack (500 tokens),${Math.ceil(totalServerTokens / 500)}`;
+    }
     const csv = [header, ...rows].join('\n') + summary;
     downloadFile(csv, 'ddi-token-assessment.csv', 'text/csv');
   };
@@ -1124,6 +1130,15 @@ export function Wizard() {
         }
       }
     }
+    html += '<h3 style="margin-top:20px">Recommended SKUs</h3>';
+    html += '<table border="1" cellpadding="4" cellspacing="0" style="border-collapse:collapse">';
+    html += '<tr style="background:#002B49;color:white;font-weight:bold"><td>SKU Code</td><td>Description</td><td>Pack Count</td></tr>';
+    html += `<tr><td>IB-TOKENS-UDDI-MGMT-1000</td><td>Management Token Pack (1000 tokens)</td><td style="text-align:center;font-weight:bold">${Math.ceil(totalTokens / 1000).toLocaleString()}</td></tr>`;
+    if (hasServerMetrics) {
+      html += `<tr><td>IB-TOKENS-UDDI-SERV-500</td><td>Server Token Pack (500 tokens)</td><td style="text-align:center;font-weight:bold">${Math.ceil(totalServerTokens / 500).toLocaleString()}</td></tr>`;
+    }
+    html += '</table>';
+
     html += '</body></html>';
     downloadFile(html, 'ddi-token-assessment.xls', 'application/vnd.ms-excel');
   };
