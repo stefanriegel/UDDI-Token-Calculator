@@ -162,7 +162,7 @@ func findAssetURL(assets []ghAsset) string {
 
 // checkUpdateFromGitHub fetches the latest release info from GitHub.
 // For stable channel: fetches /releases/latest (single release).
-// For dev channel: fetches /releases?per_page=20 and selects the first pre-release.
+// For dev channel: fetches /releases?per_page=20 and selects the highest-versioned pre-release.
 func checkUpdateFromGitHub() (*UpdateCheckResponse, error) {
 	cacheMu.Lock()
 	if cachedUpdate != nil && time.Since(cachedUpdateTime) < cacheTTL {
@@ -201,10 +201,15 @@ func checkUpdateFromGitHub() (*UpdateCheckResponse, error) {
 			return nil, fmt.Errorf("failed to parse GitHub response: %w", err)
 		}
 
+		// GitHub's list order is not guaranteed to be semver-sorted,
+		// so collect all pre-releases and pick the highest version.
 		for i := range releases {
-			if releases[i].Prerelease {
-				release = &releases[i]
-				break
+			if !releases[i].Prerelease {
+				continue
+			}
+			if release == nil || isNewerVersion(release.TagName, releases[i].TagName) {
+				r := releases[i]
+				release = &r
 			}
 		}
 

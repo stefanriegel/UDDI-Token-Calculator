@@ -336,6 +336,36 @@ func TestChannelDevSeesNewerPreRelease(t *testing.T) {
 	}
 }
 
+func TestChannelDevPicksHighestPreRelease(t *testing.T) {
+	defer resetUpdateState(t)()
+
+	// Simulate GitHub returning pre-releases out of semver order (as observed in production)
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]ghRelease{
+			{TagName: "v2.4.0-dev.9", Prerelease: true, Assets: []ghAsset{{Name: "uddi-token-calculator_linux_amd64", BrowserDownloadURL: "https://example.com/9"}}},
+			{TagName: "v2.4.0-dev.8", Prerelease: true, Assets: []ghAsset{{Name: "uddi-token-calculator_linux_amd64", BrowserDownloadURL: "https://example.com/8"}}},
+			{TagName: "v2.4.0-dev.11", Prerelease: true, Assets: []ghAsset{{Name: "uddi-token-calculator_linux_amd64", BrowserDownloadURL: "https://example.com/11"}}},
+			{TagName: "v2.4.0-dev.10", Prerelease: true, Assets: []ghAsset{{Name: "uddi-token-calculator_linux_amd64", BrowserDownloadURL: "https://example.com/10"}}},
+		})
+	}))
+	defer mockServer.Close()
+
+	version.Version = "v2.4.0-dev.9"
+	version.Channel = "dev"
+	ghReleasesURL = mockServer.URL + "/releases"
+
+	result, err := checkUpdateFromGitHub()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.UpdateAvailable {
+		t.Error("expected UpdateAvailable=true: dev.11 is newer than dev.9")
+	}
+	if result.LatestVersion != "v2.4.0-dev.11" {
+		t.Errorf("expected LatestVersion=v2.4.0-dev.11, got %s", result.LatestVersion)
+	}
+}
+
 func TestChannelDevNoPreReleasesAvailable(t *testing.T) {
 	defer resetUpdateState(t)()
 
