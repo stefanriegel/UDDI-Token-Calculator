@@ -359,6 +359,8 @@ export function Wizard() {
   const [topDhcpExpanded, setTopDhcpExpanded] = useState(false);
   const [topIpExpanded, setTopIpExpanded] = useState(false);
   const [showAllHeroSources, setShowAllHeroSources] = useState(false);
+  const [mgmtCardCollapsed, setMgmtCardCollapsed] = useState(true);
+  const [serverCardCollapsed, setServerCardCollapsed] = useState(true);
   const [showAllCategorySources, setShowAllCategorySources] = useState<Record<string, boolean>>({});
 
   // Findings table filters & sorting
@@ -2770,111 +2772,195 @@ export function Wizard() {
           {/* Step 5: Results & Export */}
           {currentStep === 'results' && (
             <div>
-              {/* Total Management Tokens — hero card */}
-              <div id="section-overview" className="bg-white rounded-xl border-2 border-[var(--infoblox-orange)]/30 p-5 mb-6">
-                <div className="flex items-start justify-between mb-4">
-                  <div>
-                    <div className="flex items-center gap-1.5 text-[13px] text-[var(--muted-foreground)] mb-1">
-                      Total Management Tokens
-                      <FieldTooltip text="The total number of Infoblox Universal DDI management tokens required for your environment. This drives the IB-TOKENS-UDDI-MGMT-1000 pack count." side="right" />
-                    </div>
-                    <div className="text-[32px] text-[var(--infoblox-orange)]" style={{ fontWeight: 700 }}>
-                      {totalTokens.toLocaleString()}
-                    </div>
-                  </div>
-                  <div className="text-[11px] text-[var(--muted-foreground)] mt-1">
-                    By {selectedProviders.map((p) => PROVIDERS.find((pr) => pr.id === p)!.subscriptionLabel).filter((v, i, a) => a.indexOf(v) === i).join(' / ')}
-                  </div>
-                </div>
-                {/* Per-source contribution bars */}
-                <div className="space-y-2.5">
-                  {(() => {
-                    const sourceMap = new Map<string, { source: string; provider: ProviderType; tokens: number }>();
-                    findings.forEach((f) => {
-                      const key = `${f.provider}::${f.source}`;
-                      if (!sourceMap.has(key)) sourceMap.set(key, { source: f.source, provider: f.provider, tokens: 0 });
-                      sourceMap.get(key)!.tokens += f.managementTokens;
-                    });
-                    const sources = Array.from(sourceMap.values()).sort((a, b) => b.tokens - a.tokens);
-                    const HERO_LIMIT = 10;
-                    const visibleSources = showAllHeroSources ? sources : sources.slice(0, HERO_LIMIT);
-                    const hiddenCount = sources.length - HERO_LIMIT;
-                    const heroNeedsScroll = showAllHeroSources && sources.length > 15;
-                    return (
-                      <>
-                        <div className={heroNeedsScroll ? 'max-h-[400px] overflow-y-auto' : ''}>
-                        {visibleSources.map((entry) => {
-                          const provider = PROVIDERS.find((p) => p.id === entry.provider)!;
-                          const pct = totalTokens > 0 ? (entry.tokens / totalTokens) * 100 : 0;
-                          return (
-                            <div key={`${entry.provider}-${entry.source}`} className="mb-2.5">
-                              <div className="flex items-center justify-between mb-1">
-                                <span className="text-[12px] flex items-center gap-1.5" style={{ fontWeight: 500 }}>
-                                  <span
-                                    className="inline-block w-2 h-2 rounded-full shrink-0"
-                                    style={{ backgroundColor: provider.color }}
-                                  />
-                                  {entry.source}
-                                  <span className="text-[11px] text-[var(--muted-foreground)]" style={{ fontWeight: 400 }}>
-                                    {provider.name}
-                                  </span>
-                                </span>
-                                <span className="text-[12px] tabular-nums text-[var(--muted-foreground)]">
-                                  {entry.tokens.toLocaleString()} <span className="text-[11px]">({Math.round(pct)}%)</span>
-                                </span>
-                              </div>
-                              <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                                <div
-                                  className="h-full rounded-full transition-all"
-                                  style={{ width: `${pct}%`, backgroundColor: provider.color }}
-                                />
-                              </div>
-                            </div>
-                          );
-                        })}
-                        </div>
-                        {hiddenCount > 0 && (
-                          <button
-                            type="button"
-                            onClick={() => setShowAllHeroSources((v) => !v)}
-                            className="text-[12px] text-[var(--infoblox-blue)] hover:underline mt-1"
-                            style={{ fontWeight: 500 }}
-                          >
-                            {showAllHeroSources ? 'Show less' : `Show ${hiddenCount} more sources...`}
-                          </button>
-                        )}
-                      </>
-                    );
-                  })()}
-                </div>
+              {/* Hero cards — Total Management Tokens + Total Server Tokens */}
+              <div id="section-overview" className={`grid gap-4 mb-6 ${hasServerMetrics ? 'grid-cols-1 lg:grid-cols-2' : 'grid-cols-1'}`}>
 
-              {/* Recommended SKUs */}
-              <div className="mt-4 pt-4 border-t border-[var(--border)]">
-                <div className="text-[12px] font-semibold text-[var(--muted-foreground)] mb-2 uppercase tracking-wider">
-                  Recommended SKUs
-                </div>
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between text-[13px]">
-                    <span className="font-mono text-[11px] bg-orange-50 text-orange-800 px-2 py-0.5 rounded border border-orange-200">
-                      IB-TOKENS-UDDI-MGMT-1000
-                    </span>
-                    <span className="font-semibold text-[var(--infoblox-orange)]">
-                      × {Math.ceil(totalTokens / 1000).toLocaleString()} pack{Math.ceil(totalTokens / 1000) !== 1 ? 's' : ''}
-                    </span>
-                  </div>
-                  {hasServerMetrics && (
-                    <div className="flex items-center justify-between text-[13px]">
-                      <span className="font-mono text-[11px] bg-blue-50 text-blue-800 px-2 py-0.5 rounded border border-blue-200">
-                        IB-TOKENS-UDDI-SERV-500
-                      </span>
-                      <span className="font-semibold text-blue-700">
-                        × {Math.ceil(totalServerTokens / 500).toLocaleString()} pack{Math.ceil(totalServerTokens / 500) !== 1 ? 's' : ''}
-                      </span>
+                {/* ── Management Token card ─────────────────────────────────── */}
+                <div className="bg-white rounded-xl border-2 border-[var(--infoblox-orange)]/30 p-5">
+                  {/* Header — always visible */}
+                  <button
+                    type="button"
+                    onClick={() => setMgmtCardCollapsed(v => !v)}
+                    className="w-full flex items-center justify-between gap-3 text-left"
+                  >
+                    <div>
+                      <div className="flex items-center gap-1.5 text-[13px] text-[var(--muted-foreground)] mb-1">
+                        Total Management Tokens
+                        <FieldTooltip text="The total number of Infoblox Universal DDI management tokens required for your environment. This drives the IB-TOKENS-UDDI-MGMT-1000 pack count." side="right" />
+                      </div>
+                      <div className="text-[32px] text-[var(--infoblox-orange)]" style={{ fontWeight: 700 }}>
+                        {totalTokens.toLocaleString()}
+                      </div>
+                    </div>
+                    <div className="flex flex-col items-end gap-1 shrink-0">
+                      <div className="text-[11px] text-[var(--muted-foreground)]">
+                        By {selectedProviders.map((p) => PROVIDERS.find((pr) => pr.id === p)!.subscriptionLabel).filter((v, i, a) => a.indexOf(v) === i).join(' / ')}
+                      </div>
+                      <ChevronDown className={`w-4 h-4 text-[var(--muted-foreground)] transition-transform ${mgmtCardCollapsed ? '' : 'rotate-180'}`} />
+                    </div>
+                  </button>
+
+              {/* Expandable detail — bars + SKU */}
+                  {!mgmtCardCollapsed && (
+                    <div className="mt-4">
+                      {/* Per-source contribution bars */}
+                      <div className="space-y-2.5 mb-4">
+                        {(() => {
+                          const sourceMap = new Map<string, { source: string; provider: ProviderType; tokens: number }>();
+                          findings.forEach((f) => {
+                            const key = `${f.provider}::${f.source}`;
+                            if (!sourceMap.has(key)) sourceMap.set(key, { source: f.source, provider: f.provider, tokens: 0 });
+                            sourceMap.get(key)!.tokens += f.managementTokens;
+                          });
+                          const sources = Array.from(sourceMap.values()).sort((a, b) => b.tokens - a.tokens);
+                          const HERO_LIMIT = 10;
+                          const visibleSources = showAllHeroSources ? sources : sources.slice(0, HERO_LIMIT);
+                          const hiddenCount = sources.length - HERO_LIMIT;
+                          const heroNeedsScroll = showAllHeroSources && sources.length > 15;
+                          return (
+                            <>
+                              <div className={heroNeedsScroll ? 'max-h-[400px] overflow-y-auto' : ''}>
+                              {visibleSources.map((entry) => {
+                                const provider = PROVIDERS.find((p) => p.id === entry.provider)!;
+                                const pct = totalTokens > 0 ? (entry.tokens / totalTokens) * 100 : 0;
+                                return (
+                                  <div key={`${entry.provider}-${entry.source}`} className="mb-2.5">
+                                    <div className="flex items-center justify-between mb-1">
+                                      <span className="text-[12px] flex items-center gap-1.5" style={{ fontWeight: 500 }}>
+                                        <span className="inline-block w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: provider.color }} />
+                                        {entry.source}
+                                        <span className="text-[11px] text-[var(--muted-foreground)]" style={{ fontWeight: 400 }}>{provider.name}</span>
+                                      </span>
+                                      <span className="text-[12px] tabular-nums text-[var(--muted-foreground)]">
+                                        {entry.tokens.toLocaleString()} <span className="text-[11px]">({Math.round(pct)}%)</span>
+                                      </span>
+                                    </div>
+                                    <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                                      <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, backgroundColor: provider.color }} />
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                              </div>
+                              {hiddenCount > 0 && (
+                                <button type="button" onClick={() => setShowAllHeroSources((v) => !v)}
+                                  className="text-[12px] text-[var(--infoblox-blue)] hover:underline mt-1" style={{ fontWeight: 500 }}>
+                                  {showAllHeroSources ? 'Show less' : `Show ${hiddenCount} more sources...`}
+                                </button>
+                              )}
+                            </>
+                          );
+                        })()}
+                      </div>
+                      {/* SKU */}
+                      <div className="pt-3 border-t border-[var(--border)]">
+                        <div className="text-[11px] font-semibold text-[var(--muted-foreground)] mb-2 uppercase tracking-wider">Recommended SKU</div>
+                        <div className="flex items-center justify-between text-[13px]">
+                          <span className="font-mono text-[11px] bg-orange-50 text-orange-800 px-2 py-0.5 rounded border border-orange-200">IB-TOKENS-UDDI-MGMT-1000</span>
+                          <span className="font-semibold text-[var(--infoblox-orange)]">× {Math.ceil(totalTokens / 1000).toLocaleString()} pack{Math.ceil(totalTokens / 1000) !== 1 ? 's' : ''}</span>
+                        </div>
+                      </div>
                     </div>
                   )}
                 </div>
-              </div>
-              </div>
+
+                {/* ── Server Token card ─────────────────────────────────────── */}
+                {hasServerMetrics && (() => {
+                  // Per-source server token breakdown
+                  const srvSources: { label: string; color: string; tokens: number }[] = [];
+                  if (selectedProviders.includes('nios') && effectiveNiosMetrics.length > 0) {
+                    effectiveNiosMetrics.forEach(m => {
+                      const t = calcServerTokenTier(m.qps, m.lps, m.objectCount, 'nios-x').serverTokens;
+                      if (t > 0) srvSources.push({ label: m.memberName, color: '#00a5e5', tokens: t });
+                    });
+                  }
+                  if (selectedProviders.includes('microsoft') && effectiveADMetrics.length > 0) {
+                    const dcs = adMigrationMap.size > 0
+                      ? effectiveADMetrics.filter(m => adMigrationMap.has(m.hostname))
+                      : effectiveADMetrics;
+                    dcs.forEach(m => {
+                      const t = calcServerTokenTier(m.qps, m.lps, m.dnsObjects + m.dhcpObjectsWithOverhead, 'nios-x').serverTokens;
+                      if (t > 0) srvSources.push({ label: m.hostname, color: '#0078d4', tokens: t });
+                    });
+                  }
+                  srvSources.sort((a, b) => b.tokens - a.tokens);
+                  const SRV_LIMIT = 10;
+                  const visibleSrv = srvSources.slice(0, SRV_LIMIT);
+                  const hiddenSrv = srvSources.length - SRV_LIMIT;
+
+                  return (
+                    <div className="bg-white rounded-xl border-2 border-blue-200 p-5">
+                      {/* Header — always visible */}
+                      <button
+                        type="button"
+                        onClick={() => setServerCardCollapsed(v => !v)}
+                        className="w-full flex items-center justify-between gap-3 text-left"
+                      >
+                        <div>
+                          <div className="flex items-center gap-1.5 text-[13px] text-[var(--muted-foreground)] mb-1">
+                            Total Server Tokens
+                            <FieldTooltip text="Server tokens (IB-TOKENS-UDDI-SERV-500) cover NIOS-X appliances and XaaS instances based on their performance tier. Separate from management tokens." side="right" />
+                          </div>
+                          <div className="text-[32px] text-blue-700" style={{ fontWeight: 700 }}>
+                            {totalServerTokens.toLocaleString()}
+                          </div>
+                        </div>
+                        <div className="flex flex-col items-end gap-1 shrink-0">
+                          <div className="text-[11px] text-[var(--muted-foreground)]">
+                            By Grid Members / DCs
+                          </div>
+                          <ChevronDown className={`w-4 h-4 text-[var(--muted-foreground)] transition-transform ${serverCardCollapsed ? '' : 'rotate-180'}`} />
+                        </div>
+                      </button>
+
+                      {/* Expandable detail */}
+                      {!serverCardCollapsed && (
+                        <div className="mt-4">
+                          <div className="space-y-2.5 mb-4">
+                            {srvSources.length === 0 ? (
+                              <div className="text-[12px] text-[var(--muted-foreground)]">No server metrics available.</div>
+                            ) : (
+                              <>
+                                {visibleSrv.map((entry) => {
+                                  const pct = totalServerTokens > 0 ? (entry.tokens / totalServerTokens) * 100 : 0;
+                                  return (
+                                    <div key={entry.label} className="mb-2.5">
+                                      <div className="flex items-center justify-between mb-1">
+                                        <span className="text-[12px] flex items-center gap-1.5" style={{ fontWeight: 500 }}>
+                                          <span className="inline-block w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: entry.color }} />
+                                          {entry.label}
+                                        </span>
+                                        <span className="text-[12px] tabular-nums text-[var(--muted-foreground)]">
+                                          {entry.tokens.toLocaleString()} <span className="text-[11px]">({Math.round(pct)}%)</span>
+                                        </span>
+                                      </div>
+                                      <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                                        <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, backgroundColor: entry.color }} />
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                                {hiddenSrv > 0 && (
+                                  <div className="text-[12px] text-[var(--muted-foreground)] mt-1">+{hiddenSrv} more sources</div>
+                                )}
+                              </>
+                            )}
+                          </div>
+                          {/* SKU */}
+                          <div className="pt-3 border-t border-[var(--border)]">
+                            <div className="text-[11px] font-semibold text-[var(--muted-foreground)] mb-2 uppercase tracking-wider">Recommended SKU</div>
+                            <div className="flex items-center justify-between text-[13px]">
+                              <span className="font-mono text-[11px] bg-blue-50 text-blue-800 px-2 py-0.5 rounded border border-blue-200">IB-TOKENS-UDDI-SERV-500</span>
+                              <span className="font-semibold text-blue-700">× {Math.ceil(totalServerTokens / 500).toLocaleString()} pack{Math.ceil(totalServerTokens / 500) !== 1 ? 's' : ''}</span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+
+              </div>{/* end hero grid */}
 
               {/* Section jump navigation — only for NIOS scans */}
               {(selectedProviders.includes('nios') || (selectedProviders.includes('microsoft') && effectiveADMetrics.length > 0)) && (
