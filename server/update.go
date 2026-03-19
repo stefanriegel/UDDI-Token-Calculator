@@ -42,8 +42,12 @@ type ghAsset struct {
 	BrowserDownloadURL string `json:"browser_download_url"`
 }
 
-// ghClient is the HTTP client used for GitHub API calls.
+// ghClient is the HTTP client used for GitHub API calls (short timeout).
 var ghClient = &http.Client{Timeout: 30 * time.Second}
+
+// dlClient is the HTTP client used for binary downloads (no timeout — relies on
+// the OS TCP keepalive and io.Copy progress; a fixed timeout would kill large downloads).
+var dlClient = &http.Client{Timeout: 0}
 
 // ghReleasesURL is the base URL for GitHub Releases API calls.
 // It is a var (not const) so tests can override it with httptest.NewServer URLs.
@@ -405,7 +409,7 @@ func HandleSelfUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	dlReq.Header.Set("User-Agent", "uddi-token-calculator/"+version.Version)
 
-	dlResp, err := ghClient.Do(dlReq)
+	dlResp, err := dlClient.Do(dlReq)
 	if err != nil {
 		cleanupTmp()
 		json.NewEncoder(w).Encode(SelfUpdateResponse{
