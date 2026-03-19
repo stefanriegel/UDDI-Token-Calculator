@@ -359,8 +359,7 @@ export function Wizard() {
   const [topDhcpExpanded, setTopDhcpExpanded] = useState(false);
   const [topIpExpanded, setTopIpExpanded] = useState(false);
   const [showAllHeroSources, setShowAllHeroSources] = useState(false);
-  const [mgmtCardCollapsed, setMgmtCardCollapsed] = useState(true);
-  const [serverCardCollapsed, setServerCardCollapsed] = useState(true);
+  const [heroCollapsed, setHeroCollapsed] = useState(true);
   const [showAllCategorySources, setShowAllCategorySources] = useState<Record<string, boolean>>({});
 
   // Findings table filters & sorting
@@ -967,6 +966,57 @@ export function Wizard() {
 
   const hasServerMetrics = (selectedProviders.includes('nios') && effectiveNiosMetrics.length > 0)
     || (selectedProviders.includes('microsoft') && effectiveADMetrics.length > 0);
+
+  // Hybrid-scenario totals — only meaningful when a migration map has selections.
+  // Uses the same logic as the Migration Planner scenario cards.
+  const hybridScenario = useMemo(() => {
+    const hasNiosSelections = selectedProviders.includes('nios') && niosMigrationMap.size > 0;
+    const hasAdSelections   = selectedProviders.includes('microsoft') && adMigrationMap.size > 0;
+    if (!hasNiosSelections && !hasAdSelections) return null;
+
+    // ── Management tokens ──────────────────────────────────────────────────
+    let hybridMgmt = 0;
+    // Non-NIOS findings always count at full management token value
+    hybridMgmt += findings.filter(f => f.provider !== 'nios').reduce((s, f) => s + f.managementTokens, 0);
+    if (hasNiosSelections) {
+      const nf = findings.filter(f => f.provider === 'nios');
+      // Migrating members → UDDI management tokens
+      hybridMgmt += nf.filter(f => niosMigrationMap.has(f.source)).reduce((s, f) => s + f.managementTokens, 0);
+      // Staying members → NIOS licensing (no UDDI mgmt tokens)
+    } else if (selectedProviders.includes('nios')) {
+      // No NIOS selections → treat all NIOS as migrated (full universal DDI baseline)
+      hybridMgmt += findings.filter(f => f.provider === 'nios').reduce((s, f) => s + f.managementTokens, 0);
+    }
+
+    // ── Server tokens ──────────────────────────────────────────────────────
+    let hybridSrv = 0;
+    if (hasNiosSelections) {
+      const selected = effectiveNiosMetrics.filter(m => niosMigrationMap.has(m.memberName));
+      const niosX = selected.filter(m => niosMigrationMap.get(m.memberName) !== 'nios-xaas');
+      const xaas  = selected.filter(m => niosMigrationMap.get(m.memberName) === 'nios-xaas');
+      hybridSrv += niosX.reduce((s, m) => s + calcServerTokenTier(m.qps, m.lps, m.objectCount, 'nios-x').serverTokens, 0);
+      const xaasInst = consolidateXaasInstances(xaas.map(m => ({
+        memberId: m.memberName, memberName: m.memberName, role: 'GM',
+        qps: m.qps, lps: m.lps, objectCount: m.objectCount,
+      })));
+      hybridSrv += xaasInst.reduce((s, inst) => s + inst.totalTokens, 0);
+    }
+    if (hasAdSelections) {
+      const selectedDcs = effectiveADMetrics.filter(m => adMigrationMap.has(m.hostname));
+      const niosXDcs = selectedDcs.filter(m => adMigrationMap.get(m.hostname) !== 'nios-xaas');
+      const xaasDcs  = selectedDcs.filter(m => adMigrationMap.get(m.hostname) === 'nios-xaas');
+      hybridSrv += niosXDcs.reduce((s, m) =>
+        s + calcServerTokenTier(m.qps, m.lps, m.dnsObjects + m.dhcpObjectsWithOverhead, 'nios-x').serverTokens, 0);
+      const xaasInst = consolidateXaasInstances(xaasDcs.map(m => ({
+        memberId: m.hostname, memberName: m.hostname, role: 'DC',
+        qps: m.qps, lps: m.lps, objectCount: m.dnsObjects + m.dhcpObjectsWithOverhead,
+      })));
+      hybridSrv += xaasInst.reduce((s, inst) => s + inst.totalTokens, 0);
+    }
+
+    const selectionCount = niosMigrationMap.size + adMigrationMap.size;
+    return { mgmt: hybridMgmt, srv: hybridSrv, selectionCount };
+  }, [findings, effectiveNiosMetrics, effectiveADMetrics, niosMigrationMap, adMigrationMap, selectedProviders]);
 
   // Filtered + sorted findings for the table
   const filteredSortedFindings = useMemo(() => {
@@ -2772,17 +2822,17 @@ export function Wizard() {
           {/* Step 5: Results & Export */}
           {currentStep === 'results' && (
             <div>
-              {/* Hero cards — Total Management Tokens + Total Server Tokens */}
-              <div id="section-overview" className={`grid gap-4 mb-6 ${hasServerMetrics ? 'grid-cols-1 lg:grid-cols-2' : 'grid-cols-1'}`}>
+              {/* ── Hero summary card ───────────────────────────────────── */}
+              <div id="section-overview" className="bg-white rounded-xl border-2 border-[var(--infoblox-orange)]/30 p-5 mb-6">
 
-                {/* ── Management Token card ─────────────────────────────────── */}
-                <div className="bg-white rounded-xl border-2 border-[var(--infoblox-orange)]/30 p-5">
-                  {/* Header — always visible */}
-                  <button
-                    type="button"
-                    onClick={() => setMgmtCardCollapsed(v => !v)}
-                    className="w-full flex items-center justify-between gap-3 text-left"
-                  >
+                {/* Always-visible header: both totals + single toggle */}
+                <button
+                  type="button"
+                  onClick={() => setHeroCollapsed(v => !v)}
+                  className="w-full text-left"
+                >
+                  <div className={`grid gap-6 ${hasServerMetrics ? 'grid-cols-2' : 'grid-cols-1'}`}>
+                    {/* Management total */}
                     <div>
                       <div className="flex items-center gap-1.5 text-[13px] text-[var(--muted-foreground)] mb-1">
                         Total Management Tokens
@@ -2791,20 +2841,71 @@ export function Wizard() {
                       <div className="text-[32px] text-[var(--infoblox-orange)]" style={{ fontWeight: 700 }}>
                         {totalTokens.toLocaleString()}
                       </div>
-                    </div>
-                    <div className="flex flex-col items-end gap-1 shrink-0">
-                      <div className="text-[11px] text-[var(--muted-foreground)]">
-                        By {selectedProviders.map((p) => PROVIDERS.find((pr) => pr.id === p)!.subscriptionLabel).filter((v, i, a) => a.indexOf(v) === i).join(' / ')}
+                      <div className="flex items-center gap-2 mt-1">
+                        <span className="font-mono text-[11px] bg-orange-50 text-orange-800 px-2 py-0.5 rounded border border-orange-200">IB-TOKENS-UDDI-MGMT-1000</span>
+                        <span className="text-[12px] font-semibold text-[var(--infoblox-orange)]">× {Math.ceil(totalTokens / 1000).toLocaleString()} pack{Math.ceil(totalTokens / 1000) !== 1 ? 's' : ''}</span>
                       </div>
-                      <ChevronDown className={`w-4 h-4 text-[var(--muted-foreground)] transition-transform ${mgmtCardCollapsed ? '' : 'rotate-180'}`} />
+                      {hybridScenario && (
+                        <div className="mt-2 pt-2 border-t border-orange-100">
+                          <div className="text-[11px] text-[var(--muted-foreground)] mb-0.5">
+                            Hybrid scenario <span className="text-orange-600">({hybridScenario.selectionCount} selected)</span>
+                          </div>
+                          <div className="text-[22px] text-orange-400" style={{ fontWeight: 700, lineHeight: 1.1 }}>
+                            {hybridScenario.mgmt.toLocaleString()}
+                          </div>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            <span className="font-mono text-[10px] bg-orange-50 text-orange-700 px-1.5 py-0.5 rounded border border-orange-200">IB-TOKENS-UDDI-MGMT-1000</span>
+                            <span className="text-[11px] font-semibold text-orange-400">× {Math.ceil(hybridScenario.mgmt / 1000).toLocaleString()} pack{Math.ceil(hybridScenario.mgmt / 1000) !== 1 ? 's' : ''}</span>
+                          </div>
+                        </div>
+                      )}
                     </div>
-                  </button>
+                    {/* Server total */}
+                    {hasServerMetrics && (
+                      <div className="border-l border-[var(--border)] pl-6">
+                        <div className="flex items-center gap-1.5 text-[13px] text-[var(--muted-foreground)] mb-1">
+                          Total Server Tokens
+                          <FieldTooltip text="Server tokens (IB-TOKENS-UDDI-SERV-500) cover NIOS-X appliances and XaaS instances based on their performance tier. Separate from management tokens." side="right" />
+                        </div>
+                        <div className="text-[32px] text-blue-700" style={{ fontWeight: 700 }}>
+                          {totalServerTokens.toLocaleString()}
+                        </div>
+                        <div className="flex items-center gap-2 mt-1">
+                          <span className="font-mono text-[11px] bg-blue-50 text-blue-800 px-2 py-0.5 rounded border border-blue-200">IB-TOKENS-UDDI-SERV-500</span>
+                          <span className="text-[12px] font-semibold text-blue-700">× {Math.ceil(totalServerTokens / 500).toLocaleString()} pack{Math.ceil(totalServerTokens / 500) !== 1 ? 's' : ''}</span>
+                        </div>
+                        {hybridScenario && (
+                          <div className="mt-2 pt-2 border-t border-blue-100">
+                            <div className="text-[11px] text-[var(--muted-foreground)] mb-0.5">
+                              Hybrid scenario <span className="text-blue-500">({hybridScenario.selectionCount} selected)</span>
+                            </div>
+                            <div className="text-[22px] text-blue-400" style={{ fontWeight: 700, lineHeight: 1.1 }}>
+                              {hybridScenario.srv.toLocaleString()}
+                            </div>
+                            <div className="flex items-center gap-2 mt-0.5">
+                              <span className="font-mono text-[10px] bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded border border-blue-200">IB-TOKENS-UDDI-SERV-500</span>
+                              <span className="text-[11px] font-semibold text-blue-400">× {Math.ceil(hybridScenario.srv / 500).toLocaleString()} pack{Math.ceil(hybridScenario.srv / 500) !== 1 ? 's' : ''}</span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  {/* Expand/collapse hint */}
+                  <div className="flex items-center gap-1 mt-3 text-[11px] text-[var(--muted-foreground)]">
+                    <ChevronDown className={`w-3.5 h-3.5 transition-transform ${heroCollapsed ? '' : 'rotate-180'}`} />
+                    {heroCollapsed ? 'Show breakdown by source' : 'Hide breakdown'}
+                  </div>
+                </button>
 
-              {/* Expandable detail — bars + SKU */}
-                  {!mgmtCardCollapsed && (
-                    <div className="mt-4">
-                      {/* Per-source contribution bars */}
-                      <div className="space-y-2.5 mb-4">
+                {/* Expandable: per-source bars for both columns */}
+                {!heroCollapsed && (
+                  <div className={`mt-4 pt-4 border-t border-[var(--border)] grid gap-6 ${hasServerMetrics ? 'grid-cols-2' : 'grid-cols-1'}`}>
+
+                    {/* Management breakdown */}
+                    <div>
+                      <div className="text-[11px] font-semibold text-[var(--muted-foreground)] mb-3 uppercase tracking-wider">By Source — Management</div>
+                      <div className="space-y-2.5">
                         {(() => {
                           const sourceMap = new Map<string, { source: string; provider: ProviderType; tokens: number }>();
                           findings.forEach((f) => {
@@ -2813,115 +2914,78 @@ export function Wizard() {
                             sourceMap.get(key)!.tokens += f.managementTokens;
                           });
                           const sources = Array.from(sourceMap.values()).sort((a, b) => b.tokens - a.tokens);
-                          const HERO_LIMIT = 10;
-                          const visibleSources = showAllHeroSources ? sources : sources.slice(0, HERO_LIMIT);
-                          const hiddenCount = sources.length - HERO_LIMIT;
-                          const heroNeedsScroll = showAllHeroSources && sources.length > 15;
+                          const LIMIT = 10;
+                          const visible = showAllHeroSources ? sources : sources.slice(0, LIMIT);
+                          const hidden = sources.length - LIMIT;
+                          const needsScroll = showAllHeroSources && sources.length > 15;
                           return (
                             <>
-                              <div className={heroNeedsScroll ? 'max-h-[400px] overflow-y-auto' : ''}>
-                              {visibleSources.map((entry) => {
-                                const provider = PROVIDERS.find((p) => p.id === entry.provider)!;
-                                const pct = totalTokens > 0 ? (entry.tokens / totalTokens) * 100 : 0;
-                                return (
-                                  <div key={`${entry.provider}-${entry.source}`} className="mb-2.5">
-                                    <div className="flex items-center justify-between mb-1">
-                                      <span className="text-[12px] flex items-center gap-1.5" style={{ fontWeight: 500 }}>
-                                        <span className="inline-block w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: provider.color }} />
-                                        {entry.source}
-                                        <span className="text-[11px] text-[var(--muted-foreground)]" style={{ fontWeight: 400 }}>{provider.name}</span>
-                                      </span>
-                                      <span className="text-[12px] tabular-nums text-[var(--muted-foreground)]">
-                                        {entry.tokens.toLocaleString()} <span className="text-[11px]">({Math.round(pct)}%)</span>
-                                      </span>
+                              <div className={needsScroll ? 'max-h-[400px] overflow-y-auto' : ''}>
+                                {visible.map((entry) => {
+                                  const provider = PROVIDERS.find((p) => p.id === entry.provider)!;
+                                  const pct = totalTokens > 0 ? (entry.tokens / totalTokens) * 100 : 0;
+                                  return (
+                                    <div key={`${entry.provider}-${entry.source}`} className="mb-2.5">
+                                      <div className="flex items-center justify-between mb-1">
+                                        <span className="text-[12px] flex items-center gap-1.5" style={{ fontWeight: 500 }}>
+                                          <span className="inline-block w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: provider.color }} />
+                                          {entry.source}
+                                          <span className="text-[11px] text-[var(--muted-foreground)]" style={{ fontWeight: 400 }}>{provider.name}</span>
+                                        </span>
+                                        <span className="text-[12px] tabular-nums text-[var(--muted-foreground)]">
+                                          {entry.tokens.toLocaleString()} <span className="text-[11px]">({Math.round(pct)}%)</span>
+                                        </span>
+                                      </div>
+                                      <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                                        <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, backgroundColor: provider.color }} />
+                                      </div>
                                     </div>
-                                    <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                                      <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, backgroundColor: provider.color }} />
-                                    </div>
-                                  </div>
-                                );
-                              })}
+                                  );
+                                })}
                               </div>
-                              {hiddenCount > 0 && (
-                                <button type="button" onClick={() => setShowAllHeroSources((v) => !v)}
+                              {hidden > 0 && (
+                                <button type="button" onClick={(e) => { e.stopPropagation(); setShowAllHeroSources(v => !v); }}
                                   className="text-[12px] text-[var(--infoblox-blue)] hover:underline mt-1" style={{ fontWeight: 500 }}>
-                                  {showAllHeroSources ? 'Show less' : `Show ${hiddenCount} more sources...`}
+                                  {showAllHeroSources ? 'Show less' : `Show ${hidden} more sources...`}
                                 </button>
                               )}
                             </>
                           );
                         })()}
                       </div>
-                      {/* SKU */}
-                      <div className="pt-3 border-t border-[var(--border)]">
-                        <div className="text-[11px] font-semibold text-[var(--muted-foreground)] mb-2 uppercase tracking-wider">Recommended SKU</div>
-                        <div className="flex items-center justify-between text-[13px]">
-                          <span className="font-mono text-[11px] bg-orange-50 text-orange-800 px-2 py-0.5 rounded border border-orange-200">IB-TOKENS-UDDI-MGMT-1000</span>
-                          <span className="font-semibold text-[var(--infoblox-orange)]">× {Math.ceil(totalTokens / 1000).toLocaleString()} pack{Math.ceil(totalTokens / 1000) !== 1 ? 's' : ''}</span>
-                        </div>
-                      </div>
                     </div>
-                  )}
-                </div>
 
-                {/* ── Server Token card ─────────────────────────────────────── */}
-                {hasServerMetrics && (() => {
-                  // Per-source server token breakdown
-                  const srvSources: { label: string; color: string; tokens: number }[] = [];
-                  if (selectedProviders.includes('nios') && effectiveNiosMetrics.length > 0) {
-                    effectiveNiosMetrics.forEach(m => {
-                      const t = calcServerTokenTier(m.qps, m.lps, m.objectCount, 'nios-x').serverTokens;
-                      if (t > 0) srvSources.push({ label: m.memberName, color: '#00a5e5', tokens: t });
-                    });
-                  }
-                  if (selectedProviders.includes('microsoft') && effectiveADMetrics.length > 0) {
-                    const dcs = adMigrationMap.size > 0
-                      ? effectiveADMetrics.filter(m => adMigrationMap.has(m.hostname))
-                      : effectiveADMetrics;
-                    dcs.forEach(m => {
-                      const t = calcServerTokenTier(m.qps, m.lps, m.dnsObjects + m.dhcpObjectsWithOverhead, 'nios-x').serverTokens;
-                      if (t > 0) srvSources.push({ label: m.hostname, color: '#0078d4', tokens: t });
-                    });
-                  }
-                  srvSources.sort((a, b) => b.tokens - a.tokens);
-                  const SRV_LIMIT = 10;
-                  const visibleSrv = srvSources.slice(0, SRV_LIMIT);
-                  const hiddenSrv = srvSources.length - SRV_LIMIT;
-
-                  return (
-                    <div className="bg-white rounded-xl border-2 border-blue-200 p-5">
-                      {/* Header — always visible */}
-                      <button
-                        type="button"
-                        onClick={() => setServerCardCollapsed(v => !v)}
-                        className="w-full flex items-center justify-between gap-3 text-left"
-                      >
-                        <div>
-                          <div className="flex items-center gap-1.5 text-[13px] text-[var(--muted-foreground)] mb-1">
-                            Total Server Tokens
-                            <FieldTooltip text="Server tokens (IB-TOKENS-UDDI-SERV-500) cover NIOS-X appliances and XaaS instances based on their performance tier. Separate from management tokens." side="right" />
-                          </div>
-                          <div className="text-[32px] text-blue-700" style={{ fontWeight: 700 }}>
-                            {totalServerTokens.toLocaleString()}
-                          </div>
-                        </div>
-                        <div className="flex flex-col items-end gap-1 shrink-0">
-                          <div className="text-[11px] text-[var(--muted-foreground)]">
-                            By Grid Members / DCs
-                          </div>
-                          <ChevronDown className={`w-4 h-4 text-[var(--muted-foreground)] transition-transform ${serverCardCollapsed ? '' : 'rotate-180'}`} />
-                        </div>
-                      </button>
-
-                      {/* Expandable detail */}
-                      {!serverCardCollapsed && (
-                        <div className="mt-4">
-                          <div className="space-y-2.5 mb-4">
+                    {/* Server breakdown */}
+                    {hasServerMetrics && (() => {
+                      const srvSources: { label: string; color: string; tokens: number }[] = [];
+                      if (selectedProviders.includes('nios') && effectiveNiosMetrics.length > 0) {
+                        effectiveNiosMetrics.forEach(m => {
+                          const t = calcServerTokenTier(m.qps, m.lps, m.objectCount, 'nios-x').serverTokens;
+                          if (t > 0) srvSources.push({ label: m.memberName, color: '#00a5e5', tokens: t });
+                        });
+                      }
+                      if (selectedProviders.includes('microsoft') && effectiveADMetrics.length > 0) {
+                        const dcs = adMigrationMap.size > 0
+                          ? effectiveADMetrics.filter(m => adMigrationMap.has(m.hostname))
+                          : effectiveADMetrics;
+                        dcs.forEach(m => {
+                          const t = calcServerTokenTier(m.qps, m.lps, m.dnsObjects + m.dhcpObjectsWithOverhead, 'nios-x').serverTokens;
+                          if (t > 0) srvSources.push({ label: m.hostname, color: '#0078d4', tokens: t });
+                        });
+                      }
+                      srvSources.sort((a, b) => b.tokens - a.tokens);
+                      const LIMIT = 10;
+                      const visible = srvSources.slice(0, LIMIT);
+                      const hidden = srvSources.length - LIMIT;
+                      return (
+                        <div className="border-l border-[var(--border)] pl-6">
+                          <div className="text-[11px] font-semibold text-[var(--muted-foreground)] mb-3 uppercase tracking-wider">By Source — Server</div>
+                          <div className="space-y-2.5">
                             {srvSources.length === 0 ? (
                               <div className="text-[12px] text-[var(--muted-foreground)]">No server metrics available.</div>
                             ) : (
                               <>
-                                {visibleSrv.map((entry) => {
+                                {visible.map((entry) => {
                                   const pct = totalServerTokens > 0 ? (entry.tokens / totalServerTokens) * 100 : 0;
                                   return (
                                     <div key={entry.label} className="mb-2.5">
@@ -2940,27 +3004,18 @@ export function Wizard() {
                                     </div>
                                   );
                                 })}
-                                {hiddenSrv > 0 && (
-                                  <div className="text-[12px] text-[var(--muted-foreground)] mt-1">+{hiddenSrv} more sources</div>
+                                {hidden > 0 && (
+                                  <div className="text-[12px] text-[var(--muted-foreground)] mt-1">+{hidden} more sources</div>
                                 )}
                               </>
                             )}
                           </div>
-                          {/* SKU */}
-                          <div className="pt-3 border-t border-[var(--border)]">
-                            <div className="text-[11px] font-semibold text-[var(--muted-foreground)] mb-2 uppercase tracking-wider">Recommended SKU</div>
-                            <div className="flex items-center justify-between text-[13px]">
-                              <span className="font-mono text-[11px] bg-blue-50 text-blue-800 px-2 py-0.5 rounded border border-blue-200">IB-TOKENS-UDDI-SERV-500</span>
-                              <span className="font-semibold text-blue-700">× {Math.ceil(totalServerTokens / 500).toLocaleString()} pack{Math.ceil(totalServerTokens / 500) !== 1 ? 's' : ''}</span>
-                            </div>
-                          </div>
                         </div>
-                      )}
-                    </div>
-                  );
-                })()}
-
-              </div>{/* end hero grid */}
+                      );
+                    })()}
+                  </div>
+                )}
+              </div>{/* end hero card */}
 
               {/* Section jump navigation — only for NIOS scans */}
               {(selectedProviders.includes('nios') || (selectedProviders.includes('microsoft') && effectiveADMetrics.length > 0)) && (
