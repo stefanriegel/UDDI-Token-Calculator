@@ -33,6 +33,8 @@ import {
   Plus,
   Shield,
   ArrowUpCircle,
+  Pencil,
+  Undo2,
 } from 'lucide-react';
 import { Tooltip, TooltipTrigger, TooltipContent } from './ui/tooltip';
 import { useBackendConnection } from './use-backend';
@@ -336,6 +338,12 @@ export function Wizard() {
     aws: 0, azure: 0, gcp: 0, microsoft: 0, nios: 0, bluecat: 0, efficientip: 0,
   });
   const [findings, setFindings] = useState<FindingRow[]>([]);
+  // Manual count overrides (issue #28): keyed by "provider::source::item", value is the user-entered count.
+  // When set, the override replaces the original count and recalculates managementTokens.
+  const [countOverrides, setCountOverrides] = useState<Record<string, number>>({});
+  // Which finding row is currently being edited (click-to-edit count cell)
+  const [editingFindingKey, setEditingFindingKey] = useState<string | null>(null);
+  const [editingCountValue, setEditingCountValue] = useState<string>('');
   const [credentialError, setCredentialError] = useState<Record<ProviderType, string>>({
     aws: '', azure: '', gcp: '', microsoft: '', nios: '', bluecat: '', efficientip: '',
   });
@@ -501,6 +509,7 @@ export function Wizard() {
     setScanProgress(0);
     setProviderScanProgress({ aws: 0, azure: 0, gcp: 0, microsoft: 0, nios: 0, bluecat: 0, efficientip: 0 });
     setFindings([]);
+    setCountOverrides({});
     setCredentialError({ aws: '', azure: '', gcp: '', microsoft: '', nios: '', bluecat: '', efficientip: '' });
     setScanError('');
     setSourceSearch({ aws: '', azure: '', gcp: '', microsoft: '', nios: '', bluecat: '', efficientip: '' });
@@ -767,6 +776,7 @@ export function Wizard() {
     const initProgress: Record<ProviderType, number> = { aws: 0, azure: 0, gcp: 0, microsoft: 0, nios: 0, bluecat: 0, efficientip: 0 };
     setProviderScanProgress(initProgress);
     setFindings([]);
+    setCountOverrides({});
 
     if (backend.isDemo) {
       // Demo mode: simulate parallel scanning with mock data
@@ -920,20 +930,38 @@ export function Wizard() {
     })();
   }, [backend.isDemo, selectedProviders, selectedAuthMethod, credentials, selectionMode, clearScanIntervals, getEffectiveSelected, backupToken, subscriptions]);
 
+  // ── Manual count overrides ─────────────────────────────────────────────────
+  // Build a unique key for each finding row to identify it in the overrides map.
+  const findingKey = useCallback((f: FindingRow) => `${f.provider}::${f.source}::${f.item}`, []);
+
+  // effectiveFindings applies count overrides and recalculates managementTokens.
+  const effectiveFindings = useMemo(() => {
+    if (Object.keys(countOverrides).length === 0) return findings;
+    return findings.map((f) => {
+      const key = findingKey(f);
+      if (key in countOverrides) {
+        const newCount = countOverrides[key];
+        const newTokens = f.tokensPerUnit > 0 ? Math.ceil(newCount / f.tokensPerUnit) : 0;
+        return { ...f, count: newCount, managementTokens: newTokens };
+      }
+      return f;
+    });
+  }, [findings, countOverrides, findingKey]);
+
   // Export
   const totalTokens = useMemo(
-    () => findings.reduce((sum, f) => sum + f.managementTokens, 0),
-    [findings]
+    () => effectiveFindings.reduce((sum, f) => sum + f.managementTokens, 0),
+    [effectiveFindings]
   );
 
   // Category subtotals for summary
   const categoryTotals = useMemo(() => {
     const totals = { 'DDI Object': 0, 'Active IP': 0, 'Asset': 0 };
-    findings.forEach((f) => {
+    effectiveFindings.forEach((f) => {
       totals[f.category] += f.managementTokens;
     });
     return totals;
-  }, [findings]);
+  }, [effectiveFindings]);
 
   // Migration-map-aware server token count for SKU widget and exports.
   // When a migration map is set, computes XaaS-consolidated tokens for XaaS DCs
@@ -983,15 +1011,15 @@ export function Wizard() {
     // ── Management tokens ──────────────────────────────────────────────────
     let hybridMgmt = 0;
     // Non-NIOS findings always count at full management token value
-    hybridMgmt += findings.filter(f => f.provider !== 'nios').reduce((s, f) => s + f.managementTokens, 0);
+    hybridMgmt += effectiveFindings.filter(f => f.provider !== 'nios').reduce((s, f) => s + f.managementTokens, 0);
     if (hasNiosSelections) {
-      const nf = findings.filter(f => f.provider === 'nios');
+      const nf = effectiveFindings.filter(f => f.provider === 'nios');
       // Migrating members → UDDI management tokens
       hybridMgmt += nf.filter(f => niosMigrationMap.has(f.source)).reduce((s, f) => s + f.managementTokens, 0);
       // Staying members → NIOS licensing (no UDDI mgmt tokens)
     } else if (selectedProviders.includes('nios')) {
       // No NIOS selections → treat all NIOS as migrated (full universal DDI baseline)
-      hybridMgmt += findings.filter(f => f.provider === 'nios').reduce((s, f) => s + f.managementTokens, 0);
+      hybridMgmt += effectiveFindings.filter(f => f.provider === 'nios').reduce((s, f) => s + f.managementTokens, 0);
     }
 
     // ── Server tokens ──────────────────────────────────────────────────────
@@ -1022,11 +1050,11 @@ export function Wizard() {
 
     const selectionCount = niosMigrationMap.size + adMigrationMap.size;
     return { mgmt: hybridMgmt, srv: hybridSrv, selectionCount };
-  }, [findings, effectiveNiosMetrics, effectiveADMetrics, niosMigrationMap, adMigrationMap, selectedProviders]);
+  }, [effectiveFindings, effectiveNiosMetrics, effectiveADMetrics, niosMigrationMap, adMigrationMap, selectedProviders]);
 
   // Filtered + sorted findings for the table
   const filteredSortedFindings = useMemo(() => {
-    let rows = findings;
+    let rows = effectiveFindings;
     // Filter by provider
     if (findingsProviderFilter.size > 0) {
       rows = rows.filter((f) => findingsProviderFilter.has(f.provider));
@@ -1059,7 +1087,7 @@ export function Wizard() {
       });
     }
     return rows;
-  }, [findings, findingsProviderFilter, findingsCategoryFilter, findingsSort]);
+  }, [effectiveFindings, findingsProviderFilter, findingsCategoryFilter, findingsSort]);
 
   const filteredTokenTotal = useMemo(
     () => filteredSortedFindings.reduce((sum, f) => sum + f.managementTokens, 0),
@@ -1094,14 +1122,14 @@ export function Wizard() {
 
   const exportCSV = () => {
     const header = 'Provider,Source,Token Category,Item,Count,Tokens/Unit,Management Tokens';
-    const rows = findings.map(
+    const rows = effectiveFindings.map(
       (f) =>
         `${PROVIDERS.find((p) => p.id === f.provider)?.name},${f.source},${f.category},${formatItemLabel(f.item)},${f.count},${f.tokensPerUnit},${f.managementTokens}`
     );
     let summary = `\n\nTotal Management Tokens,,,,,,${totalTokens}`;
     if (selectedProviders.includes('nios') && niosMigrationMap.size > 0) {
-      const nf = findings.filter((f) => f.provider === 'nios');
-      const nonNios = findings.filter((f) => f.provider !== 'nios').reduce((s, f) => s + f.managementTokens, 0);
+      const nf = effectiveFindings.filter((f) => f.provider === 'nios');
+      const nonNios = effectiveFindings.filter((f) => f.provider !== 'nios').reduce((s, f) => s + f.managementTokens, 0);
       const allNios = calcNiosTokens(nf);
       const migrating = nf.filter((f) => niosMigrationMap.has(f.source)).reduce((s, f) => s + f.managementTokens, 0);
       const stayingNios = calcNiosTokens(nf.filter((f) => !niosMigrationMap.has(f.source)));
@@ -1114,7 +1142,7 @@ export function Wizard() {
       niosMigrationMap.forEach((ff, src) => { summary += `\n,${src},${ff === 'nios-xaas' ? 'XaaS' : 'NIOS-X'}`; });
     }
     if (selectedProviders.includes('nios')) {
-      const niosSources = new Set(findings.filter((f) => f.provider === 'nios').map((f) => f.source));
+      const niosSources = new Set(effectiveFindings.filter((f) => f.provider === 'nios').map((f) => f.source));
       const metricsToExport = niosMigrationMap.size > 0
         ? effectiveNiosMetrics.filter((m) => niosMigrationMap.has(m.memberName))
         : effectiveNiosMetrics.filter((m) => niosSources.has(m.memberName));
@@ -1210,14 +1238,14 @@ export function Wizard() {
     html += `<p>Generated: ${new Date().toLocaleString()}</p>`;
     html += '<table border="1" cellpadding="4" cellspacing="0">';
     html += '<tr style="background:#002B49;color:white"><th>Provider</th><th>Source</th><th>Token Category</th><th>Item</th><th>Count</th><th>Tokens/Unit</th><th>Management Tokens</th></tr>';
-    findings.forEach((f) => {
+    effectiveFindings.forEach((f) => {
       html += `<tr><td>${PROVIDERS.find((p) => p.id === f.provider)?.name}</td><td>${f.source}</td><td>${f.category}</td><td>${formatItemLabel(f.item)}</td><td>${f.count}</td><td>${f.tokensPerUnit}</td><td>${f.managementTokens}</td></tr>`;
     });
     html += `<tr style="background:#f5f5f5;font-weight:bold"><td colspan="6">Total Management Tokens</td><td>${totalTokens.toLocaleString()}</td></tr>`;
     html += '</table>';
     if (selectedProviders.includes('nios') && niosMigrationMap.size > 0) {
-      const nf = findings.filter((f) => f.provider === 'nios');
-      const nonNios = findings.filter((f) => f.provider !== 'nios').reduce((s, f) => s + f.managementTokens, 0);
+      const nf = effectiveFindings.filter((f) => f.provider === 'nios');
+      const nonNios = effectiveFindings.filter((f) => f.provider !== 'nios').reduce((s, f) => s + f.managementTokens, 0);
       const allNios = calcNiosTokens(nf);
       const migrating = nf.filter((f) => niosMigrationMap.has(f.source)).reduce((s, f) => s + f.managementTokens, 0);
       const stayingNios = calcNiosTokens(nf.filter((f) => !niosMigrationMap.has(f.source)));
@@ -1233,7 +1261,7 @@ export function Wizard() {
       html += '</ul>';
     }
     if (selectedProviders.includes('nios')) {
-      const niosSources = new Set(findings.filter((f) => f.provider === 'nios').map((f) => f.source));
+      const niosSources = new Set(effectiveFindings.filter((f) => f.provider === 'nios').map((f) => f.source));
       const metricsToExport = niosMigrationMap.size > 0
         ? effectiveNiosMetrics.filter((m) => niosMigrationMap.has(m.memberName))
         : effectiveNiosMetrics.filter((m) => niosSources.has(m.memberName));
@@ -2922,6 +2950,11 @@ export function Wizard() {
                       </div>
                       <div className="text-[32px] text-[var(--infoblox-orange)]" style={{ fontWeight: 700 }}>
                         {totalTokens.toLocaleString()}
+                        {Object.keys(countOverrides).length > 0 && (
+                          <span className="ml-2 text-[11px] font-medium text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200 align-middle">
+                            <Pencil className="w-3 h-3 inline -mt-0.5 mr-0.5" />adjusted
+                          </span>
+                        )}
                       </div>
                       <div className="flex items-center gap-2 mt-1">
                         <span className="font-mono text-[11px] bg-orange-50 text-orange-800 px-2 py-0.5 rounded border border-orange-200">IB-TOKENS-UDDI-MGMT-1000</span>
@@ -2990,7 +3023,7 @@ export function Wizard() {
                       <div className="space-y-2.5">
                         {(() => {
                           const sourceMap = new Map<string, { source: string; provider: ProviderType; tokens: number }>();
-                          findings.forEach((f) => {
+                          effectiveFindings.forEach((f) => {
                             const key = `${f.provider}::${f.source}`;
                             if (!sourceMap.has(key)) sourceMap.set(key, { source: f.source, provider: f.provider, tokens: 0 });
                             sourceMap.get(key)!.tokens += f.managementTokens;
@@ -3175,7 +3208,7 @@ export function Wizard() {
                 ];
 
                 const visibleCards = consumerCards.filter((card) => {
-                  const items = findings.filter(card.filter);
+                  const items = effectiveFindings.filter(card.filter);
                   return items.length > 0;
                 });
 
@@ -3274,7 +3307,7 @@ export function Wizard() {
                 type SourceEntry = { source: string; provider: ProviderType; tokens: number; count: number };
                 const buildSourceList = (category: TokenCategory): SourceEntry[] => {
                   const map = new Map<string, SourceEntry>();
-                  findings.filter(f => f.category === category).forEach((f) => {
+                  effectiveFindings.filter(f => f.category === category).forEach((f) => {
                     const key = `${f.provider}::${f.source}`;
                     if (!map.has(key)) map.set(key, { source: f.source, provider: f.provider, tokens: 0, count: 0 });
                     const e = map.get(key)!;
@@ -3294,7 +3327,7 @@ export function Wizard() {
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
                     {categories.map((cat) => {
                       const catTokens = categoryTotals[cat.key];
-                      const catCount = findings.filter(f => f.category === cat.key).reduce((s, f) => s + f.count, 0);
+                      const catCount = effectiveFindings.filter(f => f.category === cat.key).reduce((s, f) => s + f.count, 0);
                       const sources = buildSourceList(cat.key);
                       const maxSourceTokens = Math.max(...sources.map(s => s.tokens), 1);
 
@@ -3436,8 +3469,8 @@ export function Wizard() {
                 };
 
                 // Compute tokens by scenario
-                const niosFindings = findings.filter((f) => f.provider === 'nios');
-                const nonNiosTokens = findings.filter((f) => f.provider !== 'nios').reduce((s, f) => s + f.managementTokens, 0);
+                const niosFindings = effectiveFindings.filter((f) => f.provider === 'nios');
+                const nonNiosTokens = effectiveFindings.filter((f) => f.provider !== 'nios').reduce((s, f) => s + f.managementTokens, 0);
                 // NIOS Licensing column uses NIOS ratios (50/25/13), not UDDI ratios
                 const allNiosTokens = calcNiosTokens(niosFindings);
                 // UDDI tokens for all NIOS findings (used in Full Migration scenario)
@@ -3676,7 +3709,7 @@ export function Wizard() {
                       );
                       const allMembers = effectiveNiosMetrics.filter((m) => {
                         const niosSources = new Set(
-                          findings.filter((f) => f.provider === 'nios').map((f) => f.source)
+                          effectiveFindings.filter((f) => f.provider === 'nios').map((f) => f.source)
                         );
                         return niosSources.has(m.memberName);
                       });
@@ -4264,8 +4297,8 @@ export function Wizard() {
                       ];
 
                       // Management token note — AD management tokens are constant across all migration scenarios
-                      const adMgmtTotal = findings.filter(f => (f.provider as string) === 'ad').reduce((s, f) => s + f.managementTokens, 0);
-                      const nonAdTokens = findings.filter(f => (f.provider as string) !== 'ad').reduce((s, f) => s + f.managementTokens, 0);
+                      const adMgmtTotal = effectiveFindings.filter(f => (f.provider as string) === 'ad').reduce((s, f) => s + f.managementTokens, 0);
+                      const nonAdTokens = effectiveFindings.filter(f => (f.provider as string) !== 'ad').reduce((s, f) => s + f.managementTokens, 0);
 
                       return (
                         <>
@@ -4296,9 +4329,9 @@ export function Wizard() {
                     <div className="px-4 pb-4">
                       <div className="grid grid-cols-3 gap-4">
                         {(() => {
-                          const kwCount = findings.filter(f => f.item === 'user_account' && (f.provider as string) === 'ad').reduce((s, f) => s + f.count, 0);
-                          const compCount = findings.filter(f => f.item === 'computer_count' && (f.provider as string) === 'ad').reduce((s, f) => s + f.count, 0);
-                          const staticCount = findings.filter(f => f.item === 'static_ip_count' && (f.provider as string) === 'ad').reduce((s, f) => s + f.count, 0);
+                          const kwCount = effectiveFindings.filter(f => f.item === 'user_account' && (f.provider as string) === 'ad').reduce((s, f) => s + f.count, 0);
+                          const compCount = effectiveFindings.filter(f => f.item === 'computer_count' && (f.provider as string) === 'ad').reduce((s, f) => s + f.count, 0);
+                          const staticCount = effectiveFindings.filter(f => f.item === 'static_ip_count' && (f.provider as string) === 'ad').reduce((s, f) => s + f.count, 0);
                           return [
                             { label: 'Knowledge Workers', value: kwCount, icon: '👥', desc: 'AD User Accounts' },
                             { label: 'Computer Inventory', value: compCount, icon: '💻', desc: 'Managed Assets' },
@@ -4654,15 +4687,27 @@ export function Wizard() {
                   <h3 className="text-[14px]" style={{ fontWeight: 600 }}>
                     Detailed Findings
                   </h3>
-                  {(findingsProviderFilter.size > 0 || findingsCategoryFilter.size > 0) && (
-                    <button
-                      onClick={() => { setFindingsProviderFilter(new Set()); setFindingsCategoryFilter(new Set()); }}
-                      className="text-[12px] text-[var(--infoblox-orange)] hover:underline"
-                      style={{ fontWeight: 500 }}
-                    >
-                      Clear all filters
-                    </button>
-                  )}
+                  <div className="flex items-center gap-3">
+                    {Object.keys(countOverrides).length > 0 && (
+                      <button
+                        onClick={() => setCountOverrides({})}
+                        className="text-[12px] text-amber-600 hover:underline flex items-center gap-1"
+                        style={{ fontWeight: 500 }}
+                      >
+                        <Undo2 className="w-3 h-3" />
+                        Reset {Object.keys(countOverrides).length} manual adjustment{Object.keys(countOverrides).length !== 1 ? 's' : ''}
+                      </button>
+                    )}
+                    {(findingsProviderFilter.size > 0 || findingsCategoryFilter.size > 0) && (
+                      <button
+                        onClick={() => { setFindingsProviderFilter(new Set()); setFindingsCategoryFilter(new Set()); }}
+                        className="text-[12px] text-[var(--infoblox-orange)] hover:underline"
+                        style={{ fontWeight: 500 }}
+                      >
+                        Clear all filters
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 {/* Quick filters */}
@@ -4830,7 +4875,81 @@ export function Wizard() {
                             </td>
                             <td className="px-4 py-2.5">{formatItemLabel(f.item)}</td>
                             <td className="px-4 py-2.5 text-right tabular-nums whitespace-nowrap min-w-[80px]">
-                              {f.count.toLocaleString()}
+                              {(() => {
+                                const key = findingKey(f);
+                                const isEditing = editingFindingKey === key;
+                                const hasOverride = key in countOverrides;
+                                const originalCount = findings.find(
+                                  (orig) => findingKey(orig) === key
+                                )?.count ?? f.count;
+
+                                if (isEditing) {
+                                  return (
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      autoFocus
+                                      value={editingCountValue}
+                                      onChange={(e) => setEditingCountValue(e.target.value)}
+                                      onBlur={() => {
+                                        const parsed = parseInt(editingCountValue, 10);
+                                        if (!isNaN(parsed) && parsed >= 0 && parsed !== originalCount) {
+                                          setCountOverrides((prev) => ({ ...prev, [key]: parsed }));
+                                        } else if (parsed === originalCount) {
+                                          // Reset to original — remove override
+                                          setCountOverrides((prev) => {
+                                            const next = { ...prev };
+                                            delete next[key];
+                                            return next;
+                                          });
+                                        }
+                                        setEditingFindingKey(null);
+                                      }}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                                        if (e.key === 'Escape') { setEditingFindingKey(null); }
+                                      }}
+                                      className="w-[90px] px-2 py-0.5 text-right text-[13px] bg-[var(--input-background)] border border-[var(--infoblox-blue)] rounded focus:outline-none focus:ring-2 focus:ring-[var(--infoblox-blue)]/30 tabular-nums"
+                                    />
+                                  );
+                                }
+
+                                return (
+                                  <span className="inline-flex items-center gap-1 group">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setEditingFindingKey(key);
+                                        setEditingCountValue(String(f.count));
+                                      }}
+                                      className="hover:text-[var(--infoblox-blue)] transition-colors inline-flex items-center gap-1"
+                                      title="Click to manually adjust count"
+                                    >
+                                      {f.count.toLocaleString()}
+                                      <Pencil className="w-3 h-3 opacity-0 group-hover:opacity-40 transition-opacity" />
+                                    </button>
+                                    {hasOverride && (
+                                      <span className="inline-flex items-center gap-0.5">
+                                        <span className="text-[10px] text-[var(--muted-foreground)] line-through" title={`Original: ${originalCount.toLocaleString()}`}>
+                                          {originalCount.toLocaleString()}
+                                        </span>
+                                        <button
+                                          type="button"
+                                          onClick={() => setCountOverrides((prev) => {
+                                            const next = { ...prev };
+                                            delete next[key];
+                                            return next;
+                                          })}
+                                          className="text-[var(--muted-foreground)] hover:text-[var(--infoblox-orange)] transition-colors"
+                                          title="Reset to original value"
+                                        >
+                                          <Undo2 className="w-3 h-3" />
+                                        </button>
+                                      </span>
+                                    )}
+                                  </span>
+                                );
+                              })()}
                             </td>
                             <td className="px-4 py-2.5 text-right tabular-nums whitespace-nowrap min-w-[100px]" style={{ fontWeight: 600 }}>
                               {f.managementTokens.toLocaleString()}
