@@ -1901,6 +1901,82 @@ export function Wizard() {
                               </div>
                             )}
 
+                            {/* WinRM transport security — shown for Microsoft DHCP & DNS (NTLM, Kerberos) */}
+                            {provId === 'microsoft' && (selectedAuthMethod.microsoft === 'ntlm' || selectedAuthMethod.microsoft === 'kerberos') && (
+                              <div className="mt-2 space-y-2">
+                                <label className="flex items-start gap-2 cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={credentials.microsoft?.useSSL === 'true'}
+                                    onChange={(e) =>
+                                      setCredentials((prev) => ({
+                                        ...prev,
+                                        microsoft: {
+                                          ...prev.microsoft,
+                                          useSSL: e.target.checked ? 'true' : '',
+                                          ...(e.target.checked ? {} : { insecureSkipVerify: '' }),
+                                        },
+                                      }))
+                                    }
+                                    className="mt-0.5 rounded border-[var(--border)] text-[var(--infoblox-blue)] focus:ring-[var(--infoblox-blue)]"
+                                  />
+                                  <div>
+                                    <span className="text-[12px] text-[var(--foreground)]" style={{ fontWeight: 500 }}>
+                                      Use HTTPS transport (port 5986)
+                                    </span>
+                                    <p className="text-[11px] text-[var(--muted-foreground)] mt-0.5">
+                                      Encrypts the entire WinRM session with TLS — recommended for production environments
+                                    </p>
+                                  </div>
+                                </label>
+
+                                {credentials.microsoft?.useSSL === 'true' && (
+                                  <label className="flex items-start gap-2 cursor-pointer pl-5">
+                                    <input
+                                      type="checkbox"
+                                      checked={credentials.microsoft?.insecureSkipVerify === 'true'}
+                                      onChange={(e) =>
+                                        setCredentials((prev) => ({
+                                          ...prev,
+                                          microsoft: {
+                                            ...prev.microsoft,
+                                            insecureSkipVerify: e.target.checked ? 'true' : '',
+                                          },
+                                        }))
+                                      }
+                                      className="mt-0.5 rounded border-[var(--border)] text-[var(--infoblox-orange)] focus:ring-[var(--infoblox-orange)]"
+                                    />
+                                    <div>
+                                      <span className="text-[12px] text-[var(--foreground)]" style={{ fontWeight: 500 }}>
+                                        Allow untrusted certificates
+                                      </span>
+                                      {credentials.microsoft?.insecureSkipVerify === 'true' && (
+                                        <p className="text-[11px] text-amber-600 mt-0.5 flex items-center gap-1">
+                                          <Shield className="w-3 h-3" />
+                                          TLS certificate validation is disabled. Use only with self-signed certificates.
+                                        </p>
+                                      )}
+                                    </div>
+                                  </label>
+                                )}
+
+                                {credentials.microsoft?.useSSL !== 'true' && (
+                                  <div className="flex items-start gap-2 px-3 py-2 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/50 rounded-lg">
+                                    <Shield className="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0" />
+                                    <div>
+                                      <p className="text-[12px] text-amber-800 dark:text-amber-300" style={{ fontWeight: 500 }}>
+                                        Security notice
+                                      </p>
+                                      <p className="text-[11px] text-amber-700 dark:text-amber-400 mt-0.5">
+                                        Without HTTPS, WinRM uses NTLM message-level encryption (HTTP port 5985). While credentials are not sent in cleartext, NTLM authentication tokens can be intercepted and relayed by attackers on the network.
+                                        Enable HTTPS for full TLS transport encryption.
+                                      </p>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+
                             {/* Advanced section — Bluecat: Configuration IDs */}
                             {provId === 'bluecat' && (
                               <details className="mt-2">

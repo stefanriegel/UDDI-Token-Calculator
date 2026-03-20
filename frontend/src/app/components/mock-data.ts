@@ -270,23 +270,11 @@ export const PROVIDERS: ProviderOption[] = [
       {
         id: 'ntlm',
         name: 'Username & Password (NTLM)',
-        description: 'Authenticate with on-premises AD credentials via NTLM — use this from an Entra ID-joined or non-domain-joined machine',
+        description: 'Authenticate with on-premises AD credentials via NTLM — enable HTTPS for encrypted transport in production environments',
         fields: [
           { key: 'servers', label: 'Domain Controller', placeholder: 'dc01.corp.local', serverList: true, helpText: 'Hostname or IP of one or more domain controllers' },
           { key: 'username', label: 'Username', placeholder: 'CORP\\admin', helpText: 'On-premises AD user — use DOMAIN\\user or user@domain.local format. Entra ID-only accounts (user@tenant.onmicrosoft.com) are not supported.' },
           { key: 'password', label: 'Password', placeholder: '********', secret: true },
-        ],
-      },
-      {
-        id: 'powershell-remote',
-        name: 'PowerShell Remoting (WinRM / HTTPS)',
-        description: 'Connect via encrypted WinRM (HTTPS) — recommended for production environments with valid TLS certificates',
-        fields: [
-          { key: 'servers', label: 'Domain Controller', placeholder: 'dc01.corp.local', serverList: true, helpText: 'Hostname or IP of one or more domain controllers' },
-          { key: 'username', label: 'Username', placeholder: 'CORP\\admin' },
-          { key: 'password', label: 'Password', placeholder: '********', secret: true },
-          { key: 'useSSL', label: 'Use HTTPS (port 5986)', placeholder: 'true', helpText: 'Enable for encrypted WinRM transport' },
-          { key: 'insecureSkipVerify', label: 'Allow untrusted certificates', placeholder: 'true', helpText: 'Skip TLS certificate validation (common for self-signed certs)' },
         ],
       },
     ],
