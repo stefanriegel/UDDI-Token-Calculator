@@ -164,12 +164,13 @@ type ADServerMetric struct {
 // NiosServerMetric is per-Grid-Member performance data returned in the results
 // when the NIOS provider was included in a scan. See API_CONTRACT.md §6.
 type NiosServerMetric struct {
-	MemberID    string `json:"memberId"`
-	MemberName  string `json:"memberName"`
-	Role        string `json:"role"`
-	QPS         int    `json:"qps"`
-	LPS         int    `json:"lps"`
-	ObjectCount int    `json:"objectCount"`
+	MemberID      string `json:"memberId"`
+	MemberName    string `json:"memberName"`
+	Role          string `json:"role"`
+	QPS           int    `json:"qps"`
+	LPS           int    `json:"lps"`
+	ObjectCount   int    `json:"objectCount"`
+	ActiveIPCount int    `json:"activeIPCount"`
 }
 
 // ADDiscoverRequest is the body for POST /api/v1/providers/ad/discover.

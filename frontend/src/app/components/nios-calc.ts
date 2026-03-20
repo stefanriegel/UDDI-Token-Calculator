@@ -28,6 +28,7 @@ export interface NiosServerMetrics {
   qps: number;
   lps: number;
   objectCount: number;
+  activeIPCount: number;
 }
 
 export interface ConsolidatedXaasInstance {
@@ -198,40 +199,40 @@ export function consolidateXaasInstances(members: NiosServerMetrics[]): Consolid
 
 export const MOCK_NIOS_SERVER_METRICS: NiosServerMetrics[] = [
   // GM
-  { memberId: 'gm-01', memberName: 'infoblox-gm.corp.example.com', role: 'GM', qps: 8420, lps: 145, objectCount: 21897 },
+  { memberId: 'gm-01', memberName: 'infoblox-gm.corp.example.com', role: 'GM', qps: 8420, lps: 145, objectCount: 21897, activeIPCount: 0 },
   // GMC
-  { memberId: 'gmc-01', memberName: 'infoblox-gmc.corp.example.com', role: 'GMC', qps: 3200, lps: 80, objectCount: 15400 },
+  { memberId: 'gmc-01', memberName: 'infoblox-gmc.corp.example.com', role: 'GMC', qps: 3200, lps: 80, objectCount: 15400, activeIPCount: 0 },
   // DNS (8 across 4 sites)
-  { memberId: 'dns-01', memberName: 'dns-east-01.corp.example.com', role: 'DNS', qps: 24500, lps: 0, objectCount: 10122 },
-  { memberId: 'dns-02', memberName: 'dns-east-02.corp.example.com', role: 'DNS', qps: 19800, lps: 0, objectCount: 8540 },
-  { memberId: 'dns-03', memberName: 'dns-west-01.corp.example.com', role: 'DNS', qps: 18100, lps: 0, objectCount: 7378 },
-  { memberId: 'dns-04', memberName: 'dns-west-02.corp.example.com', role: 'DNS', qps: 15600, lps: 0, objectCount: 6210 },
-  { memberId: 'dns-05', memberName: 'dns-central-01.corp.example.com', role: 'DNS', qps: 31200, lps: 0, objectCount: 14300 },
-  { memberId: 'dns-06', memberName: 'dns-central-02.corp.example.com', role: 'DNS', qps: 22400, lps: 0, objectCount: 9870 },
-  { memberId: 'dns-07', memberName: 'dns-eu-01.corp.example.com', role: 'DNS', qps: 42100, lps: 0, objectCount: 18750 },
-  { memberId: 'dns-08', memberName: 'dns-eu-02.corp.example.com', role: 'DNS', qps: 28700, lps: 0, objectCount: 11430 },
+  { memberId: 'dns-01', memberName: 'dns-east-01.corp.example.com', role: 'DNS', qps: 24500, lps: 0, objectCount: 10122, activeIPCount: 0 },
+  { memberId: 'dns-02', memberName: 'dns-east-02.corp.example.com', role: 'DNS', qps: 19800, lps: 0, objectCount: 8540, activeIPCount: 0 },
+  { memberId: 'dns-03', memberName: 'dns-west-01.corp.example.com', role: 'DNS', qps: 18100, lps: 0, objectCount: 7378, activeIPCount: 0 },
+  { memberId: 'dns-04', memberName: 'dns-west-02.corp.example.com', role: 'DNS', qps: 15600, lps: 0, objectCount: 6210, activeIPCount: 0 },
+  { memberId: 'dns-05', memberName: 'dns-central-01.corp.example.com', role: 'DNS', qps: 31200, lps: 0, objectCount: 14300, activeIPCount: 0 },
+  { memberId: 'dns-06', memberName: 'dns-central-02.corp.example.com', role: 'DNS', qps: 22400, lps: 0, objectCount: 9870, activeIPCount: 0 },
+  { memberId: 'dns-07', memberName: 'dns-eu-01.corp.example.com', role: 'DNS', qps: 42100, lps: 0, objectCount: 18750, activeIPCount: 0 },
+  { memberId: 'dns-08', memberName: 'dns-eu-02.corp.example.com', role: 'DNS', qps: 28700, lps: 0, objectCount: 11430, activeIPCount: 0 },
   // DHCP (6 across 3 sites)
-  { memberId: 'dhcp-01', memberName: 'dhcp-east-01.corp.example.com', role: 'DHCP', qps: 0, lps: 185, objectCount: 1055 },
-  { memberId: 'dhcp-02', memberName: 'dhcp-east-02.corp.example.com', role: 'DHCP', qps: 0, lps: 210, objectCount: 1320 },
-  { memberId: 'dhcp-03', memberName: 'dhcp-west-01.corp.example.com', role: 'DHCP', qps: 0, lps: 145, objectCount: 810 },
-  { memberId: 'dhcp-04', memberName: 'dhcp-west-02.corp.example.com', role: 'DHCP', qps: 0, lps: 120, objectCount: 680 },
-  { memberId: 'dhcp-05', memberName: 'dhcp-central-01.corp.example.com', role: 'DHCP', qps: 0, lps: 275, objectCount: 1890 },
-  { memberId: 'dhcp-06', memberName: 'dhcp-central-02.corp.example.com', role: 'DHCP', qps: 0, lps: 160, objectCount: 940 },
+  { memberId: 'dhcp-01', memberName: 'dhcp-east-01.corp.example.com', role: 'DHCP', qps: 0, lps: 185, objectCount: 1055, activeIPCount: 4200 },
+  { memberId: 'dhcp-02', memberName: 'dhcp-east-02.corp.example.com', role: 'DHCP', qps: 0, lps: 210, objectCount: 1320, activeIPCount: 5100 },
+  { memberId: 'dhcp-03', memberName: 'dhcp-west-01.corp.example.com', role: 'DHCP', qps: 0, lps: 145, objectCount: 810, activeIPCount: 3200 },
+  { memberId: 'dhcp-04', memberName: 'dhcp-west-02.corp.example.com', role: 'DHCP', qps: 0, lps: 120, objectCount: 680, activeIPCount: 2400 },
+  { memberId: 'dhcp-05', memberName: 'dhcp-central-01.corp.example.com', role: 'DHCP', qps: 0, lps: 275, objectCount: 1890, activeIPCount: 7500 },
+  { memberId: 'dhcp-06', memberName: 'dhcp-central-02.corp.example.com', role: 'DHCP', qps: 0, lps: 160, objectCount: 940, activeIPCount: 3800 },
   // DNS/DHCP combo (6 across 6 sites)
-  { memberId: 'combo-01', memberName: 'combo-east-01.corp.example.com', role: 'DNS/DHCP', qps: 12300, lps: 95, objectCount: 5420 },
-  { memberId: 'combo-02', memberName: 'combo-west-01.corp.example.com', role: 'DNS/DHCP', qps: 9800, lps: 110, objectCount: 4780 },
-  { memberId: 'combo-03', memberName: 'combo-central-01.corp.example.com', role: 'DNS/DHCP', qps: 14500, lps: 130, objectCount: 6890 },
-  { memberId: 'combo-04', memberName: 'combo-eu-01.corp.example.com', role: 'DNS/DHCP', qps: 11200, lps: 85, objectCount: 5100 },
-  { memberId: 'combo-05', memberName: 'combo-apac-01.corp.example.com', role: 'DNS/DHCP', qps: 7600, lps: 70, objectCount: 3420 },
-  { memberId: 'combo-06', memberName: 'combo-latam-01.corp.example.com', role: 'DNS/DHCP', qps: 5400, lps: 55, objectCount: 2150 },
+  { memberId: 'combo-01', memberName: 'combo-east-01.corp.example.com', role: 'DNS/DHCP', qps: 12300, lps: 95, objectCount: 5420, activeIPCount: 2100 },
+  { memberId: 'combo-02', memberName: 'combo-west-01.corp.example.com', role: 'DNS/DHCP', qps: 9800, lps: 110, objectCount: 4780, activeIPCount: 2800 },
+  { memberId: 'combo-03', memberName: 'combo-central-01.corp.example.com', role: 'DNS/DHCP', qps: 14500, lps: 130, objectCount: 6890, activeIPCount: 3500 },
+  { memberId: 'combo-04', memberName: 'combo-eu-01.corp.example.com', role: 'DNS/DHCP', qps: 11200, lps: 85, objectCount: 5100, activeIPCount: 1900 },
+  { memberId: 'combo-05', memberName: 'combo-apac-01.corp.example.com', role: 'DNS/DHCP', qps: 7600, lps: 70, objectCount: 3420, activeIPCount: 1500 },
+  { memberId: 'combo-06', memberName: 'combo-latam-01.corp.example.com', role: 'DNS/DHCP', qps: 5400, lps: 55, objectCount: 2150, activeIPCount: 1100 },
   // IPAM (4)
-  { memberId: 'ipam-01', memberName: 'ipam-01.corp.example.com', role: 'IPAM', qps: 0, lps: 0, objectCount: 122 },
-  { memberId: 'ipam-02', memberName: 'ipam-02.corp.example.com', role: 'IPAM', qps: 0, lps: 0, objectCount: 340 },
-  { memberId: 'ipam-03', memberName: 'ipam-03.corp.example.com', role: 'IPAM', qps: 0, lps: 0, objectCount: 215 },
-  { memberId: 'ipam-04', memberName: 'ipam-04.corp.example.com', role: 'IPAM', qps: 0, lps: 0, objectCount: 88 },
+  { memberId: 'ipam-01', memberName: 'ipam-01.corp.example.com', role: 'IPAM', qps: 0, lps: 0, objectCount: 122, activeIPCount: 0 },
+  { memberId: 'ipam-02', memberName: 'ipam-02.corp.example.com', role: 'IPAM', qps: 0, lps: 0, objectCount: 340, activeIPCount: 0 },
+  { memberId: 'ipam-03', memberName: 'ipam-03.corp.example.com', role: 'IPAM', qps: 0, lps: 0, objectCount: 215, activeIPCount: 0 },
+  { memberId: 'ipam-04', memberName: 'ipam-04.corp.example.com', role: 'IPAM', qps: 0, lps: 0, objectCount: 88, activeIPCount: 0 },
   // Reporting (4 across 4 sites)
-  { memberId: 'rpt-01', memberName: 'reporting-east-01.corp.example.com', role: 'Reporting', qps: 0, lps: 0, objectCount: 450 },
-  { memberId: 'rpt-02', memberName: 'reporting-west-01.corp.example.com', role: 'Reporting', qps: 0, lps: 0, objectCount: 380 },
-  { memberId: 'rpt-03', memberName: 'reporting-central-01.corp.example.com', role: 'Reporting', qps: 0, lps: 0, objectCount: 520 },
-  { memberId: 'rpt-04', memberName: 'reporting-eu-01.corp.example.com', role: 'Reporting', qps: 0, lps: 0, objectCount: 290 },
+  { memberId: 'rpt-01', memberName: 'reporting-east-01.corp.example.com', role: 'Reporting', qps: 0, lps: 0, objectCount: 450, activeIPCount: 0 },
+  { memberId: 'rpt-02', memberName: 'reporting-west-01.corp.example.com', role: 'Reporting', qps: 0, lps: 0, objectCount: 380, activeIPCount: 0 },
+  { memberId: 'rpt-03', memberName: 'reporting-central-01.corp.example.com', role: 'Reporting', qps: 0, lps: 0, objectCount: 520, activeIPCount: 0 },
+  { memberId: 'rpt-04', memberName: 'reporting-eu-01.corp.example.com', role: 'Reporting', qps: 0, lps: 0, objectCount: 290, activeIPCount: 0 },
 ];

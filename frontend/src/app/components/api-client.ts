@@ -355,6 +355,7 @@ export interface NiosServerMetricAPI {
   qps: number;
   lps: number;
   objectCount: number;
+  activeIPCount: number;
 }
 
 export interface ADServerMetricAPI {

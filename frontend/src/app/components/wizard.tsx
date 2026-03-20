@@ -80,6 +80,11 @@ type Step = 'providers' | 'credentials' | 'sources' | 'scanning' | 'results';
 type SortColumn = 'provider' | 'source' | 'category' | 'item' | 'count' | 'managementTokens';
 type SortDir = 'asc' | 'desc';
 
+/** Effective object count for server token tier sizing: DDI objects + Active IPs (DHCP). */
+function serverSizingObjects(m: NiosServerMetrics): number {
+  return m.objectCount + (m.activeIPCount ?? 0);
+}
+
 const STEPS: { id: Step; label: string }[] = [
   { id: 'providers', label: 'Select Providers' },
   { id: 'credentials', label: 'Credentials' },
@@ -895,6 +900,7 @@ export function Wizard() {
                   qps: m.qps,
                   lps: m.lps,
                   objectCount: m.objectCount,
+                  activeIPCount: m.activeIPCount ?? 0,
                 })));
               }
               // Store AD server metrics from live scan results
@@ -936,7 +942,7 @@ export function Wizard() {
   const totalServerTokens = useMemo(() => {
     const niosTokens = selectedProviders.includes('nios')
       ? effectiveNiosMetrics.reduce((s, m) =>
-          s + calcServerTokenTier(m.qps, m.lps, m.objectCount, 'nios-x').serverTokens, 0)
+          s + calcServerTokenTier(m.qps, m.lps, serverSizingObjects(m), 'nios-x').serverTokens, 0)
       : 0;
 
     let adTokens = 0;
@@ -994,10 +1000,10 @@ export function Wizard() {
       const selected = effectiveNiosMetrics.filter(m => niosMigrationMap.has(m.memberName));
       const niosX = selected.filter(m => niosMigrationMap.get(m.memberName) !== 'nios-xaas');
       const xaas  = selected.filter(m => niosMigrationMap.get(m.memberName) === 'nios-xaas');
-      hybridSrv += niosX.reduce((s, m) => s + calcServerTokenTier(m.qps, m.lps, m.objectCount, 'nios-x').serverTokens, 0);
+      hybridSrv += niosX.reduce((s, m) => s + calcServerTokenTier(m.qps, m.lps, serverSizingObjects(m), 'nios-x').serverTokens, 0);
       const xaasInst = consolidateXaasInstances(xaas.map(m => ({
         memberId: m.memberName, memberName: m.memberName, role: 'GM',
-        qps: m.qps, lps: m.lps, objectCount: m.objectCount,
+        qps: m.qps, lps: m.lps, objectCount: serverSizingObjects(m), activeIPCount: 0,
       })));
       hybridSrv += xaasInst.reduce((s, inst) => s + inst.totalTokens, 0);
     }
@@ -1121,21 +1127,21 @@ export function Wizard() {
         summary += `\nGrid Member,Role,Form Factor,QPS (Peak),LPS (Peak),Objects,Connections,Server Size,Allocated Tokens`;
         // NIOS-X individual members
         niosXMetrics.forEach((m) => {
-          const tier = calcServerTokenTier(m.qps, m.lps, m.objectCount, 'nios-x');
-          summary += `\n${m.memberName},${m.role},NIOS-X,${m.qps},${m.lps},${m.objectCount},—,${tier.name},${tier.serverTokens}`;
+          const tier = calcServerTokenTier(m.qps, m.lps, serverSizingObjects(m), 'nios-x');
+          summary += `\n${m.memberName},${m.role},NIOS-X,${m.qps},${m.lps},${serverSizingObjects(m)},—,${tier.name},${tier.serverTokens}`;
         });
         // XaaS consolidated instances
         xaasInst.forEach((inst) => {
           summary += `\n--- XaaS Instance ${xaasInst.length > 1 ? inst.index + 1 : ''} (replaces ${inst.connectionsUsed} NIOS members) ---`;
           inst.members.forEach((m) => {
-            summary += `\n  ${m.memberName},${m.role},XaaS (1 conn),${m.qps},${m.lps},${m.objectCount},,,(consolidated)`;
+            summary += `\n  ${m.memberName},${m.role},XaaS (1 conn),${m.qps},${m.lps},${serverSizingObjects(m)},,,(consolidated)`;
           });
           summary += `\n  AGGREGATE,,XaaS,${inst.totalQps},${inst.totalLps},${inst.totalObjects},${inst.connectionsUsed}/${inst.tier.maxConnections} conn,${inst.tier.name},${inst.totalTokens}`;
           if (inst.extraConnections > 0) {
             summary += ` (incl. ${inst.extraConnectionTokens} extra connection tokens)`;
           }
         });
-        const niosXTokens = niosXMetrics.reduce((s, m) => s + calcServerTokenTier(m.qps, m.lps, m.objectCount, 'nios-x').serverTokens, 0);
+        const niosXTokens = niosXMetrics.reduce((s, m) => s + calcServerTokenTier(m.qps, m.lps, serverSizingObjects(m), 'nios-x').serverTokens, 0);
         const xaasTokens = xaasInst.reduce((s, inst) => s + inst.totalTokens, 0);
         const totalST = niosXTokens + xaasTokens;
         summary += `\nTotal Allocated Server Tokens,,,,,,,,${totalST}`;
@@ -1241,18 +1247,18 @@ export function Wizard() {
         html += `<tr style="background:#065f46;color:white"><th>Grid Member</th><th>Role</th><th>Form Factor</th><th>QPS (Peak)</th><th>LPS (Peak)</th><th>Objects</th><th>Size</th><th>Allocated Tokens</th></tr>`;
         // NIOS-X individual members
         niosXMetrics.forEach((m) => {
-          const tier = calcServerTokenTier(m.qps, m.lps, m.objectCount, 'nios-x');
-          html += `<tr><td>${m.memberName}</td><td>${m.role}</td><td>NIOS-X</td><td>${m.qps.toLocaleString()}</td><td>${m.lps.toLocaleString()}</td><td>${m.objectCount.toLocaleString()}</td><td>${tier.name}</td><td style="text-align:center;font-weight:bold">${tier.serverTokens.toLocaleString()}</td></tr>`;
+          const tier = calcServerTokenTier(m.qps, m.lps, serverSizingObjects(m), 'nios-x');
+          html += `<tr><td>${m.memberName}</td><td>${m.role}</td><td>NIOS-X</td><td>${m.qps.toLocaleString()}</td><td>${m.lps.toLocaleString()}</td><td>${serverSizingObjects(m).toLocaleString()}</td><td>${tier.name}</td><td style="text-align:center;font-weight:bold">${tier.serverTokens.toLocaleString()}</td></tr>`;
         });
         // XaaS consolidated instances
         xaasInst.forEach((inst) => {
           html += `<tr style="background:#f3e8ff"><td colspan="8" style="font-weight:bold;color:#6b21a8">XaaS Instance${xaasInst.length > 1 ? ' ' + (inst.index + 1) : ''} — replaces ${inst.connectionsUsed} NIOS member${inst.connectionsUsed > 1 ? 's' : ''}</td></tr>`;
           inst.members.forEach((m) => {
-            html += `<tr style="background:#faf5ff"><td style="padding-left:20px">${m.memberName}</td><td>${m.role}</td><td style="color:#7c3aed">1 conn</td><td style="color:#7c3aed">${m.qps.toLocaleString()}</td><td style="color:#7c3aed">${m.lps.toLocaleString()}</td><td style="color:#7c3aed">${m.objectCount.toLocaleString()}</td><td colspan="2" style="text-align:center;color:#999">(consolidated)</td></tr>`;
+            html += `<tr style="background:#faf5ff"><td style="padding-left:20px">${m.memberName}</td><td>${m.role}</td><td style="color:#7c3aed">1 conn</td><td style="color:#7c3aed">${m.qps.toLocaleString()}</td><td style="color:#7c3aed">${m.lps.toLocaleString()}</td><td style="color:#7c3aed">${serverSizingObjects(m).toLocaleString()}</td><td colspan="2" style="text-align:center;color:#999">(consolidated)</td></tr>`;
           });
           html += `<tr style="background:#ede9fe"><td style="padding-left:20px;font-weight:600">Aggregate (${inst.connectionsUsed}/${inst.tier.maxConnections} connections${inst.extraConnections > 0 ? ', +' + inst.extraConnections + ' extra' : ''})</td><td style="font-weight:600">XaaS</td><td style="font-weight:600">${inst.connectionsUsed} conn</td><td style="font-weight:600">${inst.totalQps.toLocaleString()}</td><td style="font-weight:600">${inst.totalLps.toLocaleString()}</td><td style="font-weight:600">${inst.totalObjects.toLocaleString()}</td><td style="font-weight:600">${inst.tier.name}</td><td style="text-align:center;font-weight:bold;color:#6b21a8">${inst.totalTokens.toLocaleString()}${inst.extraConnectionTokens > 0 ? ' (incl. ' + inst.extraConnectionTokens.toLocaleString() + ' extra conn)' : ''}</td></tr>`;
         });
-        const niosXTokens = niosXMetrics.reduce((s, m) => s + calcServerTokenTier(m.qps, m.lps, m.objectCount, 'nios-x').serverTokens, 0);
+        const niosXTokens = niosXMetrics.reduce((s, m) => s + calcServerTokenTier(m.qps, m.lps, serverSizingObjects(m), 'nios-x').serverTokens, 0);
         const xaasTokens = xaasInst.reduce((s, inst) => s + inst.totalTokens, 0);
         const totalST = niosXTokens + xaasTokens;
         html += `<tr style="background:#ecfdf5;font-weight:bold"><td colspan="7">Total Allocated Server Tokens</td><td style="text-align:center">${totalST.toLocaleString()}</td></tr>`;
@@ -2960,7 +2966,7 @@ export function Wizard() {
                       const srvSources: { label: string; color: string; tokens: number }[] = [];
                       if (selectedProviders.includes('nios') && effectiveNiosMetrics.length > 0) {
                         effectiveNiosMetrics.forEach(m => {
-                          const t = calcServerTokenTier(m.qps, m.lps, m.objectCount, 'nios-x').serverTokens;
+                          const t = calcServerTokenTier(m.qps, m.lps, serverSizingObjects(m), 'nios-x').serverTokens;
                           if (t > 0) srvSources.push({ label: m.memberName, color: '#00a5e5', tokens: t });
                         });
                       }
@@ -3547,13 +3553,13 @@ export function Wizard() {
                       const calcNiosServerScenario = (members: typeof effectiveNiosMetrics) => {
                         const niosXMems = members.filter(m => (niosMigrationMap.get(m.memberName) || 'nios-x') !== 'nios-xaas');
                         const xaasMems  = members.filter(m => niosMigrationMap.get(m.memberName) === 'nios-xaas');
-                        const nxTok = niosXMems.reduce((s, m) => s + calcServerTokenTier(m.qps, m.lps, m.objectCount, 'nios-x').serverTokens, 0);
+                        const nxTok = niosXMems.reduce((s, m) => s + calcServerTokenTier(m.qps, m.lps, serverSizingObjects(m), 'nios-x').serverTokens, 0);
                         const xaasInst = consolidateXaasInstances(xaasMems);
                         return nxTok + xaasInst.reduce((s, inst) => s + inst.totalTokens, 0);
                       };
                       // Full: all members → NIOS-X baseline
                       const fullSrvTokens = effectiveNiosMetrics.reduce(
-                        (s, m) => s + calcServerTokenTier(m.qps, m.lps, m.objectCount, 'nios-x').serverTokens, 0);
+                        (s, m) => s + calcServerTokenTier(m.qps, m.lps, serverSizingObjects(m), 'nios-x').serverTokens, 0);
                       const hybridSrvTokens = effectiveNiosMetrics.filter(m => niosMigrationMap.has(m.memberName)).length > 0
                         ? calcNiosServerScenario(effectiveNiosMetrics.filter(m => niosMigrationMap.has(m.memberName)))
                         : 0;
@@ -3617,7 +3623,7 @@ export function Wizard() {
 
                 // NIOS-X tokens (individual per member)
                 const niosXTokens = niosXMembers.reduce((sum, m) => {
-                  return sum + calcServerTokenTier(m.qps, m.lps, m.objectCount, 'nios-x').serverTokens;
+                  return sum + calcServerTokenTier(m.qps, m.lps, serverSizingObjects(m), 'nios-x').serverTokens;
                 }, 0);
 
                 const totalServerTokens = niosXTokens + totalXaasTokens;
@@ -3768,7 +3774,7 @@ export function Wizard() {
                         <tbody>
                           {/* NIOS-X members — individual rows */}
                           {niosXMembers.map((member) => {
-                            const tier = calcServerTokenTier(member.qps, member.lps, member.objectCount, 'nios-x');
+                            const tier = calcServerTokenTier(member.qps, member.lps, serverSizingObjects(member), 'nios-x');
                             return (
                               <tr key={member.memberId} className="border-b border-[var(--border)] hover:bg-gray-50/50 transition-colors">
                                 <td className="px-4 py-2.5">
@@ -3794,7 +3800,7 @@ export function Wizard() {
                                   {member.lps > 0 ? member.lps.toLocaleString() : <span className="text-gray-300">&mdash;</span>}
                                 </td>
                                 <td className="text-right px-3 py-2.5 tabular-nums">
-                                  {member.objectCount > 0 ? member.objectCount.toLocaleString() : <span className="text-gray-300">&mdash;</span>}
+                                  {serverSizingObjects(member) > 0 ? serverSizingObjects(member).toLocaleString() : <span className="text-gray-300">&mdash;</span>}
                                 </td>
                                 <td className="text-center px-3 py-2.5">
                                   <span className={`inline-block px-2 py-0.5 rounded text-[10px] ${tierColorClass(tier.name)}`} style={{ fontWeight: 600 }}>
@@ -3863,7 +3869,7 @@ export function Wizard() {
                                     {member.lps > 0 ? member.lps.toLocaleString() : <span className="text-gray-300">&mdash;</span>}
                                   </td>
                                   <td className="text-right px-3 py-2 tabular-nums text-[11px] text-purple-600">
-                                    {member.objectCount > 0 ? member.objectCount.toLocaleString() : <span className="text-gray-300">&mdash;</span>}
+                                    {serverSizingObjects(member) > 0 ? serverSizingObjects(member).toLocaleString() : <span className="text-gray-300">&mdash;</span>}
                                   </td>
                                   <td className="text-center px-3 py-2" colSpan={2}>
                                     <span className="text-[10px] text-gray-400">(consolidated)</span>
@@ -4490,7 +4496,7 @@ export function Wizard() {
                                     {member.lps > 0 ? member.lps.toLocaleString() : <span className="text-gray-300">&mdash;</span>}
                                   </td>
                                   <td className="text-right px-3 py-2 tabular-nums text-[11px] text-purple-600">
-                                    {member.objectCount > 0 ? member.objectCount.toLocaleString() : <span className="text-gray-300">&mdash;</span>}
+                                    {serverSizingObjects(member) > 0 ? serverSizingObjects(member).toLocaleString() : <span className="text-gray-300">&mdash;</span>}
                                   </td>
                                   <td className="text-center px-3 py-2" colSpan={2}>
                                     <span className="text-[10px] text-gray-400">(consolidated)</span>
