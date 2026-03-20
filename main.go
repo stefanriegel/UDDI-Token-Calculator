@@ -30,17 +30,21 @@ import (
 
 func main() {
 	// 1. Bind the socket FIRST — this eliminates the browser-open race condition (INFRA-03).
-	//    "127.0.0.1:0" binds to loopback only (INFRA-02) with an OS-assigned free port.
-	//    Using ":0" instead would bind to 0.0.0.0 and trigger Windows Firewall dialog.
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	//    LISTEN_ADDR env var controls bind address; default ":8080" (all interfaces) for container deployment.
+	//    Set LISTEN_ADDR=127.0.0.1:0 to restore legacy loopback-only, OS-assigned-port behavior.
+	listenAddr := os.Getenv("LISTEN_ADDR")
+	if listenAddr == "" {
+		listenAddr = ":8080"
+	}
+	ln, err := net.Listen("tcp", listenAddr)
 	if err != nil {
-		log.Fatalf("bind failed: %v", err)
+		log.Fatalf("bind failed on %s: %v", listenAddr, err)
 	}
 
 	port := ln.Addr().(*net.TCPAddr).Port
-	url := fmt.Sprintf("http://127.0.0.1:%d", port)
+	url := fmt.Sprintf("http://localhost:%d", port)
 	log.Printf("DDI Scanner version %s (%s)", version.Version, version.Commit)
-	log.Printf("DDI Scanner serving at %s", url)
+	log.Printf("DDI Scanner listening on %s (url %s)", ln.Addr().String(), url)
 
 	// 2. Build the static file handler from the embedded filesystem (INFRA-01).
 	//    staticFiles is declared in embed.go (same package main) via //go:embed all:frontend/dist
@@ -75,9 +79,13 @@ func main() {
 		}
 	}()
 
-	// 6. Open the default browser. The socket is bound before this call — no race (INFRA-03).
-	if err := browser.OpenURL(url); err != nil {
-		log.Printf("could not open browser automatically; visit %s manually", url)
+	// 6. Open the default browser unless NO_BROWSER=1 (headless / container mode).
+	if os.Getenv("NO_BROWSER") != "1" {
+		if err := browser.OpenURL(url); err != nil {
+			log.Printf("could not open browser automatically; visit %s manually", url)
+		}
+	} else {
+		log.Printf("NO_BROWSER=1 set — skipping browser open; visit %s manually", url)
 	}
 
 	// 7. Block until Ctrl+C or SIGTERM.
