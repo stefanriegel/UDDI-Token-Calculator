@@ -8,7 +8,7 @@ RUN pnpm build
 
 # ─── Stage 2: Go binary build ───────────────────────────────────────────────
 FROM golang:1.25-alpine AS builder
-RUN apk add --no-cache ca-certificates wget
+RUN apk add --no-cache ca-certificates
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
@@ -23,17 +23,20 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
       -X github.com/stefanriegel/UDDI-Token-Calculator/internal/version.Commit=${COMMIT} \
       -X github.com/stefanriegel/UDDI-Token-Calculator/internal/version.Channel=${CHANNEL}" \
     -o uddi-token-calculator .
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+    -ldflags="-s -w" \
+    -o healthcheck ./cmd/healthcheck
 
 # ─── Stage 3: Minimal scratch image ─────────────────────────────────────────
 FROM scratch
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=builder /etc/passwd /etc/passwd
 COPY --from=builder /etc/group /etc/group
-COPY --from=builder /usr/bin/wget /usr/bin/wget
+COPY --from=builder /app/healthcheck /healthcheck
 COPY --from=builder /app/uddi-token-calculator /uddi-token-calculator
 ENV NO_BROWSER=1
 EXPOSE 8080
 USER nobody
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD ["/usr/bin/wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/api/v1/health"]
+  CMD ["/healthcheck"]
 ENTRYPOINT ["/uddi-token-calculator"]

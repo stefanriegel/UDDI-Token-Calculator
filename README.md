@@ -49,6 +49,59 @@ curl -sL https://raw.githubusercontent.com/stefanriegel/UDDI-Token-Calculator/ma
 
 All install methods support auto-update — the app checks for new versions on launch and updates in-place.
 
+## Docker / Server Deployment
+
+Run the calculator on a server so any browser on the network can reach it — no local install needed on client machines.
+
+### Quick start (single container)
+
+```bash
+docker run -d -p 8080:8080 --restart unless-stopped ghcr.io/stefanriegel/uddi-token-calculator:latest
+```
+
+Then open `http://<server-ip>:8080` in any browser on the network.
+
+### Docker Compose (recommended)
+
+**Option A — download the Compose file:**
+
+```bash
+curl -O https://raw.githubusercontent.com/stefanriegel/UDDI-Token-Calculator/main/docker-compose.yml
+docker compose up -d
+```
+
+**Option B — clone the repo:**
+
+```bash
+git clone https://github.com/stefanriegel/UDDI-Token-Calculator.git
+cd UDDI-Token-Calculator
+docker compose up -d
+```
+
+### Verify the container is healthy
+
+```bash
+curl http://localhost:8080/api/v1/health
+```
+
+Expected response:
+
+```json
+{"status":"ok","version":"...","platform":"linux"}
+```
+
+`docker compose ps` shows **healthy** within ~40 seconds of startup.
+
+### Port mapping
+
+The container listens on port **8080**. To map a different host port:
+
+```bash
+docker run -d -p <host-port>:8080 --restart unless-stopped ghcr.io/stefanriegel/uddi-token-calculator:latest
+```
+
+> **Note:** The container side must remain `8080` — the built-in healthcheck probes `localhost:8080`.
+
 ## Usage
 
 ```bash
