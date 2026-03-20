@@ -104,6 +104,9 @@ type ADCredentials struct {
 	// Kerberos-specific fields (pure Go via gokrb5, not Windows SSPI).
 	Realm string // Kerberos realm (e.g. "CORP.EXAMPLE.COM")
 	KDC   string // Key Distribution Center address (e.g. "dc01.corp.example.com:88")
+	// EventLogWindowHours controls how far back event log extraction goes.
+	// Default 72 (3 days). Valid values: 1, 24, 72, 168 (7 days).
+	EventLogWindowHours int
 }
 
 // BluecatCredentials holds Bluecat Address Manager authentication material.
@@ -165,6 +168,10 @@ type Session struct {
 	Azure       *AzureCredentials
 	GCP         *GCPCredentials
 	AD          *ADCredentials
+	// ADForests holds credentials for additional AD forests (index 1, 2, ...).
+	// ADForests[0] is never used — the primary forest is always in AD.
+	// When non-empty the orchestrator fans out across AD + each ADForest entry.
+	ADForests   []ADCredentials
 	Bluecat     *BluecatCredentials
 	EfficientIP *EfficientIPCredentials
 	NiosWAPI    *NiosWAPICredentials
@@ -181,6 +188,11 @@ type Session struct {
 	// nil if NIOS was not scanned.
 	NiosServerMetricsJSON []byte
 
+	// ADServerMetricsJSON holds JSON-encoded []ADServerMetric from the AD scan.
+	// Stored as raw bytes to avoid an import cycle with internal/scanner/ad.
+	// nil if AD was not scanned.
+	ADServerMetricsJSON []byte
+
 	// ProviderProgress tracks per-provider scan progress for the polling endpoint.
 	// Keys are provider names ("aws", "azure", "gcp", "ad", "nios").
 	// Updated by the orchestrator goroutine, read by HandleGetScanStatus.
@@ -196,6 +208,15 @@ func (s *Session) SetNiosServerMetricsJSON(data []byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.NiosServerMetricsJSON = data
+}
+
+// SetADServerMetricsJSON stores the JSON-encoded AD server metrics in the session.
+// Called by the orchestrator after a successful AD scan.
+// Uses the session mutex to guard concurrent access.
+func (s *Session) SetADServerMetricsJSON(data []byte) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ADServerMetricsJSON = data
 }
 
 // UpdateProviderProgress sets the progress info for a single provider.
@@ -239,6 +260,7 @@ func (s *Session) ZeroCreds() {
 	s.Azure = nil
 	s.GCP = nil
 	s.AD = nil
+	s.ADForests = nil
 	s.Bluecat = nil
 	s.EfficientIP = nil
 	s.NiosWAPI = nil

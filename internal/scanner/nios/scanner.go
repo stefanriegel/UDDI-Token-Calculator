@@ -384,8 +384,10 @@ func buildMetrics(
 		role := extractServiceRole(props)
 
 		objectCount := 0
+		activeIPCount := 0
 		if acc, ok := result.memberAccs[hostname]; ok {
 			objectCount = acc.ddiCount
+			activeIPCount = len(acc.memberIPSet)
 		}
 		// GM gets unresolved DDI (objects not attributed to any specific member).
 		if hostname == gmHostname {
@@ -393,12 +395,13 @@ func buildMetrics(
 		}
 
 		metrics = append(metrics, NiosServerMetric{
-			MemberID:    hostname,
-			MemberName:  hostname,
-			Role:        role,
-			QPS:         0,
-			LPS:         0,
-			ObjectCount: objectCount,
+			MemberID:      hostname,
+			MemberName:    hostname,
+			Role:          role,
+			QPS:           0,
+			LPS:           0,
+			ObjectCount:   objectCount,
+			ActiveIPCount: activeIPCount,
 		})
 	}
 	return metrics

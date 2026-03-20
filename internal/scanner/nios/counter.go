@@ -23,12 +23,13 @@ import (
 // Exported for use by the results API (server/types.go) and Phase 11 frontend panels.
 // JSON field names match API contract section 6.
 type NiosServerMetric struct {
-	MemberID    string `json:"memberId"`
-	MemberName  string `json:"memberName"`
-	Role        string `json:"role"`
-	QPS         int    `json:"qps"`
-	LPS         int    `json:"lps"`
-	ObjectCount int    `json:"objectCount"`
+	MemberID      string `json:"memberId"`
+	MemberName    string `json:"memberName"`
+	Role          string `json:"role"`
+	QPS           int    `json:"qps"`
+	LPS           int    `json:"lps"`
+	ObjectCount   int    `json:"objectCount"`
+	ActiveIPCount int    `json:"activeIPCount"` // Active IPs (DHCP leases) attributed to this member
 }
 
 // parsedObject is the in-memory representation of a single OBJECT element from onedb.xml

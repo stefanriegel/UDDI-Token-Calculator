@@ -39,6 +39,17 @@ type ScanProviderSpec struct {
 	RequestTimeout int `json:"requestTimeout,omitempty"`
 	// CheckpointPath is the file path for checkpoint persistence. Empty means no checkpointing.
 	CheckpointPath string `json:"checkpointPath,omitempty"`
+	// ADForestSubscriptions carries per-forest selected DC lists for multi-forest AD scans.
+	// Index 0 corresponds to the primary forest (sess.AD); index 1+ map to sess.ADForests.
+	// When nil/empty, the primary forest subscriptions field is used as normal.
+	ADForestSubscriptions []ADForestScanSpec `json:"adForestSubscriptions,omitempty"`
+}
+
+// ADForestScanSpec carries the selected DCs for one AD forest in a multi-forest scan.
+type ADForestScanSpec struct {
+	// ForestIndex is 0 for the primary forest, 1+ for additional forests.
+	ForestIndex   int      `json:"forestIndex"`
+	Subscriptions []string `json:"subscriptions"`
 }
 
 // ScanStartResponse is returned immediately by POST /api/v1/scan.
@@ -73,6 +84,10 @@ type ProviderErrorResponse struct {
 type ValidateRequest struct {
 	AuthMethod  string            `json:"authMethod"`
 	Credentials map[string]string `json:"credentials"`
+	// ForestIndex is used only for the "ad" provider. 0 = primary forest (sess.AD),
+	// 1+ = additional forests appended to sess.ADForests. The frontend sends this
+	// when the user validates a second/third AD forest with different credentials.
+	ForestIndex int `json:"forestIndex,omitempty"`
 }
 
 // SubscriptionItem is one entry in the subscriptions array returned by validate.
@@ -85,9 +100,10 @@ type SubscriptionItem struct {
 // On success: valid=true, sessionId set in cookie, subscriptions populated.
 // On failure: valid=false, error set, no session created.
 type ValidateResponse struct {
-	Valid         bool               `json:"valid"`
-	Error         string             `json:"error,omitempty"`
-	Subscriptions []SubscriptionItem `json:"subscriptions"`
+	Valid            bool               `json:"valid"`
+	Error            string             `json:"error,omitempty"`
+	Subscriptions    []SubscriptionItem `json:"subscriptions"`
+	DeviceCodeMessage string            `json:"deviceCodeMessage,omitempty"`
 }
 
 // CloneSessionResponse is returned by POST /api/v1/session/clone.
@@ -132,15 +148,29 @@ type NiosUploadResponse struct {
 	BackupToken  string           `json:"backupToken,omitempty"`
 }
 
+// ADServerMetric is per-DC sizing data returned in the results when the
+// microsoft (AD) provider was scanned. Used by the AD Migration Planner panel.
+type ADServerMetric struct {
+	Hostname              string `json:"hostname"`
+	DNSObjects            int    `json:"dnsObjects"`
+	DHCPObjects           int    `json:"dhcpObjects"`
+	DHCPObjectsWithOverhead int  `json:"dhcpObjectsWithOverhead"` // ceil(DHCPObjects * 1.2)
+	QPS                   int    `json:"qps"`
+	LPS                   int    `json:"lps"`
+	Tier                  string `json:"tier"`     // 2XS, XS, S, M, L, XL
+	ServerTokens          int    `json:"serverTokens"`
+}
+
 // NiosServerMetric is per-Grid-Member performance data returned in the results
 // when the NIOS provider was included in a scan. See API_CONTRACT.md §6.
 type NiosServerMetric struct {
-	MemberID    string `json:"memberId"`
-	MemberName  string `json:"memberName"`
-	Role        string `json:"role"`
-	QPS         int    `json:"qps"`
-	LPS         int    `json:"lps"`
-	ObjectCount int    `json:"objectCount"`
+	MemberID      string `json:"memberId"`
+	MemberName    string `json:"memberName"`
+	Role          string `json:"role"`
+	QPS           int    `json:"qps"`
+	LPS           int    `json:"lps"`
+	ObjectCount   int    `json:"objectCount"`
+	ActiveIPCount int    `json:"activeIPCount"`
 }
 
 // ADDiscoverRequest is the body for POST /api/v1/providers/ad/discover.
@@ -225,4 +255,7 @@ type ScanResultsResponse struct {
 	// NiosServerMetrics is populated when the nios provider was scanned.
 	// Omitted from the response when NIOS was not included in the scan.
 	NiosServerMetrics []NiosServerMetric `json:"niosServerMetrics,omitempty"`
+	// ADServerMetrics is populated when the microsoft (AD) provider was scanned.
+	// Omitted from the response when AD was not included in the scan.
+	ADServerMetrics []ADServerMetric `json:"adServerMetrics,omitempty"`
 }

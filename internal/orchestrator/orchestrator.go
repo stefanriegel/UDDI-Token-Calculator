@@ -43,6 +43,9 @@ type ScanProviderRequest struct {
 	RequestTimeout int
 	// CheckpointPath is the file path for checkpoint persistence. Empty means no checkpointing.
 	CheckpointPath string
+	// ForestIndex is used only for the "ad" provider in multi-forest scans.
+	// 0 = primary forest (sess.AD), 1+ = sess.ADForests[ForestIndex-1].
+	ForestIndex int
 }
 
 // OrchestratorResult holds the aggregated output of a completed scan.
@@ -79,7 +82,28 @@ func (o *Orchestrator) Run(ctx context.Context, sess *session.Session, providers
 		wg       sync.WaitGroup
 	)
 
+	// Expand multi-forest AD requests: if the session has additional AD forests
+	// (sess.ADForests), append one ScanProviderRequest per forest to the list.
+	// The primary forest (ForestIndex=0) is already present; we only add extras.
+	expandedProviders := make([]ScanProviderRequest, 0, len(providers)+len(sess.ADForests))
 	for _, p := range providers {
+		expandedProviders = append(expandedProviders, p)
+		if p.Provider == scanner.ProviderAD {
+			for i := range sess.ADForests {
+				extra := ScanProviderRequest{
+					Provider:       scanner.ProviderAD,
+					SelectionMode:  p.SelectionMode,
+					MaxWorkers:     p.MaxWorkers,
+					RequestTimeout: p.RequestTimeout,
+					CheckpointPath: p.CheckpointPath,
+					ForestIndex:    i + 1, // 1-based: maps to sess.ADForests[i]
+				}
+				expandedProviders = append(expandedProviders, extra)
+			}
+		}
+	}
+
+	for _, p := range expandedProviders {
 		// Determine which scanner key to use. NIOS with mode="wapi" uses
 		// the "nios-wapi" key to dispatch to WAPIScanner instead of the
 		// backup-based scanner registered under "nios".
@@ -184,6 +208,14 @@ func (o *Orchestrator) Run(ctx context.Context, sess *session.Session, providers
 						sess.SetNiosServerMetricsJSON(encoded)
 					}
 				}
+
+				// After a successful AD scan, type-assert to ADResultScanner
+				// to retrieve per-DC metrics JSON and store it in the session.
+				if ars, ok := s.(scanner.ADResultScanner); ok {
+					if encoded := ars.GetADServerMetricsJSON(); len(encoded) > 0 {
+						sess.SetADServerMetricsJSON(encoded)
+					}
+				}
 			}
 
 			// Always publish provider_complete with duration.
@@ -263,20 +295,43 @@ func buildScanRequest(p ScanProviderRequest, sess *session.Session) scanner.Scan
 			req.CachedGCPTokenSource = sess.GCP.CachedTokenSource
 		}
 	case scanner.ProviderAD:
-		if sess.AD != nil {
-			req.Credentials["auth_method"] = sess.AD.AuthMethod
-			req.Credentials["servers"] = strings.Join(sess.AD.Hosts, ",")
-			req.Credentials["username"] = sess.AD.Username
-			req.Credentials["password"] = sess.AD.Password
-			req.Credentials["domain"] = sess.AD.Domain
-			req.Credentials["realm"] = sess.AD.Realm
-			req.Credentials["kdc"] = sess.AD.KDC
-			if sess.AD.UseSSL {
+		// Resolve which forest's credentials to use based on ForestIndex.
+		// ForestIndex=0 → sess.AD (primary), ForestIndex=1+ → sess.ADForests[ForestIndex-1].
+		var adCreds *session.ADCredentials
+		if p.ForestIndex == 0 {
+			adCreds = sess.AD
+		} else {
+			slot := p.ForestIndex - 1
+			if slot < len(sess.ADForests) {
+				cpy := sess.ADForests[slot] // copy by value
+				adCreds = &cpy
+			}
+		}
+		if adCreds != nil {
+			req.Credentials["auth_method"] = adCreds.AuthMethod
+			req.Credentials["servers"] = strings.Join(adCreds.Hosts, ",")
+			req.Credentials["username"] = adCreds.Username
+			req.Credentials["password"] = adCreds.Password
+			req.Credentials["domain"] = adCreds.Domain
+			req.Credentials["realm"] = adCreds.Realm
+			req.Credentials["kdc"] = adCreds.KDC
+			if adCreds.UseSSL {
 				req.Credentials["use_ssl"] = "true"
 			}
-			if sess.AD.InsecureSkipVerify {
+			if adCreds.InsecureSkipVerify {
 				req.Credentials["insecure_skip_verify"] = "true"
 			}
+		}
+		// Pass selected DCs from the wizard subscriptions list — same pattern as
+		// NIOS selected_members. Allows filtering which DCs contribute rows to the
+		// report and ensures per-DC source attribution in findings.
+		if len(p.Subscriptions) > 0 {
+			req.Credentials["selected_dcs"] = strings.Join(p.Subscriptions, ",")
+		}
+		// Forward cached Azure credential so the AD scanner can enrich
+		// findings with Entra ID user/device counts via Microsoft Graph.
+		if sess.Azure != nil && sess.Azure.CachedCredential != nil {
+			req.CachedAzureCredential = sess.Azure.CachedCredential
 		}
 	case scanner.ProviderNIOS:
 		if p.Mode == "wapi" {

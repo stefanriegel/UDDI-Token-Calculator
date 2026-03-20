@@ -177,3 +177,179 @@ func TestBuild_ErrorsTabOmitted(t *testing.T) {
 		t.Errorf("expected sheet %q to NOT exist; got sheets: %v", "Errors", f.GetSheetList())
 	}
 }
+
+// TestBuild_ADMigrationPlannerSheet asserts that when ADServerMetricsJSON is set,
+// the "AD Migration Planner" sheet is created with expected headers and data.
+func TestBuild_ADMigrationPlannerSheet(t *testing.T) {
+	adFindings := []calculator.FindingRow{
+		{Provider: "ad", Source: "DC01", Category: calculator.CategoryDDIObjects, Item: "dns_zone", Count: 10, TokensPerUnit: calculator.TokensPerDDIObject, ManagementTokens: 1},
+		{Provider: "ad", Source: "DC01", Category: calculator.CategoryManagedAssets, Item: "user_account", Count: 500, TokensPerUnit: calculator.TokensPerManagedAsset, ManagementTokens: 5},
+		{Provider: "ad", Source: "DC01", Category: calculator.CategoryManagedAssets, Item: "computer_count", Count: 200, TokensPerUnit: calculator.TokensPerManagedAsset, ManagementTokens: 2},
+		{Provider: "ad", Source: "DC01", Category: calculator.CategoryActiveIPs, Item: "static_ip_count", Count: 50, TokensPerUnit: calculator.TokensPerActiveIP, ManagementTokens: 1},
+	}
+
+	sess := testSession(adFindings, nil, true)
+	sess.ADServerMetricsJSON = []byte(`[
+		{"hostname":"DC01","dnsObjects":100,"dhcpObjects":50,"dhcpObjectsWithOverhead":60,"qps":0,"lps":0,"tier":"2XS","serverTokens":130},
+		{"hostname":"DC02","dnsObjects":5000,"dhcpObjects":3000,"dhcpObjectsWithOverhead":3600,"qps":1000,"lps":50,"tier":"XS","serverTokens":250}
+	]`)
+
+	f := openResult(t, sess)
+	if !sheetExists(f, "AD Migration Planner") {
+		t.Fatalf("expected sheet %q to exist; got sheets: %v", "AD Migration Planner", f.GetSheetList())
+	}
+
+	// Verify header row
+	cellA1, _ := f.GetCellValue("AD Migration Planner", "A1")
+	if cellA1 != "DC Hostname" {
+		t.Errorf("A1 = %q, want 'DC Hostname'", cellA1)
+	}
+	cellG1, _ := f.GetCellValue("AD Migration Planner", "G1")
+	if cellG1 != "Form Factor" {
+		t.Errorf("G1 = %q, want 'Form Factor'", cellG1)
+	}
+	cellH1, _ := f.GetCellValue("AD Migration Planner", "H1")
+	if cellH1 != "NIOS-X Tier" {
+		t.Errorf("H1 = %q, want 'NIOS-X Tier'", cellH1)
+	}
+	cellI1, _ := f.GetCellValue("AD Migration Planner", "I1")
+	if cellI1 != "Server Tokens" {
+		t.Errorf("I1 = %q, want 'Server Tokens'", cellI1)
+	}
+
+	// Verify data rows
+	cellA2, _ := f.GetCellValue("AD Migration Planner", "A2")
+	if cellA2 != "DC01" {
+		t.Errorf("A2 = %q, want 'DC01'", cellA2)
+	}
+	cellA3, _ := f.GetCellValue("AD Migration Planner", "A3")
+	if cellA3 != "DC02" {
+		t.Errorf("A3 = %q, want 'DC02'", cellA3)
+	}
+	cellG2, _ := f.GetCellValue("AD Migration Planner", "G2")
+	if cellG2 != "NIOS-X" {
+		t.Errorf("G2 (form factor) = %q, want 'NIOS-X'", cellG2)
+	}
+	cellH2, _ := f.GetCellValue("AD Migration Planner", "H2")
+	if cellH2 != "2XS" {
+		t.Errorf("H2 (tier) = %q, want '2XS'", cellH2)
+	}
+}
+
+// TestBuild_ADMigrationPlannerOmitted asserts that when ADServerMetricsJSON is nil/empty,
+// no "AD Migration Planner" sheet is created.
+func TestBuild_ADMigrationPlannerOmitted(t *testing.T) {
+	sess := testSession(awsFindings(), nil, true)
+	f := openResult(t, sess)
+	if sheetExists(f, "AD Migration Planner") {
+		t.Errorf("expected sheet %q to NOT exist when ADServerMetricsJSON is empty; got sheets: %v", "AD Migration Planner", f.GetSheetList())
+	}
+}
+
+// TestBuild_SKUSheet_WithServerMetrics asserts that the "Recommended SKUs" sheet
+// contains correct MGMT and SERV pack counts when AD server metrics are present.
+func TestBuild_SKUSheet_WithServerMetrics(t *testing.T) {
+	// Use testSession with findings, then override TokenResult.GrandTotal directly
+	// for deterministic pack count testing.
+	sess := testSession(awsFindings(), nil, true)
+	sess.TokenResult.GrandTotal = 2500 // → ceil(2500/1000) = 3 MGMT packs
+	// AD server metrics: one entry with serverTokens=800 → ceil(800/500) = 2 SERV packs
+	sess.ADServerMetricsJSON = []byte(`[{"hostname":"DC01","dnsObjects":100,"dhcpObjects":50,"dhcpObjectsWithOverhead":60,"qps":0,"lps":0,"tier":"2XS","serverTokens":800}]`)
+
+	f := openResult(t, sess)
+
+	if !sheetExists(f, "Recommended SKUs") {
+		t.Fatalf("expected sheet 'Recommended SKUs' to exist; got sheets: %v", f.GetSheetList())
+	}
+
+	// Header row
+	a1, _ := f.GetCellValue("Recommended SKUs", "A1")
+	if a1 != "SKU Code" {
+		t.Errorf("A1 = %q, want 'SKU Code'", a1)
+	}
+
+	// MGMT row
+	a2, _ := f.GetCellValue("Recommended SKUs", "A2")
+	if a2 != "IB-TOKENS-UDDI-MGMT-1000" {
+		t.Errorf("A2 (SKU Code) = %q, want 'IB-TOKENS-UDDI-MGMT-1000'", a2)
+	}
+	c2, _ := f.GetCellValue("Recommended SKUs", "C2")
+	if c2 != "3" {
+		t.Errorf("C2 (MGMT packs) = %q, want '3'", c2)
+	}
+
+	// SERV row
+	a3, _ := f.GetCellValue("Recommended SKUs", "A3")
+	if a3 != "IB-TOKENS-UDDI-SERV-500" {
+		t.Errorf("A3 (SKU Code) = %q, want 'IB-TOKENS-UDDI-SERV-500'", a3)
+	}
+	c3, _ := f.GetCellValue("Recommended SKUs", "C3")
+	if c3 != "2" {
+		t.Errorf("C3 (SERV packs) = %q, want '2'", c3)
+	}
+}
+
+// TestBuild_SKUSheet_NoServerMetrics asserts that the SERV row is absent
+// when no server metrics JSON is provided.
+func TestBuild_SKUSheet_NoServerMetrics(t *testing.T) {
+	sess := testSession(awsFindings(), nil, true)
+	f := openResult(t, sess)
+
+	if !sheetExists(f, "Recommended SKUs") {
+		t.Fatalf("expected sheet 'Recommended SKUs' to exist; got sheets: %v", f.GetSheetList())
+	}
+
+	// MGMT row should still be present
+	a2, _ := f.GetCellValue("Recommended SKUs", "A2")
+	if a2 != "IB-TOKENS-UDDI-MGMT-1000" {
+		t.Errorf("A2 (SKU Code) = %q, want 'IB-TOKENS-UDDI-MGMT-1000'", a2)
+	}
+
+	// SERV row should be absent (A3 empty)
+	a3, _ := f.GetCellValue("Recommended SKUs", "A3")
+	if a3 != "" {
+		t.Errorf("A3 should be empty when no server metrics; got %q", a3)
+	}
+}
+
+// TestBuild_SKUSheet_WithNIOSMetrics asserts NIOS server token tier calculation
+// produces correct SERV pack count.
+func TestBuild_SKUSheet_WithNIOSMetrics(t *testing.T) {
+	findings := []calculator.FindingRow{
+		{
+			Provider:         "nios",
+			Source:           "grid01",
+			Category:         calculator.CategoryDDIObjects,
+			Item:             "dns_zone",
+			Count:            1000,
+			TokensPerUnit:    1,
+			ManagementTokens: 1000,
+		},
+	}
+	sess := testSession(findings, nil, true)
+	// NIOS metrics: one member with qps=5000, lps=75, objectCount=3000 → tier 2XS → 130 server tokens
+	// Another member with qps=15000, lps=150, objectCount=20000 → tier S → 470 server tokens
+	// Total = 600 → ceil(600/500) = 2 SERV packs
+	sess.NiosServerMetricsJSON = []byte(`[
+		{"qps":5000,"lps":75,"objectCount":3000},
+		{"qps":15000,"lps":150,"objectCount":20000}
+	]`)
+
+	f := openResult(t, sess)
+
+	// MGMT: ceil(1000/1000) = 1
+	c2, _ := f.GetCellValue("Recommended SKUs", "C2")
+	if c2 != "1" {
+		t.Errorf("C2 (MGMT packs) = %q, want '1'", c2)
+	}
+
+	// SERV: ceil(600/500) = 2
+	a3, _ := f.GetCellValue("Recommended SKUs", "A3")
+	if a3 != "IB-TOKENS-UDDI-SERV-500" {
+		t.Errorf("A3 = %q, want 'IB-TOKENS-UDDI-SERV-500'", a3)
+	}
+	c3, _ := f.GetCellValue("Recommended SKUs", "C3")
+	if c3 != "2" {
+		t.Errorf("C3 (SERV packs) = %q, want '2'", c3)
+	}
+}

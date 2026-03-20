@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os/exec"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -197,21 +198,24 @@ func (h *ValidateHandler) HandleValidate(w http.ResponseWriter, r *http.Request)
 			MaxAge:   3600,
 		})
 	}
-	storeCredentials(sess, provider, req.AuthMethod, merged)
+	storeCredentials(sess, provider, req.AuthMethod, merged, req.ForestIndex)
 
 	if subs == nil {
 		subs = []SubscriptionItem{}
 	}
 	writeJSON(w, http.StatusOK, ValidateResponse{
-		Valid:         true,
-		Subscriptions: subs,
+		Valid:             true,
+		Subscriptions:     subs,
+		DeviceCodeMessage: merged["device_code_message"],
 	})
 }
 
 // storeCredentials writes the validated credentials into the session.
 // Credentials are write-once — they must never be read back out of the session
 // into any HTTP response body.
-func storeCredentials(sess *session.Session, provider, authMethod string, creds map[string]string) {
+// forestIndex is only meaningful for the "ad" provider: 0 = primary forest,
+// 1+ = additional forests stored in sess.ADForests.
+func storeCredentials(sess *session.Session, provider, authMethod string, creds map[string]string, forestIndex int) {
 	switch provider {
 	case "aws":
 		// Frontend sends "profile", backend historically read "profileName".
@@ -279,16 +283,29 @@ func storeCredentials(sess *session.Session, provider, authMethod string, creds 
 				hosts = []string{h}
 			}
 		}
-		sess.AD = &session.ADCredentials{
-			AuthMethod:         authMethod,
-			Hosts:              hosts,
-			Username:           creds["username"],
-			Password:           creds["password"],
-			Domain:             creds["domain"],
-			UseSSL:             creds["useSSL"] == "true",
-			InsecureSkipVerify: creds["insecureSkipVerify"] == "true",
-			Realm:              creds["realm"],
-			KDC:                creds["kdc"],
+		adCreds := session.ADCredentials{
+			AuthMethod:          authMethod,
+			Hosts:               hosts,
+			Username:            creds["username"],
+			Password:            creds["password"],
+			Domain:              creds["domain"],
+			UseSSL:              creds["useSSL"] == "true",
+			InsecureSkipVerify:  creds["insecureSkipVerify"] == "true",
+			Realm:               creds["realm"],
+			KDC:                 creds["kdc"],
+			EventLogWindowHours: parseEventLogWindowHours(creds["eventLogWindowHours"]),
+		}
+		if forestIndex == 0 {
+			// Primary forest — stored in sess.AD (existing behaviour).
+			sess.AD = &adCreds
+		} else {
+			// Additional forest — grow ADForests slice to accommodate the index.
+			// Index 1 → ADForests[0], index 2 → ADForests[1], etc.
+			slot := forestIndex - 1
+			for len(sess.ADForests) <= slot {
+				sess.ADForests = append(sess.ADForests, session.ADCredentials{})
+			}
+			sess.ADForests[slot] = adCreds
 		}
 	case "bluecat":
 		var configIDs []string
@@ -789,8 +806,8 @@ func realAzureDeviceCode(ctx context.Context, creds map[string]string) ([]Subscr
 		ClientID: azureCLIClientID,
 		UserPrompt: func(ctx context.Context, msg azidentity.DeviceCodeMessage) error {
 			// The SDK calls this callback with the device code and verification URL.
-			// In a real browser-based UI flow, the frontend would display these.
-			// For now, print to stdout — the frontend polls for the validation result.
+			// Capture the message so the validate handler can include it in the response.
+			creds["device_code_message"] = msg.Message
 			fmt.Printf("Azure Device Code: %s\n", msg.Message)
 			return nil
 		},
@@ -1634,6 +1651,25 @@ func parseServers(s string) []string {
 		}
 	}
 	return out
+}
+
+// parseEventLogWindowHours parses the event log window string and returns a valid
+// window in hours. Defaults to 72 (3 days) if empty or invalid.
+func parseEventLogWindowHours(s string) int {
+	if s == "" {
+		return 72
+	}
+	v, err := strconv.Atoi(s)
+	if err != nil || v <= 0 {
+		return 72
+	}
+	// Clamp to valid options: 1, 24, 72, 168.
+	switch v {
+	case 1, 24, 72, 168:
+		return v
+	default:
+		return 72
+	}
 }
 
 // realADKerberosValidator validates Kerberos authentication by obtaining a TGT from

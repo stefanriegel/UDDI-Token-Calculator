@@ -1667,3 +1667,118 @@ func TestHandleADDiscover_UnreachableHost(t *testing.T) {
 }
 
 
+// TestMultiForestAD_PrimaryForest verifies that forestIndex=0 (or omitted) stores
+// credentials in sess.AD (existing primary-forest behaviour).
+func TestMultiForestAD_PrimaryForest(t *testing.T) {
+	store := session.NewStore()
+	h := newTestValidateHandler(store)
+
+	rec := postValidate(t, store, h, "ad", map[string]interface{}{
+		"authMethod":  "ntlm",
+		"forestIndex": 0,
+		"credentials": map[string]string{
+			"servers":  "dc01.corp.local",
+			"username": "admin",
+			"password": "secret",
+		},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	var sessionID string
+	resp := &http.Response{Header: rec.Header()}
+	for _, c := range resp.Cookies() {
+		if c.Name == "ddi_session" {
+			sessionID = c.Value
+		}
+	}
+	sess, ok := store.Get(sessionID)
+	if !ok {
+		t.Fatal("session not found")
+	}
+	if sess.AD == nil {
+		t.Fatal("expected sess.AD to be set for forestIndex=0")
+	}
+	if len(sess.AD.Hosts) == 0 || sess.AD.Hosts[0] != "dc01.corp.local" {
+		t.Errorf("AD.Hosts = %v, want [dc01.corp.local]", sess.AD.Hosts)
+	}
+	if len(sess.ADForests) != 0 {
+		t.Errorf("ADForests should be empty for primary forest, got %d entries", len(sess.ADForests))
+	}
+}
+
+// TestMultiForestAD_AdditionalForest verifies that forestIndex=1 appends to sess.ADForests
+// rather than overwriting sess.AD.
+func TestMultiForestAD_AdditionalForest(t *testing.T) {
+	store := session.NewStore()
+	h := newTestValidateHandler(store)
+
+	// First validate primary forest (forestIndex=0 is default).
+	rec1 := postValidate(t, store, h, "ad", map[string]interface{}{
+		"authMethod": "ntlm",
+		"credentials": map[string]string{
+			"servers":  "dc01.corp.local",
+			"username": "admin1",
+			"password": "pass1",
+		},
+	})
+	if rec1.Code != http.StatusOK {
+		t.Fatalf("primary forest: expected 200, got %d", rec1.Code)
+	}
+
+	// Extract session cookie.
+	var sessionID string
+	resp1 := &http.Response{Header: rec1.Header()}
+	for _, c := range resp1.Cookies() {
+		if c.Name == "ddi_session" {
+			sessionID = c.Value
+		}
+	}
+
+	// Now validate a second forest using forestIndex=1.
+	// We need to send the existing session cookie so the handler reuses the session.
+	b, _ := json.Marshal(map[string]interface{}{
+		"authMethod":  "ntlm",
+		"forestIndex": 1,
+		"credentials": map[string]string{
+			"servers":  "dc-forest2.other.local",
+			"username": "admin2",
+			"password": "pass2",
+		},
+	})
+	router := server.NewRouter(noopStatic, store, nil)
+	server.RegisterValidateHandler(router, h)
+	req2 := httptest.NewRequest(http.MethodPost, "/api/v1/providers/ad/validate", bytes.NewReader(b))
+	req2.Header.Set("Content-Type", "application/json")
+	req2.AddCookie(&http.Cookie{Name: "ddi_session", Value: sessionID})
+	rec2 := httptest.NewRecorder()
+	router.ServeHTTP(rec2, req2)
+
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("second forest: expected 200, got %d: %s", rec2.Code, rec2.Body.String())
+	}
+
+	sess, ok := store.Get(sessionID)
+	if !ok {
+		t.Fatal("session not found after second forest validate")
+	}
+	// Primary forest must be unchanged.
+	if sess.AD == nil || len(sess.AD.Hosts) == 0 || sess.AD.Hosts[0] != "dc01.corp.local" {
+		t.Errorf("primary forest AD.Hosts = %v, want [dc01.corp.local]", sess.AD.Hosts)
+	}
+	// Additional forest must be in ADForests[0].
+	if len(sess.ADForests) != 1 {
+		t.Fatalf("ADForests length = %d, want 1", len(sess.ADForests))
+	}
+	if len(sess.ADForests[0].Hosts) == 0 || sess.ADForests[0].Hosts[0] != "dc-forest2.other.local" {
+		t.Errorf("ADForests[0].Hosts = %v, want [dc-forest2.other.local]", sess.ADForests[0].Hosts)
+	}
+	// Credentials must be separate.
+	if sess.ADForests[0].Username != "admin2" {
+		t.Errorf("ADForests[0].Username = %q, want admin2", sess.ADForests[0].Username)
+	}
+	if sess.AD.Username != "admin1" {
+		t.Errorf("Primary AD.Username = %q, want admin1", sess.AD.Username)
+	}
+}

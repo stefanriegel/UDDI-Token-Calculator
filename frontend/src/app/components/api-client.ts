@@ -61,17 +61,19 @@ export interface ValidateResponse {
   valid: boolean;
   error?: string;
   subscriptions: SubscriptionItem[];
+  deviceCodeMessage?: string;
 }
 
 export async function validateCredentials(
   provider: string,
   authMethod: string,
   credentials: Record<string, string>,
+  forestIndex?: number,
 ): Promise<ValidateResponse> {
   const res = await fetch(apiUrl(`/providers/${provider}/validate`), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ authMethod, credentials }),
+    body: JSON.stringify({ authMethod, credentials, ...(forestIndex !== undefined && forestIndex > 0 ? { forestIndex } : {}) }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -353,6 +355,18 @@ export interface NiosServerMetricAPI {
   qps: number;
   lps: number;
   objectCount: number;
+  activeIPCount: number;
+}
+
+export interface ADServerMetricAPI {
+  hostname: string;
+  dnsObjects: number;
+  dhcpObjects: number;
+  dhcpObjectsWithOverhead: number;
+  qps: number;
+  lps: number;
+  tier: string;
+  serverTokens: number;
 }
 
 export interface FindingRowAPI {
@@ -377,6 +391,7 @@ export interface ScanResultsResponse {
   findings: FindingRowAPI[];
   errors: { provider: string; resource: string; message: string }[];
   niosServerMetrics?: NiosServerMetricAPI[];
+  adServerMetrics?: ADServerMetricAPI[];
 }
 
 export async function getScanResults(scanId: string): Promise<ScanResultsResponse> {

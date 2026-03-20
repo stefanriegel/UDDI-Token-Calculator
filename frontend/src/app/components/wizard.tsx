@@ -16,6 +16,7 @@ import {
   Check,
   AlertCircle,
   Info,
+  HelpCircle,
   Globe,
   Search,
   Minus,
@@ -33,6 +34,7 @@ import {
   Shield,
   ArrowUpCircle,
 } from 'lucide-react';
+import { Tooltip, TooltipTrigger, TooltipContent } from './ui/tooltip';
 import { useBackendConnection } from './use-backend';
 import {
   validateCredentials as apiValidate,
@@ -48,6 +50,7 @@ import {
   cloneSession,
   type ScanStatusResponse,
   type ADDiscoveredServer,
+  type ADServerMetricAPI,
 } from './api-client';
 import {
   PROVIDERS,
@@ -77,6 +80,11 @@ type Step = 'providers' | 'credentials' | 'sources' | 'scanning' | 'results';
 type SortColumn = 'provider' | 'source' | 'category' | 'item' | 'count' | 'managementTokens';
 type SortDir = 'asc' | 'desc';
 
+/** Effective object count for server token tier sizing: DDI objects + Active IPs (DHCP). */
+function serverSizingObjects(m: NiosServerMetrics): number {
+  return m.objectCount + (m.activeIPCount ?? 0);
+}
+
 const STEPS: { id: Step; label: string }[] = [
   { id: 'providers', label: 'Select Providers' },
   { id: 'credentials', label: 'Credentials' },
@@ -92,6 +100,118 @@ function formatItemLabel(item: string): string {
     return `DNS Record (${suffix.toUpperCase()})`;
   }
   return item;
+}
+
+// ─── ScenarioPlannerCards ─────────────────────────────────────────────────────
+// Shared scenario comparison card row used by every migration planner section.
+// Renders three cards (Current / Hybrid / Full) in a consistent layout.
+//
+// Usage (add a new connector):
+//   1. Compute three scenario values: { label, primaryValue, subLines?, desc }
+//   2. Determine isActive for each scenario based on the connector's migration map
+//   3. Render <ScenarioPlannerCards title="..." color="orange|blue" ... />
+//
+// Template for a new connector planner section:
+//   const scenarioCurrent = { label: 'Current',        primaryValue: 0,             desc: '...' };
+//   const scenarioHybrid  = { label: 'Hybrid',         primaryValue: hybridTokens,  desc: '...' };
+//   const scenarioFull    = { label: 'Full Migration',  primaryValue: fullTokens,    desc: '...' };
+//   const isActive = (idx: number) => idx === 0 ? mapSize === 0 : idx === 1 ? mapSize > 0 && mapSize < total : mapSize === total;
+//   <ScenarioPlannerCards title="Management Tokens" unit="Management Tokens" color="orange"
+//     scenarios={[scenarioCurrent, scenarioHybrid, scenarioFull]}
+//     isActive={isActive} />
+//   <ScenarioPlannerCards title="Server Tokens" unit="Server Tokens" color="blue"
+//     scenarios={[scenarioCurrent, scenarioHybrid, scenarioFull]}
+//     isActive={isActive} />
+
+interface ScenarioCard {
+  label: string;
+  /** The main large number displayed on the card. */
+  primaryValue: number;
+  /** Optional sub-lines shown below the primary value (e.g. UDDI vs NIOS licensing split). */
+  subLines?: { text: string; color: string }[];
+  desc: string;
+}
+
+function ScenarioPlannerCards({
+  title,
+  unit,
+  color,
+  scenarios,
+  isActive,
+}: {
+  title: string;
+  unit: string;
+  color: 'orange' | 'blue';
+  scenarios: ScenarioCard[];
+  isActive: (idx: number) => boolean;
+}) {
+  const activeBorder  = color === 'orange' ? 'border-[var(--infoblox-orange)]' : 'border-blue-500';
+  const activeBg      = color === 'orange' ? 'bg-orange-50/30'                 : 'bg-blue-50/30';
+  const activeDot     = color === 'orange' ? 'bg-[var(--infoblox-orange)]'     : 'bg-blue-500';
+  const activeNumber  = color === 'orange' ? 'text-[var(--infoblox-orange)]'   : 'text-blue-700';
+
+  return (
+    <div className="px-4 py-4 border-t border-[var(--border)]">
+      <h3 className="text-[14px] font-semibold text-[var(--foreground)] mb-3">{title}</h3>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        {scenarios.map((scenario, idx) => {
+          const active = isActive(idx);
+          return (
+            <div
+              key={scenario.label}
+              className={`rounded-xl border-2 p-4 transition-colors ${
+                active ? `${activeBorder} ${activeBg} shadow-sm` : 'border-[var(--border)] bg-white'
+              }`}
+            >
+              <div className="flex items-center gap-2 mb-2">
+                {active && <span className={`w-2 h-2 rounded-full ${activeDot}`} />}
+                <span className="text-[12px] uppercase tracking-wider text-[var(--muted-foreground)]" style={{ fontWeight: 600 }}>
+                  {scenario.label}
+                </span>
+              </div>
+              <div className={`text-[28px] ${activeNumber}`} style={{ fontWeight: 700 }}>
+                {scenario.primaryValue.toLocaleString()}
+              </div>
+              <div className="text-[11px] text-[var(--muted-foreground)] mb-2">{unit}</div>
+              {scenario.subLines && scenario.subLines.length > 0 && (
+                <div className="text-[11px] space-y-0.5 mb-1">
+                  {scenario.subLines.map((line, i) => (
+                    <div key={i} style={{ color: line.color }}>{line.text}</div>
+                  ))}
+                </div>
+              )}
+              <p className="text-[11px] text-[var(--muted-foreground)] border-t border-[var(--border)] pt-2 mt-2">
+                {scenario.desc}
+              </p>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
+
+/** Small info icon that shows a tooltip on hover. Use next to labels that need extra explanation. */
+function FieldTooltip({ text, side = 'top' }: { text: string; side?: 'top' | 'right' | 'bottom' | 'left' }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          tabIndex={-1}
+          className="inline-flex items-center justify-center text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors cursor-help focus:outline-none"
+          aria-label={text}
+        >
+          <HelpCircle className="w-3.5 h-3.5" />
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side={side} className="max-w-[260px] text-[12px] leading-relaxed">
+        {text}
+      </TooltipContent>
+    </Tooltip>
+  );
 }
 
 /** Inline component: add/remove list for server addresses (replaces comma-separated text input). */
@@ -219,6 +339,7 @@ export function Wizard() {
   const [credentialError, setCredentialError] = useState<Record<ProviderType, string>>({
     aws: '', azure: '', gcp: '', microsoft: '', nios: '', bluecat: '', efficientip: '',
   });
+  const [deviceCodeMessage, setDeviceCodeMessage] = useState<string>('');
   const [scanError, setScanError] = useState<string>('');
   const scanIntervalsRef = useRef<ReturnType<typeof setInterval>[]>([]);
   const [showSecrets, setShowSecrets] = useState<Record<string, boolean>>({});
@@ -243,6 +364,7 @@ export function Wizard() {
   const [topDhcpExpanded, setTopDhcpExpanded] = useState(false);
   const [topIpExpanded, setTopIpExpanded] = useState(false);
   const [showAllHeroSources, setShowAllHeroSources] = useState(false);
+  const [heroCollapsed, setHeroCollapsed] = useState(true);
   const [showAllCategorySources, setShowAllCategorySources] = useState<Record<string, boolean>>({});
 
   // Findings table filters & sorting
@@ -262,10 +384,15 @@ export function Wizard() {
   // NIOS-X migration planner: which NIOS sources (grid members) to migrate, with per-member form factor
   const [niosMigrationMap, setNiosMigrationMap] = useState<Map<string, ServerFormFactor>>(new Map());
   const [memberSearchFilter, setMemberSearchFilter] = useState('');
+  const [adMigrationMap, setAdMigrationMap] = useState<Map<string, ServerFormFactor>>(new Map());
+  const [adMemberSearchFilter, setAdMemberSearchFilter] = useState('');
 
   // Backend wiring: NIOS backup token returned from upload, and live server metrics from scan results
   const [backupToken, setBackupToken] = useState<string>('');
   const [niosServerMetrics, setNiosServerMetrics] = useState<NiosServerMetrics[]>([]);
+
+  // AD server metrics for migration planner
+  const [adServerMetrics, setAdServerMetrics] = useState<ADServerMetricAPI[]>([]);
 
   // AD forest discovery state
   const [adDiscovering, setAdDiscovering] = useState(false);
@@ -277,8 +404,28 @@ export function Wizard() {
   } | null>(null);
   const [adDiscoveryDismissed, setAdDiscoveryDismissed] = useState(false);
 
+  // Additional AD forests (beyond the primary forest in credentials.microsoft).
+  // Each entry is a separate forest with its own credential set and validation state.
+  type ADForestEntry = {
+    id: string; // stable local ID (e.g. "forest-1")
+    authMethod: string;
+    credentials: Record<string, string>;
+    status: 'idle' | 'validating' | 'valid' | 'error';
+    error: string;
+    subscriptions: { id: string; name: string; selected: boolean }[];
+  };
+  const [adForests, setAdForests] = useState<ADForestEntry[]>([]);
+
   // Use live metrics when available from real scan, fall back to mock data in demo mode
   const effectiveNiosMetrics = niosServerMetrics.length > 0 ? niosServerMetrics : MOCK_NIOS_SERVER_METRICS;
+
+  // AD server metrics: use live data when available, mock data in demo mode when microsoft is selected
+  const MOCK_AD_SERVER_METRICS: ADServerMetricAPI[] = [
+    { hostname: 'DC01', dnsObjects: 1250, dhcpObjects: 340, dhcpObjectsWithOverhead: 408, qps: 2800, lps: 45, tier: '2XS', serverTokens: 130 },
+    { hostname: 'DC02', dnsObjects: 8500, dhcpObjects: 1200, dhcpObjectsWithOverhead: 1440, qps: 12000, lps: 120, tier: 'XS', serverTokens: 250 },
+    { hostname: 'DC03', dnsObjects: 25000, dhcpObjects: 8000, dhcpObjectsWithOverhead: 9600, qps: 35000, lps: 250, tier: 'M', serverTokens: 880 },
+  ];
+  const effectiveADMetrics = adServerMetrics.length > 0 ? adServerMetrics : (backend.isDemo && selectedProviders.includes('microsoft') ? MOCK_AD_SERVER_METRICS : []);
 
   // Helper: render provider icon (uses real cloud logos for all providers)
   const ProviderIconEl = ({ id, className }: { id: ProviderType; className?: string; color?: string }) => {
@@ -306,12 +453,16 @@ export function Wizard() {
     switch (currentStep) {
       case 'providers':
         return selectedProviders.length > 0;
-      case 'credentials':
-        return selectedProviders.every((p) => credentialStatus[p] === 'valid');
+      case 'credentials': {
+        const primaryValid = selectedProviders.every((p) => credentialStatus[p] === 'valid');
+        // All additional AD forests must also be validated (or removed) before proceeding.
+        const forestsValid = adForests.every((f) => f.status === 'valid');
+        return primaryValid && forestsValid;
+      }
       case 'sources':
         return selectedProviders.some((p) =>
           getEffectiveSelectedCount(p) > 0
-        );
+        ) || adForests.some((f) => f.subscriptions.some((s) => s.selected));
       case 'scanning':
         return scanProgress >= 100;
       default:
@@ -363,6 +514,7 @@ export function Wizard() {
     setNiosServerMetrics([]);
     setAdDiscoveryResult(null);
     setAdDiscoveryDismissed(false);
+    setAdForests([]);
     setFindingsProviderFilter(new Set());
     setFindingsCategoryFilter(new Set());
     setFindingsSort(null);
@@ -396,10 +548,12 @@ export function Wizard() {
         (creds.servers || '').split(',').map((s: string) => s.trim().toLowerCase()).filter(Boolean)
       );
       const newDCs = result.domainControllers.filter(
-        (dc) => !existingServers.has(dc.hostname.toLowerCase())
+        (dc) => !existingServers.has(dc.hostname.toLowerCase()) &&
+                !existingServers.has((dc.ip || '').toLowerCase())
       );
       const newDHCP = result.dhcpServers.filter(
-        (s) => !existingServers.has(s.hostname.toLowerCase())
+        (s) => !existingServers.has(s.hostname.toLowerCase()) &&
+               !existingServers.has((s.ip || '').toLowerCase())
       );
       if (newDCs.length > 0 || newDHCP.length > 0) {
         setAdDiscoveryResult({
@@ -514,11 +668,18 @@ export function Wizard() {
         if (result.valid) {
           setCredentialStatus((prev) => ({ ...prev, [providerId]: 'valid' }));
 
-          // Auto-select subscriptions for org-discovered accounts and Azure multi-subscription
+          // Surface the device code message if the backend returned one (Azure device-code flow).
+          if (result.deviceCodeMessage) {
+            setDeviceCodeMessage(result.deviceCodeMessage);
+          }
+
+          // Auto-select subscriptions for org-discovered accounts, Azure multi-subscription,
+          // and AD — DCs are explicitly added by the user so all should be scanned by default.
           const autoSelect =
             (providerId === 'aws' && authMethod === 'org') ||
             (providerId === 'gcp' && authMethod === 'org') ||
-            providerId === 'azure';
+            providerId === 'azure' ||
+            providerId === 'microsoft';
 
           setSubscriptions((prev) => ({
             ...prev,
@@ -542,6 +703,34 @@ export function Wizard() {
       }));
     }
   }, [backend.isDemo, selectedAuthMethod, credentials, niosUploadedFile, niosMode]);
+
+  // Validate an additional AD forest by its local array index (0-based in adForests,
+  // mapped to forestIndex=index+1 for the backend).
+  const validateAdForest = useCallback(async (forestLocalIdx: number) => {
+    setAdForests((prev) => prev.map((f, i) =>
+      i === forestLocalIdx ? { ...f, status: 'validating', error: '' } : f,
+    ));
+    const forest = adForests[forestLocalIdx];
+    if (!forest) return;
+    try {
+      const result = await apiValidate('ad', forest.authMethod, forest.credentials, forestLocalIdx + 1);
+      if (result.valid) {
+        setAdForests((prev) => prev.map((f, i) =>
+          i === forestLocalIdx
+            ? { ...f, status: 'valid', error: '', subscriptions: result.subscriptions.map((s) => ({ ...s, selected: true })) }
+            : f,
+        ));
+      } else {
+        setAdForests((prev) => prev.map((f, i) =>
+          i === forestLocalIdx ? { ...f, status: 'error', error: result.error || 'Validation failed' } : f,
+        ));
+      }
+    } catch (err: any) {
+      setAdForests((prev) => prev.map((f, i) =>
+        i === forestLocalIdx ? { ...f, status: 'error', error: err?.message || 'Connection error' } : f,
+      ));
+    }
+  }, [adForests]);
 
   // Auto-parse NIOS backup when file is selected/dropped (backup mode only)
   useEffect(() => {
@@ -638,6 +827,7 @@ export function Wizard() {
               selectedMembers?: string[];
               mode?: 'backup' | 'wapi';
               maxWorkers?: number;
+              adForestSubscriptions?: { forestIndex: number; subscriptions: string[] }[];
             } = {
               provider: backendId,
               subscriptions: Array.from(getEffectiveSelected(provId)),
@@ -647,6 +837,17 @@ export function Wizard() {
             const mw = advancedOptions[provId]?.maxWorkers;
             if (mw && mw > 0) {
               entry.maxWorkers = mw;
+            }
+            // AD multi-forest: attach per-forest subscriptions so backend can route correctly
+            if (provId === 'microsoft' && adForests.length > 0) {
+              const forestSubs: { forestIndex: number; subscriptions: string[] }[] = [
+                { forestIndex: 0, subscriptions: Array.from(getEffectiveSelected(provId)) },
+                ...adForests.map((f, i) => ({
+                  forestIndex: i + 1,
+                  subscriptions: f.subscriptions.filter((s) => s.selected).map((s) => s.id),
+                })),
+              ];
+              entry.adForestSubscriptions = forestSubs;
             }
             // NIOS-specific fields
             if (provId === 'nios') {
@@ -699,7 +900,12 @@ export function Wizard() {
                   qps: m.qps,
                   lps: m.lps,
                   objectCount: m.objectCount,
+                  activeIPCount: m.activeIPCount ?? 0,
                 })));
+              }
+              // Store AD server metrics from live scan results
+              if (results.adServerMetrics && results.adServerMetrics.length > 0) {
+                setAdServerMetrics(results.adServerMetrics);
               }
             }
           } catch {
@@ -728,6 +934,95 @@ export function Wizard() {
     });
     return totals;
   }, [findings]);
+
+  // Migration-map-aware server token count for SKU widget and exports.
+  // When a migration map is set, computes XaaS-consolidated tokens for XaaS DCs
+  // and NIOS-X tier tokens for NIOS-X DCs. Falls back to raw serverTokens when
+  // no migration selections have been made (full-environment baseline).
+  const totalServerTokens = useMemo(() => {
+    const niosTokens = selectedProviders.includes('nios')
+      ? effectiveNiosMetrics.reduce((s, m) =>
+          s + calcServerTokenTier(m.qps, m.lps, serverSizingObjects(m), 'nios-x').serverTokens, 0)
+      : 0;
+
+    let adTokens = 0;
+    if (selectedProviders.includes('microsoft') && effectiveADMetrics.length > 0) {
+      if (adMigrationMap.size > 0) {
+        // Use the same logic as the AD Server Token Calculator panel:
+        // split selected DCs by form factor, consolidate XaaS instances.
+        const selectedDcs = effectiveADMetrics.filter(m => adMigrationMap.has(m.hostname));
+        const niosXDcs = selectedDcs.filter(m => adMigrationMap.get(m.hostname) !== 'nios-xaas');
+        const xaasDcs  = selectedDcs.filter(m => adMigrationMap.get(m.hostname) === 'nios-xaas');
+        const niosXTokens = niosXDcs.reduce((s, m) =>
+          s + calcServerTokenTier(m.qps, m.lps, m.dnsObjects + m.dhcpObjectsWithOverhead, 'nios-x').serverTokens, 0);
+        const xaasInstances = consolidateXaasInstances(xaasDcs.map(m => ({
+          memberId: m.hostname, memberName: m.hostname, role: 'DC',
+          qps: m.qps, lps: m.lps, objectCount: m.dnsObjects + m.dhcpObjectsWithOverhead,
+        })));
+        const xaasTokens = xaasInstances.reduce((s, inst) => s + inst.totalTokens, 0);
+        adTokens = niosXTokens + xaasTokens;
+      } else {
+        // No migration selections yet — show full-environment baseline.
+        adTokens = effectiveADMetrics.reduce((s, m) => s + m.serverTokens, 0);
+      }
+    }
+
+    return niosTokens + adTokens;
+  }, [effectiveNiosMetrics, effectiveADMetrics, adMigrationMap, selectedProviders]);
+
+  const hasServerMetrics = (selectedProviders.includes('nios') && effectiveNiosMetrics.length > 0)
+    || (selectedProviders.includes('microsoft') && effectiveADMetrics.length > 0);
+
+  // Hybrid-scenario totals — only meaningful when a migration map has selections.
+  // Uses the same logic as the Migration Planner scenario cards.
+  const hybridScenario = useMemo(() => {
+    const hasNiosSelections = selectedProviders.includes('nios') && niosMigrationMap.size > 0;
+    const hasAdSelections   = selectedProviders.includes('microsoft') && adMigrationMap.size > 0;
+    if (!hasNiosSelections && !hasAdSelections) return null;
+
+    // ── Management tokens ──────────────────────────────────────────────────
+    let hybridMgmt = 0;
+    // Non-NIOS findings always count at full management token value
+    hybridMgmt += findings.filter(f => f.provider !== 'nios').reduce((s, f) => s + f.managementTokens, 0);
+    if (hasNiosSelections) {
+      const nf = findings.filter(f => f.provider === 'nios');
+      // Migrating members → UDDI management tokens
+      hybridMgmt += nf.filter(f => niosMigrationMap.has(f.source)).reduce((s, f) => s + f.managementTokens, 0);
+      // Staying members → NIOS licensing (no UDDI mgmt tokens)
+    } else if (selectedProviders.includes('nios')) {
+      // No NIOS selections → treat all NIOS as migrated (full universal DDI baseline)
+      hybridMgmt += findings.filter(f => f.provider === 'nios').reduce((s, f) => s + f.managementTokens, 0);
+    }
+
+    // ── Server tokens ──────────────────────────────────────────────────────
+    let hybridSrv = 0;
+    if (hasNiosSelections) {
+      const selected = effectiveNiosMetrics.filter(m => niosMigrationMap.has(m.memberName));
+      const niosX = selected.filter(m => niosMigrationMap.get(m.memberName) !== 'nios-xaas');
+      const xaas  = selected.filter(m => niosMigrationMap.get(m.memberName) === 'nios-xaas');
+      hybridSrv += niosX.reduce((s, m) => s + calcServerTokenTier(m.qps, m.lps, serverSizingObjects(m), 'nios-x').serverTokens, 0);
+      const xaasInst = consolidateXaasInstances(xaas.map(m => ({
+        memberId: m.memberName, memberName: m.memberName, role: 'GM',
+        qps: m.qps, lps: m.lps, objectCount: serverSizingObjects(m), activeIPCount: 0,
+      })));
+      hybridSrv += xaasInst.reduce((s, inst) => s + inst.totalTokens, 0);
+    }
+    if (hasAdSelections) {
+      const selectedDcs = effectiveADMetrics.filter(m => adMigrationMap.has(m.hostname));
+      const niosXDcs = selectedDcs.filter(m => adMigrationMap.get(m.hostname) !== 'nios-xaas');
+      const xaasDcs  = selectedDcs.filter(m => adMigrationMap.get(m.hostname) === 'nios-xaas');
+      hybridSrv += niosXDcs.reduce((s, m) =>
+        s + calcServerTokenTier(m.qps, m.lps, m.dnsObjects + m.dhcpObjectsWithOverhead, 'nios-x').serverTokens, 0);
+      const xaasInst = consolidateXaasInstances(xaasDcs.map(m => ({
+        memberId: m.hostname, memberName: m.hostname, role: 'DC',
+        qps: m.qps, lps: m.lps, objectCount: m.dnsObjects + m.dhcpObjectsWithOverhead,
+      })));
+      hybridSrv += xaasInst.reduce((s, inst) => s + inst.totalTokens, 0);
+    }
+
+    const selectionCount = niosMigrationMap.size + adMigrationMap.size;
+    return { mgmt: hybridMgmt, srv: hybridSrv, selectionCount };
+  }, [findings, effectiveNiosMetrics, effectiveADMetrics, niosMigrationMap, adMigrationMap, selectedProviders]);
 
   // Filtered + sorted findings for the table
   const filteredSortedFindings = useMemo(() => {
@@ -832,21 +1127,21 @@ export function Wizard() {
         summary += `\nGrid Member,Role,Form Factor,QPS (Peak),LPS (Peak),Objects,Connections,Server Size,Allocated Tokens`;
         // NIOS-X individual members
         niosXMetrics.forEach((m) => {
-          const tier = calcServerTokenTier(m.qps, m.lps, m.objectCount, 'nios-x');
-          summary += `\n${m.memberName},${m.role},NIOS-X,${m.qps},${m.lps},${m.objectCount},—,${tier.name},${tier.serverTokens}`;
+          const tier = calcServerTokenTier(m.qps, m.lps, serverSizingObjects(m), 'nios-x');
+          summary += `\n${m.memberName},${m.role},NIOS-X,${m.qps},${m.lps},${serverSizingObjects(m)},—,${tier.name},${tier.serverTokens}`;
         });
         // XaaS consolidated instances
         xaasInst.forEach((inst) => {
           summary += `\n--- XaaS Instance ${xaasInst.length > 1 ? inst.index + 1 : ''} (replaces ${inst.connectionsUsed} NIOS members) ---`;
           inst.members.forEach((m) => {
-            summary += `\n  ${m.memberName},${m.role},XaaS (1 conn),${m.qps},${m.lps},${m.objectCount},,,(consolidated)`;
+            summary += `\n  ${m.memberName},${m.role},XaaS (1 conn),${m.qps},${m.lps},${serverSizingObjects(m)},,,(consolidated)`;
           });
           summary += `\n  AGGREGATE,,XaaS,${inst.totalQps},${inst.totalLps},${inst.totalObjects},${inst.connectionsUsed}/${inst.tier.maxConnections} conn,${inst.tier.name},${inst.totalTokens}`;
           if (inst.extraConnections > 0) {
             summary += ` (incl. ${inst.extraConnectionTokens} extra connection tokens)`;
           }
         });
-        const niosXTokens = niosXMetrics.reduce((s, m) => s + calcServerTokenTier(m.qps, m.lps, m.objectCount, 'nios-x').serverTokens, 0);
+        const niosXTokens = niosXMetrics.reduce((s, m) => s + calcServerTokenTier(m.qps, m.lps, serverSizingObjects(m), 'nios-x').serverTokens, 0);
         const xaasTokens = xaasInst.reduce((s, inst) => s + inst.totalTokens, 0);
         const totalST = niosXTokens + xaasTokens;
         summary += `\nTotal Allocated Server Tokens,,,,,,,,${totalST}`;
@@ -854,6 +1149,52 @@ export function Wizard() {
           summary += `\nConsolidation: ${xaasMetrics.length} NIOS members → ${xaasInst.length} XaaS instance${xaasInst.length > 1 ? 's' : ''} (${xaasMetrics.length}:${xaasInst.length} ratio)`;
         }
       }
+    }
+    // AD Server Token Calculator CSV section
+    if (selectedProviders.includes('microsoft') && effectiveADMetrics.length > 0) {
+      const toNiosMetrics = (m: ADServerMetricAPI): NiosServerMetrics => ({
+        memberId: m.hostname, memberName: m.hostname, role: 'DC',
+        qps: m.qps, lps: m.lps, objectCount: m.dnsObjects + m.dhcpObjectsWithOverhead,
+      });
+      const metricsToExport = adMigrationMap.size > 0
+        ? effectiveADMetrics.filter(m => adMigrationMap.has(m.hostname))
+        : effectiveADMetrics;
+      if (metricsToExport.length > 0) {
+        const niosXDcs = metricsToExport.filter(m => (adMigrationMap.get(m.hostname) || 'nios-x') === 'nios-x');
+        const xaasDcs = metricsToExport.filter(m => adMigrationMap.get(m.hostname) === 'nios-xaas');
+        const xaasInst = consolidateXaasInstances(xaasDcs.map(toNiosMetrics));
+        const hasAnyXaas = xaasDcs.length > 0;
+        summary += `\n\nAD Server Token Calculator`;
+        summary += `\nHostname,Role,Form Factor,QPS (Peak),LPS (Peak),Objects,Connections,Server Size,Allocated Tokens`;
+        niosXDcs.forEach(m => {
+          const objCount = m.dnsObjects + m.dhcpObjectsWithOverhead;
+          const tier = calcServerTokenTier(m.qps, m.lps, objCount, 'nios-x');
+          summary += `\n${m.hostname},DC,NIOS-X,${m.qps},${m.lps},${objCount},—,${tier.name},${tier.serverTokens}`;
+        });
+        xaasInst.forEach(inst => {
+          summary += `\n--- XaaS Instance ${xaasInst.length > 1 ? inst.index + 1 : ''} (replaces ${inst.connectionsUsed} DCs) ---`;
+          inst.members.forEach(mem => {
+            summary += `\n  ${mem.memberName},DC,XaaS (1 conn),${mem.qps},${mem.lps},${mem.objectCount},,,(consolidated)`;
+          });
+          summary += `\n  AGGREGATE,,XaaS,${inst.totalQps},${inst.totalLps},${inst.totalObjects},${inst.connectionsUsed}/${inst.tier.maxConnections} conn,${inst.tier.name},${inst.totalTokens}`;
+          if (inst.extraConnections > 0) {
+            summary += ` (incl. ${inst.extraConnectionTokens} extra connection tokens)`;
+          }
+        });
+        const adNiosXTokens = niosXDcs.reduce((s, m) => s + calcServerTokenTier(m.qps, m.lps, m.dnsObjects + m.dhcpObjectsWithOverhead, 'nios-x').serverTokens, 0);
+        const adXaasTokens = xaasInst.reduce((s, inst) => s + inst.totalTokens, 0);
+        const adTotalST = adNiosXTokens + adXaasTokens;
+        summary += `\nTotal AD Allocated Server Tokens,,,,,,,,${adTotalST}`;
+        if (hasAnyXaas) {
+          summary += `\nConsolidation: ${xaasDcs.length} DCs → ${xaasInst.length} XaaS instance${xaasInst.length > 1 ? 's' : ''} (${xaasDcs.length}:${xaasInst.length} ratio)`;
+        }
+      }
+    }
+    summary += `\n\nRecommended SKUs`;
+    summary += `\nSKU Code,Description,Pack Count`;
+    summary += `\nIB-TOKENS-UDDI-MGMT-1000,Management Token Pack (1000 tokens),${Math.ceil(totalTokens / 1000)}`;
+    if (hasServerMetrics) {
+      summary += `\nIB-TOKENS-UDDI-SERV-500,Server Token Pack (500 tokens),${Math.ceil(totalServerTokens / 500)}`;
     }
     const csv = [header, ...rows].join('\n') + summary;
     downloadFile(csv, 'ddi-token-assessment.csv', 'text/csv');
@@ -906,18 +1247,18 @@ export function Wizard() {
         html += `<tr style="background:#065f46;color:white"><th>Grid Member</th><th>Role</th><th>Form Factor</th><th>QPS (Peak)</th><th>LPS (Peak)</th><th>Objects</th><th>Size</th><th>Allocated Tokens</th></tr>`;
         // NIOS-X individual members
         niosXMetrics.forEach((m) => {
-          const tier = calcServerTokenTier(m.qps, m.lps, m.objectCount, 'nios-x');
-          html += `<tr><td>${m.memberName}</td><td>${m.role}</td><td>NIOS-X</td><td>${m.qps.toLocaleString()}</td><td>${m.lps.toLocaleString()}</td><td>${m.objectCount.toLocaleString()}</td><td>${tier.name}</td><td style="text-align:center;font-weight:bold">${tier.serverTokens.toLocaleString()}</td></tr>`;
+          const tier = calcServerTokenTier(m.qps, m.lps, serverSizingObjects(m), 'nios-x');
+          html += `<tr><td>${m.memberName}</td><td>${m.role}</td><td>NIOS-X</td><td>${m.qps.toLocaleString()}</td><td>${m.lps.toLocaleString()}</td><td>${serverSizingObjects(m).toLocaleString()}</td><td>${tier.name}</td><td style="text-align:center;font-weight:bold">${tier.serverTokens.toLocaleString()}</td></tr>`;
         });
         // XaaS consolidated instances
         xaasInst.forEach((inst) => {
           html += `<tr style="background:#f3e8ff"><td colspan="8" style="font-weight:bold;color:#6b21a8">XaaS Instance${xaasInst.length > 1 ? ' ' + (inst.index + 1) : ''} — replaces ${inst.connectionsUsed} NIOS member${inst.connectionsUsed > 1 ? 's' : ''}</td></tr>`;
           inst.members.forEach((m) => {
-            html += `<tr style="background:#faf5ff"><td style="padding-left:20px">${m.memberName}</td><td>${m.role}</td><td style="color:#7c3aed">1 conn</td><td style="color:#7c3aed">${m.qps.toLocaleString()}</td><td style="color:#7c3aed">${m.lps.toLocaleString()}</td><td style="color:#7c3aed">${m.objectCount.toLocaleString()}</td><td colspan="2" style="text-align:center;color:#999">(consolidated)</td></tr>`;
+            html += `<tr style="background:#faf5ff"><td style="padding-left:20px">${m.memberName}</td><td>${m.role}</td><td style="color:#7c3aed">1 conn</td><td style="color:#7c3aed">${m.qps.toLocaleString()}</td><td style="color:#7c3aed">${m.lps.toLocaleString()}</td><td style="color:#7c3aed">${serverSizingObjects(m).toLocaleString()}</td><td colspan="2" style="text-align:center;color:#999">(consolidated)</td></tr>`;
           });
           html += `<tr style="background:#ede9fe"><td style="padding-left:20px;font-weight:600">Aggregate (${inst.connectionsUsed}/${inst.tier.maxConnections} connections${inst.extraConnections > 0 ? ', +' + inst.extraConnections + ' extra' : ''})</td><td style="font-weight:600">XaaS</td><td style="font-weight:600">${inst.connectionsUsed} conn</td><td style="font-weight:600">${inst.totalQps.toLocaleString()}</td><td style="font-weight:600">${inst.totalLps.toLocaleString()}</td><td style="font-weight:600">${inst.totalObjects.toLocaleString()}</td><td style="font-weight:600">${inst.tier.name}</td><td style="text-align:center;font-weight:bold;color:#6b21a8">${inst.totalTokens.toLocaleString()}${inst.extraConnectionTokens > 0 ? ' (incl. ' + inst.extraConnectionTokens.toLocaleString() + ' extra conn)' : ''}</td></tr>`;
         });
-        const niosXTokens = niosXMetrics.reduce((s, m) => s + calcServerTokenTier(m.qps, m.lps, m.objectCount, 'nios-x').serverTokens, 0);
+        const niosXTokens = niosXMetrics.reduce((s, m) => s + calcServerTokenTier(m.qps, m.lps, serverSizingObjects(m), 'nios-x').serverTokens, 0);
         const xaasTokens = xaasInst.reduce((s, inst) => s + inst.totalTokens, 0);
         const totalST = niosXTokens + xaasTokens;
         html += `<tr style="background:#ecfdf5;font-weight:bold"><td colspan="7">Total Allocated Server Tokens</td><td style="text-align:center">${totalST.toLocaleString()}</td></tr>`;
@@ -928,6 +1269,54 @@ export function Wizard() {
         }
       }
     }
+    // AD Server Token Calculator HTML section
+    if (selectedProviders.includes('microsoft') && effectiveADMetrics.length > 0) {
+      const toNiosMetrics = (m: ADServerMetricAPI): NiosServerMetrics => ({
+        memberId: m.hostname, memberName: m.hostname, role: 'DC',
+        qps: m.qps, lps: m.lps, objectCount: m.dnsObjects + m.dhcpObjectsWithOverhead,
+      });
+      const metricsToExport = adMigrationMap.size > 0
+        ? effectiveADMetrics.filter(m => adMigrationMap.has(m.hostname))
+        : effectiveADMetrics;
+      if (metricsToExport.length > 0) {
+        const niosXDcs = metricsToExport.filter(m => (adMigrationMap.get(m.hostname) || 'nios-x') === 'nios-x');
+        const xaasDcs = metricsToExport.filter(m => adMigrationMap.get(m.hostname) === 'nios-xaas');
+        const xaasInst = consolidateXaasInstances(xaasDcs.map(toNiosMetrics));
+        const hasAnyXaas = xaasDcs.length > 0;
+        html += `<br/><h3>AD Server Token Calculator</h3>`;
+        html += '<table border="1" cellpadding="4" cellspacing="0">';
+        html += `<tr style="background:#1e40af;color:white"><th>Hostname</th><th>Role</th><th>Form Factor</th><th>QPS (Peak)</th><th>LPS (Peak)</th><th>Objects</th><th>Size</th><th>Allocated Tokens</th></tr>`;
+        niosXDcs.forEach(m => {
+          const objCount = m.dnsObjects + m.dhcpObjectsWithOverhead;
+          const tier = calcServerTokenTier(m.qps, m.lps, objCount, 'nios-x');
+          html += `<tr><td>${m.hostname}</td><td>DC</td><td>NIOS-X</td><td>${m.qps.toLocaleString()}</td><td>${m.lps.toLocaleString()}</td><td>${objCount.toLocaleString()}</td><td>${tier.name}</td><td style="text-align:center;font-weight:bold">${tier.serverTokens.toLocaleString()}</td></tr>`;
+        });
+        xaasInst.forEach(inst => {
+          html += `<tr style="background:#f3e8ff"><td colspan="8" style="font-weight:bold;color:#6b21a8">XaaS Instance${xaasInst.length > 1 ? ' ' + (inst.index + 1) : ''} — replaces ${inst.connectionsUsed} DC${inst.connectionsUsed > 1 ? 's' : ''}</td></tr>`;
+          inst.members.forEach(mem => {
+            html += `<tr style="background:#faf5ff"><td style="padding-left:20px">${mem.memberName}</td><td>DC</td><td style="color:#7c3aed">1 conn</td><td style="color:#7c3aed">${mem.qps.toLocaleString()}</td><td style="color:#7c3aed">${mem.lps.toLocaleString()}</td><td style="color:#7c3aed">${mem.objectCount.toLocaleString()}</td><td colspan="2" style="text-align:center;color:#999">(consolidated)</td></tr>`;
+          });
+          html += `<tr style="background:#ede9fe"><td style="padding-left:20px;font-weight:600">Aggregate (${inst.connectionsUsed}/${inst.tier.maxConnections} connections${inst.extraConnections > 0 ? ', +' + inst.extraConnections + ' extra' : ''})</td><td style="font-weight:600">XaaS</td><td style="font-weight:600">${inst.connectionsUsed} conn</td><td style="font-weight:600">${inst.totalQps.toLocaleString()}</td><td style="font-weight:600">${inst.totalLps.toLocaleString()}</td><td style="font-weight:600">${inst.totalObjects.toLocaleString()}</td><td style="font-weight:600">${inst.tier.name}</td><td style="text-align:center;font-weight:bold;color:#6b21a8">${inst.totalTokens.toLocaleString()}${inst.extraConnectionTokens > 0 ? ' (incl. ' + inst.extraConnectionTokens.toLocaleString() + ' extra conn)' : ''}</td></tr>`;
+        });
+        const adNiosXTokens = niosXDcs.reduce((s, m) => s + calcServerTokenTier(m.qps, m.lps, m.dnsObjects + m.dhcpObjectsWithOverhead, 'nios-x').serverTokens, 0);
+        const adXaasTokens = xaasInst.reduce((s, inst) => s + inst.totalTokens, 0);
+        const adTotalST = adNiosXTokens + adXaasTokens;
+        html += `<tr style="background:#dbeafe;font-weight:bold"><td colspan="7">Total AD Allocated Server Tokens</td><td style="text-align:center">${adTotalST.toLocaleString()}</td></tr>`;
+        html += '</table>';
+        if (hasAnyXaas) {
+          html += `<p><b>Consolidation:</b> ${xaasDcs.length} DC${xaasDcs.length > 1 ? 's' : ''} → ${xaasInst.length} XaaS instance${xaasInst.length > 1 ? 's' : ''} (${xaasDcs.length}:${xaasInst.length} ratio).</p>`;
+        }
+      }
+    }
+    html += '<h3 style="margin-top:20px">Recommended SKUs</h3>';
+    html += '<table border="1" cellpadding="4" cellspacing="0" style="border-collapse:collapse">';
+    html += '<tr style="background:#002B49;color:white;font-weight:bold"><td>SKU Code</td><td>Description</td><td>Pack Count</td></tr>';
+    html += `<tr><td>IB-TOKENS-UDDI-MGMT-1000</td><td>Management Token Pack (1000 tokens)</td><td style="text-align:center;font-weight:bold">${Math.ceil(totalTokens / 1000).toLocaleString()}</td></tr>`;
+    if (hasServerMetrics) {
+      html += `<tr><td>IB-TOKENS-UDDI-SERV-500</td><td>Server Token Pack (500 tokens)</td><td style="text-align:center;font-weight:bold">${Math.ceil(totalServerTokens / 500).toLocaleString()}</td></tr>`;
+    }
+    html += '</table>';
+
     html += '</body></html>';
     downloadFile(html, 'ddi-token-assessment.xls', 'application/vnd.ms-excel');
   };
@@ -990,11 +1379,6 @@ export function Wizard() {
               <div className="flex items-center gap-1.5 px-2.5 py-1 bg-red-500/20 border border-red-500/30 rounded-full text-[11px] text-red-300">
                 <ArrowUpCircle className="w-3 h-3" />
                 <span className="hidden sm:inline">{backend.updateError || 'Update failed'}</span>
-              </div>
-            ) : backend.updateStatus === 'managed' ? (
-              <div className="flex items-center gap-1.5 px-2.5 py-1 bg-blue-500/20 border border-blue-500/30 rounded-full text-[11px] text-blue-300" title={backend.updateError || ''}>
-                <ArrowUpCircle className="w-3 h-3" />
-                <span className="hidden sm:inline">brew update &amp;&amp; brew upgrade uddi-token-calculator</span>
               </div>
             ) : backend.updateInfo?.updateAvailable ? (
               <button
@@ -1373,8 +1757,9 @@ export function Wizard() {
                               const isVisible = showSecrets[fieldKey];
                               return (
                                 <div key={field.key}>
-                                  <label className="block text-[12px] text-[var(--muted-foreground)] mb-1">
+                                  <label className="flex items-center gap-1.5 text-[12px] text-[var(--muted-foreground)] mb-1">
                                     {field.label}
+                                    {field.helpText && <FieldTooltip text={field.helpText} />}
                                   </label>
                                   <div className="relative">
                                     {field.serverList ? (
@@ -1391,6 +1776,42 @@ export function Wizard() {
                                         }
                                         placeholder={field.placeholder}
                                       />
+                                    ) : field.type === 'file' ? (
+                                      <div className="flex flex-col gap-1">
+                                        <input
+                                          type="file"
+                                          accept=".pem,.crt,.key"
+                                          onChange={(e) => {
+                                            const file = e.target.files?.[0];
+                                            if (file) {
+                                              const reader = new FileReader();
+                                              reader.onload = () => {
+                                                const content = reader.result as string;
+                                                setCredentials((prev) => ({
+                                                  ...prev,
+                                                  [provId]: {
+                                                    ...prev[provId],
+                                                    [field.key]: content,
+                                                  },
+                                                }));
+                                              };
+                                              reader.onerror = () => {
+                                                setCredentialError((prev) => ({
+                                                  ...prev,
+                                                  [provId]: `Failed to read file: ${file.name}`,
+                                                }));
+                                              };
+                                              reader.readAsText(file);
+                                            }
+                                          }}
+                                          className="w-full px-3 py-2 bg-[var(--input-background)] border border-[var(--border)] rounded-lg text-[13px] focus:outline-none focus:ring-2 focus:ring-[var(--infoblox-blue)]/30 focus:border-[var(--infoblox-blue)] file:mr-3 file:py-1 file:px-3 file:rounded-md file:border-0 file:text-[12px] file:bg-[var(--infoblox-navy)] file:text-white file:cursor-pointer"
+                                        />
+                                        {credentials[provId]?.[field.key] && (
+                                          <span className="text-[11px] text-green-600 flex items-center gap-1">
+                                            <CheckCircle2 className="w-3 h-3" /> File loaded
+                                          </span>
+                                        )}
+                                      </div>
                                     ) : field.multiline ? (
                                       <textarea
                                         placeholder={field.placeholder}
@@ -1443,11 +1864,6 @@ export function Wizard() {
                                       </button>
                                     )}
                                   </div>
-                                  {field.helpText && (
-                                    <p className="text-[11px] text-[var(--muted-foreground)] mt-1">
-                                      {field.helpText}
-                                    </p>
-                                  )}
                                 </div>
                               );
                             })}
@@ -1543,6 +1959,38 @@ export function Wizard() {
                               </details>
                             )}
 
+                            {/* Advanced section — Microsoft AD: Event Log Time Window */}
+                            {provId === 'microsoft' && (
+                              <details className="mt-2">
+                                <summary className="text-[12px] text-[var(--muted-foreground)] cursor-pointer hover:text-[var(--foreground)] select-none" style={{ fontWeight: 500 }}>
+                                  Advanced Options
+                                </summary>
+                                <div className="mt-2 pl-1">
+                                  <label className="block text-[12px] text-[var(--muted-foreground)] mb-1">
+                                    Event Log Time Window
+                                  </label>
+                                  <select
+                                    value={credentials.microsoft?.eventLogWindowHours || '72'}
+                                    onChange={(e) =>
+                                      setCredentials((prev) => ({
+                                        ...prev,
+                                        microsoft: { ...prev.microsoft, eventLogWindowHours: e.target.value },
+                                      }))
+                                    }
+                                    className="w-full px-3 py-2 bg-[var(--input-background)] border border-[var(--border)] rounded-lg text-[13px] focus:outline-none focus:ring-2 focus:ring-[var(--infoblox-blue)]/30 focus:border-[var(--infoblox-blue)]"
+                                  >
+                                    <option value="1">Last 1 hour</option>
+                                    <option value="24">Last 24 hours</option>
+                                    <option value="72">Last 72 hours (default)</option>
+                                    <option value="168">Last 7 days</option>
+                                  </select>
+                                  <p className="text-[11px] text-[var(--muted-foreground)] mt-1">
+                                    How far back to read DNS/DHCP event logs for QPS/LPS calculation. Longer windows give more accurate averages but take longer to process.
+                                  </p>
+                                </div>
+                              </details>
+                            )}
+
                             {/* Advanced section — Cloud providers: Max Workers */}
                             {(provId === 'aws' || provId === 'azure' || provId === 'gcp') && (
                               <details className="mt-2">
@@ -1624,6 +2072,17 @@ export function Wizard() {
                             </button>
                           );
                         })()}
+                        {status === 'validating' && currentAuthId === 'browser-oauth' && (
+                          <div className="mt-2 flex items-center gap-2 p-2.5 bg-blue-50 rounded-lg border border-blue-100">
+                            <Loader2 className="w-3.5 h-3.5 text-blue-500 animate-spin shrink-0" />
+                            <p className="text-[12px] text-blue-700">Waiting for browser consent in your default browser...</p>
+                          </div>
+                        )}
+                        {deviceCodeMessage && currentAuthId === 'device-code' && (
+                          <div className="mt-2 p-2.5 bg-blue-50 rounded-lg border border-blue-100">
+                            <p className="text-[12px] text-blue-700 font-mono whitespace-pre-wrap">{deviceCodeMessage}</p>
+                          </div>
+                        )}
                         {status === 'error' && credentialError[provId] && (
                           <div className="mt-2 flex items-start gap-2 p-2.5 bg-red-50 rounded-lg border border-red-100">
                             <AlertCircle className="w-3.5 h-3.5 text-red-500 mt-0.5 shrink-0" />
@@ -1680,12 +2139,29 @@ export function Wizard() {
                                             type="button"
                                             onClick={() => {
                                               const existing = (credentials.microsoft?.servers || '').split(',').map((s: string) => s.trim()).filter(Boolean);
-                                              if (!existing.some((s) => s.toLowerCase() === dc.hostname.toLowerCase())) {
+                                              // Prefer IP as the connection address — FQDNs from discovery
+                                              // resolve to internal IPs and may not be reachable externally.
+                                              // If the IP is already in the server list (user entered it), skip
+                                              // adding this DC entirely — it's already covered.
+                                              const connectAddr = dc.ip || dc.hostname;
+                                              const alreadyCovered =
+                                                existing.some((s) => s.toLowerCase() === connectAddr.toLowerCase()) ||
+                                                existing.some((s) => s.toLowerCase() === dc.hostname.toLowerCase()) ||
+                                                (dc.ip !== '' && existing.some((s) => s === dc.ip));
+                                              if (!alreadyCovered) {
                                                 setCredentials((prev) => ({
                                                   ...prev,
-                                                  microsoft: { ...prev.microsoft, servers: [...existing, dc.hostname].join(',') },
+                                                  microsoft: { ...prev.microsoft, servers: [...existing, connectAddr].join(',') },
                                                 }));
                                               }
+                                              // Also add to subscriptions — use connectAddr as ID so
+                                              // the scanner can match it against dc.inputHost.
+                                              setSubscriptions((prev) => {
+                                                const subs = prev.microsoft || [];
+                                                if (subs.some((s) => s.id.toLowerCase() === connectAddr.toLowerCase())) return prev;
+                                                const label = dc.ip ? `${dc.hostname} (${dc.ip})` : dc.hostname;
+                                                return { ...prev, microsoft: [...subs, { id: connectAddr, name: label, selected: true }] };
+                                              });
                                               setAdDiscoveryResult((prev) => prev ? {
                                                 ...prev,
                                                 domainControllers: prev.domainControllers.filter((d) => d.hostname !== dc.hostname),
@@ -1716,12 +2192,25 @@ export function Wizard() {
                                             type="button"
                                             onClick={() => {
                                               const existing = (credentials.microsoft?.servers || '').split(',').map((s2: string) => s2.trim()).filter(Boolean);
-                                              if (!existing.some((e) => e.toLowerCase() === s.hostname.toLowerCase())) {
+                                              // Prefer IP as the connection address (same as DC Add logic).
+                                              const connectAddr = s.ip || s.hostname;
+                                              const alreadyCovered =
+                                                existing.some((e) => e.toLowerCase() === connectAddr.toLowerCase()) ||
+                                                existing.some((e) => e.toLowerCase() === s.hostname.toLowerCase()) ||
+                                                (s.ip !== '' && existing.some((e) => e === s.ip));
+                                              if (!alreadyCovered) {
                                                 setCredentials((prev) => ({
                                                   ...prev,
-                                                  microsoft: { ...prev.microsoft, servers: [...existing, s.hostname].join(',') },
+                                                  microsoft: { ...prev.microsoft, servers: [...existing, connectAddr].join(',') },
                                                 }));
                                               }
+                                              // Also add to subscriptions — use connectAddr as ID.
+                                              setSubscriptions((prev) => {
+                                                const subs = prev.microsoft || [];
+                                                if (subs.some((sub) => sub.id.toLowerCase() === connectAddr.toLowerCase())) return prev;
+                                                const label = s.ip ? `${s.hostname} (${s.ip})` : s.hostname;
+                                                return { ...prev, microsoft: [...subs, { id: connectAddr, name: label, selected: true }] };
+                                              });
                                               setAdDiscoveryResult((prev) => prev ? {
                                                 ...prev,
                                                 dhcpServers: prev.dhcpServers.filter((d) => d.hostname !== s.hostname),
@@ -1741,14 +2230,38 @@ export function Wizard() {
                                   type="button"
                                   onClick={() => {
                                     const existing = (credentials.microsoft?.servers || '').split(',').map((s: string) => s.trim()).filter(Boolean);
-                                    const toAdd = [
-                                      ...adDiscoveryResult!.domainControllers.map((d) => d.hostname),
-                                      ...adDiscoveryResult!.dhcpServers.map((d) => d.hostname),
-                                    ].filter((h) => !existing.some((e) => e.toLowerCase() === h.toLowerCase()));
-                                    setCredentials((prev) => ({
-                                      ...prev,
-                                      microsoft: { ...prev.microsoft, servers: [...existing, ...toAdd].join(',') },
-                                    }));
+                                    // Build a list of {connectAddr, srv} pairs — prefer IP over hostname
+                                    // so discovered DCs are reachable even when FQDNs resolve to internal IPs.
+                                    // Skip any entry whose IP or hostname is already in the server list.
+                                    const allDiscovered = [
+                                      ...adDiscoveryResult!.domainControllers,
+                                      ...adDiscoveryResult!.dhcpServers,
+                                    ];
+                                    const toAddEntries = allDiscovered
+                                      .map((d) => ({ srv: d, connectAddr: d.ip || d.hostname }))
+                                      .filter(({ srv, connectAddr }) =>
+                                        !existing.some((e) => e.toLowerCase() === connectAddr.toLowerCase()) &&
+                                        !existing.some((e) => e.toLowerCase() === srv.hostname.toLowerCase()),
+                                      );
+                                    const newAddrs = toAddEntries.map(({ connectAddr }) => connectAddr);
+                                    if (newAddrs.length > 0) {
+                                      setCredentials((prev) => ({
+                                        ...prev,
+                                        microsoft: { ...prev.microsoft, servers: [...existing, ...newAddrs].join(',') },
+                                      }));
+                                    }
+                                    // Add to subscriptions — id = connectAddr so scanner filter matches.
+                                    setSubscriptions((prev) => {
+                                      const existingSubs = prev.microsoft || [];
+                                      const existingIds = new Set(existingSubs.map((s) => s.id.toLowerCase()));
+                                      const newSubs = toAddEntries
+                                        .filter(({ connectAddr }) => !existingIds.has(connectAddr.toLowerCase()))
+                                        .map(({ srv, connectAddr }) => {
+                                          const label = srv.ip ? `${srv.hostname} (${srv.ip})` : srv.hostname;
+                                          return { id: connectAddr, name: label, selected: true };
+                                        });
+                                      return { ...prev, microsoft: [...existingSubs, ...newSubs] };
+                                    });
                                     setAdDiscoveryDismissed(true);
                                   }}
                                   className="w-full mt-1 py-1.5 bg-green-600 hover:bg-green-700 text-white text-[12px] font-medium rounded-lg transition-colors"
@@ -1765,6 +2278,117 @@ export function Wizard() {
                           </div>
                         )}
                       </div>
+
+                      {/* Add Forest — shown when microsoft primary is validated */}
+                      {provId === 'microsoft' && status === 'valid' && (
+                        <div className="mt-3">
+                          {/* Existing additional forests */}
+                          {adForests.map((forest, forestIdx) => {
+                            const microsoftProvider = PROVIDERS.find((p) => p.id === 'microsoft')!;
+                            const forestAuthMethod = forest.authMethod || 'ntlm';
+                            const forestAuthDef = microsoftProvider.authMethods.find((m) => m.id === forestAuthMethod) || microsoftProvider.authMethods[1];
+                            return (
+                              <div key={forest.id} className="mb-3 p-3 bg-[var(--surface-2)] rounded-xl border border-[var(--border)]">
+                                <div className="flex items-center justify-between mb-2">
+                                  <span className="text-[12px] font-semibold text-[var(--foreground)]">
+                                    Forest {forestIdx + 2}
+                                    {forest.credentials.servers ? ` — ${forest.credentials.servers.split(',')[0].trim()}` : ''}
+                                  </span>
+                                  <div className="flex items-center gap-2">
+                                    {forest.status === 'valid' && (
+                                      <span className="text-[10px] text-green-600 font-medium flex items-center gap-1">
+                                        <CheckCircle2 className="w-3 h-3" /> Valid
+                                      </span>
+                                    )}
+                                    {forest.status === 'error' && (
+                                      <span className="text-[10px] text-red-500 font-medium flex items-center gap-1">
+                                        <AlertCircle className="w-3 h-3" /> Error
+                                      </span>
+                                    )}
+                                    <button
+                                      type="button"
+                                      onClick={() => setAdForests((prev) => prev.filter((_, i) => i !== forestIdx))}
+                                      className="text-[var(--muted-foreground)] hover:text-red-500 transition-colors"
+                                      aria-label="Remove forest"
+                                    >
+                                      <X className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                </div>
+                                {/* Auth method selector for this forest */}
+                                <div className="mb-2">
+                                  <label className="block text-[11px] text-[var(--muted-foreground)] mb-1">Auth Method</label>
+                                  <select
+                                    value={forestAuthMethod}
+                                    onChange={(e) => setAdForests((prev) => prev.map((f, i) =>
+                                      i === forestIdx ? { ...f, authMethod: e.target.value, credentials: {}, status: 'idle', error: '', subscriptions: [] } : f
+                                    ))}
+                                    className="w-full px-2 py-1.5 bg-[var(--input-background)] border border-[var(--border)] rounded-lg text-[12px] focus:outline-none"
+                                  >
+                                    {microsoftProvider.authMethods
+                                      .filter((m) => !m.windowsOnly)
+                                      .map((m) => (
+                                        <option key={m.id} value={m.id}>{m.name}</option>
+                                      ))}
+                                  </select>
+                                </div>
+                                {/* Credential fields */}
+                                {forestAuthDef.fields.map((field) => (
+                                  <div key={field.key} className="mb-2">
+                                    <label className="block text-[11px] text-[var(--muted-foreground)] mb-1">{field.label}</label>
+                                    {field.serverList ? (
+                                      <ServerListInput
+                                        servers={(forest.credentials[field.key] || '').split(',').map((s: string) => s.trim()).filter(Boolean)}
+                                        onChange={(list) => setAdForests((prev) => prev.map((f, i) =>
+                                          i === forestIdx ? { ...f, credentials: { ...f.credentials, [field.key]: list.join(', ') }, status: 'idle' } : f
+                                        ))}
+                                        placeholder={field.placeholder}
+                                      />
+                                    ) : (
+                                      <input
+                                        type={field.secret ? 'password' : 'text'}
+                                        placeholder={field.placeholder}
+                                        value={forest.credentials[field.key] || ''}
+                                        onChange={(e) => setAdForests((prev) => prev.map((f, i) =>
+                                          i === forestIdx ? { ...f, credentials: { ...f.credentials, [field.key]: e.target.value }, status: 'idle' } : f
+                                        ))}
+                                        className="w-full px-3 py-2 bg-[var(--input-background)] border border-[var(--border)] rounded-lg text-[12px] focus:outline-none focus:ring-2 focus:ring-[var(--infoblox-blue)]/30 focus:border-[var(--infoblox-blue)]"
+                                      />
+                                    )}
+                                  </div>
+                                ))}
+                                {forest.error && (
+                                  <p className="text-[11px] text-red-500 mb-2">{forest.error}</p>
+                                )}
+                                <button
+                                  type="button"
+                                  disabled={forest.status === 'validating'}
+                                  onClick={() => validateAdForest(forestIdx)}
+                                  className="flex items-center gap-1.5 px-3 py-1.5 bg-[var(--infoblox-blue)] text-white text-[12px] font-medium rounded-lg hover:bg-[var(--infoblox-blue)]/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                                >
+                                  {forest.status === 'validating' ? (
+                                    <><Loader2 className="w-3 h-3 animate-spin" /> Validating…</>
+                                  ) : (
+                                    'Validate Forest'
+                                  )}
+                                </button>
+                              </div>
+                            );
+                          })}
+                          {/* Add Forest button */}
+                          <button
+                            type="button"
+                            onClick={() => setAdForests((prev) => [
+                              ...prev,
+                              { id: `forest-${Date.now()}`, authMethod: 'ntlm', credentials: {}, status: 'idle', error: '', subscriptions: [] },
+                            ])}
+                            className="flex items-center gap-1.5 px-3 py-1.5 border border-dashed border-[var(--border)] text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:border-[var(--infoblox-blue)] text-[12px] rounded-lg transition-colors"
+                          >
+                            <Plus className="w-3.5 h-3.5" />
+                            Add Forest (different credentials)
+                          </button>
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -2064,11 +2688,46 @@ export function Wizard() {
                     </div>
                   );
                 })}
+
+                {/* Additional AD Forests — shown in sources step when forests are validated */}
+                {selectedProviders.includes('microsoft') && adForests.filter((f) => f.status === 'valid').map((forest, forestIdx) => (
+                  <div key={forest.id} className="rounded-xl border border-[var(--border)] bg-[var(--surface)] overflow-hidden">
+                    <div className="px-4 py-3 border-b border-[var(--border)] bg-[var(--surface-2)] flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <ProviderIconEl id="microsoft" className="w-4 h-4" />
+                        <span className="text-[13px] font-semibold">
+                          MS DHCP/DNS — Forest {forestIdx + 2}
+                          {forest.credentials.servers ? ` (${forest.credentials.servers.split(',')[0].trim()})` : ''}
+                        </span>
+                      </div>
+                      <span className="text-[11px] text-[var(--muted-foreground)]">
+                        {forest.subscriptions.filter((s) => s.selected).length} selected
+                      </span>
+                    </div>
+                    <div className="divide-y divide-[var(--border)] max-h-64 overflow-y-auto">
+                      {forest.subscriptions.map((sub) => (
+                        <button
+                          key={sub.id}
+                          type="button"
+                          onClick={() => setAdForests((prev) => prev.map((f, i) =>
+                            i === forestIdx
+                              ? { ...f, subscriptions: f.subscriptions.map((s) => s.id === sub.id ? { ...s, selected: !s.selected } : s) }
+                              : f
+                          ))}
+                          className={`w-full flex items-center gap-3 px-4 py-2.5 hover:bg-[var(--surface-2)] transition-colors text-left ${sub.selected ? 'bg-[var(--infoblox-blue)]/5' : ''}`}
+                        >
+                          <div className={`w-4 h-4 rounded border-2 flex-shrink-0 flex items-center justify-center ${sub.selected ? 'bg-[var(--infoblox-blue)] border-[var(--infoblox-blue)]' : 'border-[var(--border)]'}`}>
+                            {sub.selected && <Check className="w-2.5 h-2.5 text-white" />}
+                          </div>
+                          <span className="text-[13px] truncate">{sub.name}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           )}
-
-          {/* Step 4: Scanning */}
           {currentStep === 'scanning' && (
             <div className="flex flex-col items-center justify-center py-12">
               <div className="w-full max-w-md">
@@ -2169,89 +2828,212 @@ export function Wizard() {
           {/* Step 5: Results & Export */}
           {currentStep === 'results' && (
             <div>
-              {/* Total Management Tokens — hero card */}
+              {/* ── Hero summary card ───────────────────────────────────── */}
               <div id="section-overview" className="bg-white rounded-xl border-2 border-[var(--infoblox-orange)]/30 p-5 mb-6">
-                <div className="flex items-start justify-between mb-4">
-                  <div>
-                    <div className="text-[13px] text-[var(--muted-foreground)] mb-1">Total Management Tokens</div>
-                    <div className="text-[32px] text-[var(--infoblox-orange)]" style={{ fontWeight: 700 }}>
-                      {totalTokens.toLocaleString()}
-                    </div>
-                  </div>
-                  <div className="text-[11px] text-[var(--muted-foreground)] mt-1">
-                    By {selectedProviders.map((p) => PROVIDERS.find((pr) => pr.id === p)!.subscriptionLabel).filter((v, i, a) => a.indexOf(v) === i).join(' / ')}
-                  </div>
-                </div>
-                {/* Per-source contribution bars */}
-                <div className="space-y-2.5">
-                  {(() => {
-                    const sourceMap = new Map<string, { source: string; provider: ProviderType; tokens: number }>();
-                    findings.forEach((f) => {
-                      const key = `${f.provider}::${f.source}`;
-                      if (!sourceMap.has(key)) sourceMap.set(key, { source: f.source, provider: f.provider, tokens: 0 });
-                      sourceMap.get(key)!.tokens += f.managementTokens;
-                    });
-                    const sources = Array.from(sourceMap.values()).sort((a, b) => b.tokens - a.tokens);
-                    const HERO_LIMIT = 10;
-                    const visibleSources = showAllHeroSources ? sources : sources.slice(0, HERO_LIMIT);
-                    const hiddenCount = sources.length - HERO_LIMIT;
-                    const heroNeedsScroll = showAllHeroSources && sources.length > 15;
-                    return (
-                      <>
-                        <div className={heroNeedsScroll ? 'max-h-[400px] overflow-y-auto' : ''}>
-                        {visibleSources.map((entry) => {
-                          const provider = PROVIDERS.find((p) => p.id === entry.provider)!;
-                          const pct = totalTokens > 0 ? (entry.tokens / totalTokens) * 100 : 0;
-                          return (
-                            <div key={`${entry.provider}-${entry.source}`} className="mb-2.5">
-                              <div className="flex items-center justify-between mb-1">
-                                <span className="text-[12px] flex items-center gap-1.5" style={{ fontWeight: 500 }}>
-                                  <span
-                                    className="inline-block w-2 h-2 rounded-full shrink-0"
-                                    style={{ backgroundColor: provider.color }}
-                                  />
-                                  {entry.source}
-                                  <span className="text-[11px] text-[var(--muted-foreground)]" style={{ fontWeight: 400 }}>
-                                    {provider.name}
-                                  </span>
-                                </span>
-                                <span className="text-[12px] tabular-nums text-[var(--muted-foreground)]">
-                                  {entry.tokens.toLocaleString()} <span className="text-[11px]">({Math.round(pct)}%)</span>
-                                </span>
-                              </div>
-                              <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                                <div
-                                  className="h-full rounded-full transition-all"
-                                  style={{ width: `${pct}%`, backgroundColor: provider.color }}
-                                />
-                              </div>
-                            </div>
-                          );
-                        })}
+
+                {/* Always-visible header: both totals + single toggle */}
+                <button
+                  type="button"
+                  onClick={() => setHeroCollapsed(v => !v)}
+                  className="w-full text-left"
+                >
+                  <div className={`grid gap-6 ${hasServerMetrics ? 'grid-cols-2' : 'grid-cols-1'}`}>
+                    {/* Management total */}
+                    <div>
+                      <div className="flex items-center gap-1.5 text-[13px] text-[var(--muted-foreground)] mb-1">
+                        Total Management Tokens
+                        <FieldTooltip text="The total number of Infoblox Universal DDI management tokens required for your environment. This drives the IB-TOKENS-UDDI-MGMT-1000 pack count." side="right" />
+                      </div>
+                      <div className="text-[32px] text-[var(--infoblox-orange)]" style={{ fontWeight: 700 }}>
+                        {totalTokens.toLocaleString()}
+                      </div>
+                      <div className="flex items-center gap-2 mt-1">
+                        <span className="font-mono text-[11px] bg-orange-50 text-orange-800 px-2 py-0.5 rounded border border-orange-200">IB-TOKENS-UDDI-MGMT-1000</span>
+                        <span className="text-[12px] font-semibold text-[var(--infoblox-orange)]">× {Math.ceil(totalTokens / 1000).toLocaleString()} pack{Math.ceil(totalTokens / 1000) !== 1 ? 's' : ''}</span>
+                      </div>
+                      {hybridScenario && (
+                        <div className="mt-2 pt-2 border-t border-orange-100">
+                          <div className="text-[11px] text-[var(--muted-foreground)] mb-0.5">
+                            Hybrid scenario <span className="text-orange-600">({hybridScenario.selectionCount} selected)</span>
+                          </div>
+                          <div className="text-[22px] text-orange-400" style={{ fontWeight: 700, lineHeight: 1.1 }}>
+                            {hybridScenario.mgmt.toLocaleString()}
+                          </div>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            <span className="font-mono text-[10px] bg-orange-50 text-orange-700 px-1.5 py-0.5 rounded border border-orange-200">IB-TOKENS-UDDI-MGMT-1000</span>
+                            <span className="text-[11px] font-semibold text-orange-400">× {Math.ceil(hybridScenario.mgmt / 1000).toLocaleString()} pack{Math.ceil(hybridScenario.mgmt / 1000) !== 1 ? 's' : ''}</span>
+                          </div>
                         </div>
-                        {hiddenCount > 0 && (
-                          <button
-                            type="button"
-                            onClick={() => setShowAllHeroSources((v) => !v)}
-                            className="text-[12px] text-[var(--infoblox-blue)] hover:underline mt-1"
-                            style={{ fontWeight: 500 }}
-                          >
-                            {showAllHeroSources ? 'Show less' : `Show ${hiddenCount} more sources...`}
-                          </button>
+                      )}
+                    </div>
+                    {/* Server total */}
+                    {hasServerMetrics && (
+                      <div className="border-l border-[var(--border)] pl-6">
+                        <div className="flex items-center gap-1.5 text-[13px] text-[var(--muted-foreground)] mb-1">
+                          Total Server Tokens
+                          <FieldTooltip text="Server tokens (IB-TOKENS-UDDI-SERV-500) cover NIOS-X appliances and XaaS instances based on their performance tier. Separate from management tokens." side="right" />
+                        </div>
+                        <div className="text-[32px] text-blue-700" style={{ fontWeight: 700 }}>
+                          {totalServerTokens.toLocaleString()}
+                        </div>
+                        <div className="flex items-center gap-2 mt-1">
+                          <span className="font-mono text-[11px] bg-blue-50 text-blue-800 px-2 py-0.5 rounded border border-blue-200">IB-TOKENS-UDDI-SERV-500</span>
+                          <span className="text-[12px] font-semibold text-blue-700">× {Math.ceil(totalServerTokens / 500).toLocaleString()} pack{Math.ceil(totalServerTokens / 500) !== 1 ? 's' : ''}</span>
+                        </div>
+                        {hybridScenario && (
+                          <div className="mt-2 pt-2 border-t border-blue-100">
+                            <div className="text-[11px] text-[var(--muted-foreground)] mb-0.5">
+                              Hybrid scenario <span className="text-blue-500">({hybridScenario.selectionCount} selected)</span>
+                            </div>
+                            <div className="text-[22px] text-blue-400" style={{ fontWeight: 700, lineHeight: 1.1 }}>
+                              {hybridScenario.srv.toLocaleString()}
+                            </div>
+                            <div className="flex items-center gap-2 mt-0.5">
+                              <span className="font-mono text-[10px] bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded border border-blue-200">IB-TOKENS-UDDI-SERV-500</span>
+                              <span className="text-[11px] font-semibold text-blue-400">× {Math.ceil(hybridScenario.srv / 500).toLocaleString()} pack{Math.ceil(hybridScenario.srv / 500) !== 1 ? 's' : ''}</span>
+                            </div>
+                          </div>
                         )}
-                      </>
-                    );
-                  })()}
-                </div>
-              </div>
+                      </div>
+                    )}
+                  </div>
+                  {/* Expand/collapse hint */}
+                  <div className="flex items-center gap-1 mt-3 text-[11px] text-[var(--muted-foreground)]">
+                    <ChevronDown className={`w-3.5 h-3.5 transition-transform ${heroCollapsed ? '' : 'rotate-180'}`} />
+                    {heroCollapsed ? 'Show breakdown by source' : 'Hide breakdown'}
+                  </div>
+                </button>
+
+                {/* Expandable: per-source bars for both columns */}
+                {!heroCollapsed && (
+                  <div className={`mt-4 pt-4 border-t border-[var(--border)] grid gap-6 ${hasServerMetrics ? 'grid-cols-2' : 'grid-cols-1'}`}>
+
+                    {/* Management breakdown */}
+                    <div>
+                      <div className="text-[11px] font-semibold text-[var(--muted-foreground)] mb-3 uppercase tracking-wider">By Source — Management</div>
+                      <div className="space-y-2.5">
+                        {(() => {
+                          const sourceMap = new Map<string, { source: string; provider: ProviderType; tokens: number }>();
+                          findings.forEach((f) => {
+                            const key = `${f.provider}::${f.source}`;
+                            if (!sourceMap.has(key)) sourceMap.set(key, { source: f.source, provider: f.provider, tokens: 0 });
+                            sourceMap.get(key)!.tokens += f.managementTokens;
+                          });
+                          const sources = Array.from(sourceMap.values()).sort((a, b) => b.tokens - a.tokens);
+                          const LIMIT = 10;
+                          const visible = showAllHeroSources ? sources : sources.slice(0, LIMIT);
+                          const hidden = sources.length - LIMIT;
+                          const needsScroll = showAllHeroSources && sources.length > 15;
+                          return (
+                            <>
+                              <div className={needsScroll ? 'max-h-[400px] overflow-y-auto' : ''}>
+                                {visible.map((entry) => {
+                                  const provider = PROVIDERS.find((p) => p.id === entry.provider)!;
+                                  const pct = totalTokens > 0 ? (entry.tokens / totalTokens) * 100 : 0;
+                                  return (
+                                    <div key={`${entry.provider}-${entry.source}`} className="mb-2.5">
+                                      <div className="flex items-center justify-between mb-1">
+                                        <span className="text-[12px] flex items-center gap-1.5" style={{ fontWeight: 500 }}>
+                                          <span className="inline-block w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: provider.color }} />
+                                          {entry.source}
+                                          <span className="text-[11px] text-[var(--muted-foreground)]" style={{ fontWeight: 400 }}>{provider.name}</span>
+                                        </span>
+                                        <span className="text-[12px] tabular-nums text-[var(--muted-foreground)]">
+                                          {entry.tokens.toLocaleString()} <span className="text-[11px]">({Math.round(pct)}%)</span>
+                                        </span>
+                                      </div>
+                                      <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                                        <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, backgroundColor: provider.color }} />
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                              {hidden > 0 && (
+                                <button type="button" onClick={(e) => { e.stopPropagation(); setShowAllHeroSources(v => !v); }}
+                                  className="text-[12px] text-[var(--infoblox-blue)] hover:underline mt-1" style={{ fontWeight: 500 }}>
+                                  {showAllHeroSources ? 'Show less' : `Show ${hidden} more sources...`}
+                                </button>
+                              )}
+                            </>
+                          );
+                        })()}
+                      </div>
+                    </div>
+
+                    {/* Server breakdown */}
+                    {hasServerMetrics && (() => {
+                      const srvSources: { label: string; color: string; tokens: number }[] = [];
+                      if (selectedProviders.includes('nios') && effectiveNiosMetrics.length > 0) {
+                        effectiveNiosMetrics.forEach(m => {
+                          const t = calcServerTokenTier(m.qps, m.lps, serverSizingObjects(m), 'nios-x').serverTokens;
+                          if (t > 0) srvSources.push({ label: m.memberName, color: '#00a5e5', tokens: t });
+                        });
+                      }
+                      if (selectedProviders.includes('microsoft') && effectiveADMetrics.length > 0) {
+                        const dcs = adMigrationMap.size > 0
+                          ? effectiveADMetrics.filter(m => adMigrationMap.has(m.hostname))
+                          : effectiveADMetrics;
+                        dcs.forEach(m => {
+                          const t = calcServerTokenTier(m.qps, m.lps, m.dnsObjects + m.dhcpObjectsWithOverhead, 'nios-x').serverTokens;
+                          if (t > 0) srvSources.push({ label: m.hostname, color: '#0078d4', tokens: t });
+                        });
+                      }
+                      srvSources.sort((a, b) => b.tokens - a.tokens);
+                      const LIMIT = 10;
+                      const visible = srvSources.slice(0, LIMIT);
+                      const hidden = srvSources.length - LIMIT;
+                      return (
+                        <div className="border-l border-[var(--border)] pl-6">
+                          <div className="text-[11px] font-semibold text-[var(--muted-foreground)] mb-3 uppercase tracking-wider">By Source — Server</div>
+                          <div className="space-y-2.5">
+                            {srvSources.length === 0 ? (
+                              <div className="text-[12px] text-[var(--muted-foreground)]">No server metrics available.</div>
+                            ) : (
+                              <>
+                                {visible.map((entry) => {
+                                  const pct = totalServerTokens > 0 ? (entry.tokens / totalServerTokens) * 100 : 0;
+                                  return (
+                                    <div key={entry.label} className="mb-2.5">
+                                      <div className="flex items-center justify-between mb-1">
+                                        <span className="text-[12px] flex items-center gap-1.5" style={{ fontWeight: 500 }}>
+                                          <span className="inline-block w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: entry.color }} />
+                                          {entry.label}
+                                        </span>
+                                        <span className="text-[12px] tabular-nums text-[var(--muted-foreground)]">
+                                          {entry.tokens.toLocaleString()} <span className="text-[11px]">({Math.round(pct)}%)</span>
+                                        </span>
+                                      </div>
+                                      <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                                        <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, backgroundColor: entry.color }} />
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                                {hidden > 0 && (
+                                  <div className="text-[12px] text-[var(--muted-foreground)] mt-1">+{hidden} more sources</div>
+                                )}
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
+              </div>{/* end hero card */}
 
               {/* Section jump navigation — only for NIOS scans */}
-              {selectedProviders.includes('nios') && (
+              {(selectedProviders.includes('nios') || (selectedProviders.includes('microsoft') && effectiveADMetrics.length > 0)) && (
                 <div className="sticky top-0 z-10 bg-white border-b border-[var(--border)] rounded-xl mb-6 px-4 py-2.5 flex items-center gap-2 flex-wrap">
                   {[
-                    { id: 'section-overview', label: 'Overview' },
-                    { id: 'section-migration-planner', label: 'Migration Planner' },
-                    { id: 'section-server-tokens', label: 'Server Token Calculator' },
+                    ...(selectedProviders.includes('nios') ? [
+                      { id: 'section-overview', label: 'Overview' },
+                      { id: 'section-migration-planner', label: 'Migration Planner' },
+                    ] : []),
+                    ...(selectedProviders.includes('microsoft') && effectiveADMetrics.length > 0 ? [
+                      { id: 'section-ad-migration', label: 'AD Migration Planner' },
+                    ] : []),
                     { id: 'section-findings', label: 'Detailed Findings' },
                     { id: 'section-export', label: 'Export' },
                   ].map((nav) => (
@@ -2426,10 +3208,10 @@ export function Wizard() {
                   return Array.from(map.values()).sort((a, b) => b.tokens - a.tokens);
                 };
 
-                const categories: { key: TokenCategory; label: string; color: string; bgLight: string; barColor: string; textColor: string; unitLabel: string }[] = [
-                  { key: 'DDI Object', label: 'DDI Objects', color: 'text-blue-600', bgLight: 'bg-blue-50', barColor: 'bg-blue-500', textColor: 'text-blue-700', unitLabel: 'objects' },
-                  { key: 'Active IP', label: 'Active IPs', color: 'text-purple-600', bgLight: 'bg-purple-50', barColor: 'bg-purple-500', textColor: 'text-purple-700', unitLabel: 'IPs' },
-                  { key: 'Asset', label: 'Assets', color: 'text-green-600', bgLight: 'bg-green-50', barColor: 'bg-green-500', textColor: 'text-green-700', unitLabel: 'assets' },
+                const categories: { key: TokenCategory; label: string; color: string; bgLight: string; barColor: string; textColor: string; unitLabel: string; tooltip: string }[] = [
+                  { key: 'DDI Object', label: 'DDI Objects', color: 'text-blue-600', bgLight: 'bg-blue-50', barColor: 'bg-blue-500', textColor: 'text-blue-700', unitLabel: 'objects', tooltip: 'DNS zones, DNS records, DHCP scopes, and IPAM networks — each counts as one DDI object. Rate: 1 management token per 25 DDI objects.' },
+                  { key: 'Active IP', label: 'Active IPs', color: 'text-purple-600', bgLight: 'bg-purple-50', barColor: 'bg-purple-500', textColor: 'text-purple-700', unitLabel: 'IPs', tooltip: 'Active DHCP leases and statically-assigned IP addresses. Rate: 1 management token per 13 active IPs.' },
+                  { key: 'Asset', label: 'Managed Assets', color: 'text-green-600', bgLight: 'bg-green-50', barColor: 'bg-green-500', textColor: 'text-green-700', unitLabel: 'assets', tooltip: 'VMs, EC2 instances, container nodes, AD computers, and other managed endpoints. Rate: 1 management token per 3 managed assets.' },
                 ];
 
                 return (
@@ -2444,7 +3226,10 @@ export function Wizard() {
                         <div key={cat.key} className="bg-white rounded-xl border border-[var(--border)] overflow-hidden flex flex-col">
                           {/* Category header */}
                           <div className={`px-4 py-4 border-b border-[var(--border)] ${cat.bgLight}`}>
-                            <div className="text-[12px] text-[var(--muted-foreground)] mb-1">{cat.label}</div>
+                            <div className="flex items-center gap-1 text-[12px] text-[var(--muted-foreground)] mb-1">
+                              {cat.label}
+                              <FieldTooltip text={cat.tooltip} side="top" />
+                            </div>
                             <div className={`text-[24px] ${cat.color}`} style={{ fontWeight: 700 }}>
                               {catTokens.toLocaleString()}
                               <span className="text-[12px] text-[var(--muted-foreground)] ml-1.5" style={{ fontWeight: 400 }}>tokens</span>
@@ -2735,70 +3520,92 @@ export function Wizard() {
                     </div>
 
                     {/* Scenario comparison cards */}
-                    <div className="px-4 py-4">
-                      <h3 className="text-[14px] font-semibold text-[var(--foreground)] mb-3">Management Tokens</h3>
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                        {[scenarioCurrent, scenarioHybrid, scenarioFull].map((scenario, idx) => {
-                          const isHybrid = idx === 1;
-                          const isFull = idx === 2;
-                          const isActive = isHybrid ? niosMigrationMap.size > 0 && niosMigrationMap.size < niosSources.length : isFull ? niosMigrationMap.size === niosSources.length : niosMigrationMap.size === 0;
-                          return (
-                            <div
-                              key={scenario.label}
-                              className={`rounded-xl border-2 p-4 transition-colors ${
-                                isActive
-                                  ? 'border-[var(--infoblox-orange)] bg-orange-50/30 shadow-sm'
-                                  : 'border-[var(--border)] bg-white'
-                              }`}
-                            >
-                              <div className="flex items-center gap-2 mb-2">
-                                {isActive && <span className="w-2 h-2 rounded-full bg-[var(--infoblox-orange)]" />}
-                                <span className="text-[12px] uppercase tracking-wider text-[var(--muted-foreground)]" style={{ fontWeight: 600 }}>
-                                  {scenario.label}
-                                </span>
-                              </div>
-                              <div className="text-[28px] text-[var(--infoblox-orange)]" style={{ fontWeight: 700 }}>
-                                {(scenario.uddiTokens + scenario.niosTokens).toLocaleString()}
-                              </div>
-                              <div className="text-[11px] text-[var(--muted-foreground)] mb-2">
-                                Universal DDI Tokens
-                              </div>
-                              {scenario.niosTokens > 0 && (
-                                <div className="text-[11px] space-y-0.5 mb-1">
-                                  <div className="text-blue-600">
-                                    {scenario.uddiTokens.toLocaleString()} on NIOS-X / Universal DDI
-                                  </div>
-                                  <div className="text-gray-500">
-                                    {scenario.niosTokens.toLocaleString()} on NIOS Licensing
-                                  </div>
-                                </div>
-                              )}
-                              <p className="text-[11px] text-[var(--muted-foreground)] border-t border-[var(--border)] pt-2 mt-2">
-                                {scenario.desc}
-                              </p>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })()}
+                    {(() => {
+                      const niosIsActive = (idx: number) =>
+                        idx === 0 ? niosMigrationMap.size === 0
+                        : idx === 1 ? niosMigrationMap.size > 0 && niosMigrationMap.size < niosSources.length
+                        : niosMigrationMap.size === niosSources.length;
 
-              {/* Server Token Calculator — per-member QPS/LPS/Object sizing */}
-              {selectedProviders.includes('nios') && (() => {
-                // Only show metrics for members selected for migration
-                const migratingMembers = effectiveNiosMetrics.filter((m) =>
-                  niosMigrationMap.has(m.memberName)
-                );
-                const allMembers = effectiveNiosMetrics.filter((m) => {
-                  const niosSources = new Set(
-                    findings.filter((f) => f.provider === 'nios').map((f) => f.source)
-                  );
-                  return niosSources.has(m.memberName);
-                });
+                      // Management Token scenarios
+                      const mgmtScenarios: ScenarioCard[] = [
+                        {
+                          label: 'Current (NIOS Only)',
+                          primaryValue: nonNiosTokens,
+                          desc: 'Only cloud/MS sources need UDDI tokens. NIOS stays on traditional licensing.',
+                        },
+                        {
+                          label: 'Hybrid',
+                          primaryValue: nonNiosTokens + migratingTokens + stayingTokens,
+                          subLines: stayingTokens > 0 ? [
+                            { text: `${(nonNiosTokens + migratingTokens).toLocaleString()} on NIOS-X / Universal DDI`, color: '#0078d4' },
+                            { text: `${stayingTokens.toLocaleString()} on NIOS Licensing`, color: '#6b7280' },
+                          ] : [],
+                          desc: hybridDesc,
+                        },
+                        {
+                          label: 'Full Universal DDI',
+                          primaryValue: nonNiosTokens + allNiosUddiTokens,
+                          desc: 'All NIOS members migrated to Universal DDI. Everything on Universal DDI licensing.',
+                        },
+                      ];
 
-                const displayMembers = migratingMembers.length > 0 ? migratingMembers : allMembers;
+                      // Server Token scenarios — compute per-scenario using migration map
+                      const calcNiosServerScenario = (members: typeof effectiveNiosMetrics) => {
+                        const niosXMems = members.filter(m => (niosMigrationMap.get(m.memberName) || 'nios-x') !== 'nios-xaas');
+                        const xaasMems  = members.filter(m => niosMigrationMap.get(m.memberName) === 'nios-xaas');
+                        const nxTok = niosXMems.reduce((s, m) => s + calcServerTokenTier(m.qps, m.lps, serverSizingObjects(m), 'nios-x').serverTokens, 0);
+                        const xaasInst = consolidateXaasInstances(xaasMems);
+                        return nxTok + xaasInst.reduce((s, inst) => s + inst.totalTokens, 0);
+                      };
+                      // Full: all members → NIOS-X baseline
+                      const fullSrvTokens = effectiveNiosMetrics.reduce(
+                        (s, m) => s + calcServerTokenTier(m.qps, m.lps, serverSizingObjects(m), 'nios-x').serverTokens, 0);
+                      const hybridSrvTokens = effectiveNiosMetrics.filter(m => niosMigrationMap.has(m.memberName)).length > 0
+                        ? calcNiosServerScenario(effectiveNiosMetrics.filter(m => niosMigrationMap.has(m.memberName)))
+                        : 0;
+
+                      const srvScenarios: ScenarioCard[] = [
+                        { label: 'Current (NIOS Only)', primaryValue: 0,               desc: 'NIOS stays on traditional licensing. No NIOS-X server tokens required.' },
+                        { label: 'Hybrid',              primaryValue: hybridSrvTokens,  desc: hybridDesc },
+                        { label: 'Full Universal DDI',  primaryValue: fullSrvTokens,    desc: 'All members migrated. Server tokens cover every NIOS-X appliance or XaaS instance.' },
+                      ];
+
+                      return (
+                        <>
+                          <ScenarioPlannerCards
+                            title="Management Tokens"
+                            unit="Universal DDI Tokens"
+                            color="orange"
+                            scenarios={mgmtScenarios}
+                            isActive={niosIsActive}
+                          />
+                          {effectiveNiosMetrics.length > 0 && (
+                            <ScenarioPlannerCards
+                              title="Server Tokens"
+                              unit="Server Tokens (IB-TOKENS-UDDI-SERV-500)"
+                              color="blue"
+                              scenarios={srvScenarios}
+                              isActive={niosIsActive}
+                            />
+                          )}
+                        </>
+                      );
+                    })()}
+
+                    {/* Server Token Calculator — inline within Migration Planner */}
+                    {effectiveNiosMetrics.length > 0 && (() => {
+                      // Only show metrics for members selected for migration
+                      const migratingMembers = effectiveNiosMetrics.filter((m) =>
+                        niosMigrationMap.has(m.memberName)
+                      );
+                      const allMembers = effectiveNiosMetrics.filter((m) => {
+                        const niosSources = new Set(
+                          findings.filter((f) => f.provider === 'nios').map((f) => f.source)
+                        );
+                        return niosSources.has(m.memberName);
+                      });
+
+                      const displayMembers = migratingMembers.length > 0 ? migratingMembers : allMembers;
 
                 // Per-member form factor helper
                 const getMemberFF = (memberName: string): ServerFormFactor =>
@@ -2816,33 +3623,33 @@ export function Wizard() {
 
                 // NIOS-X tokens (individual per member)
                 const niosXTokens = niosXMembers.reduce((sum, m) => {
-                  return sum + calcServerTokenTier(m.qps, m.lps, m.objectCount, 'nios-x').serverTokens;
+                  return sum + calcServerTokenTier(m.qps, m.lps, serverSizingObjects(m), 'nios-x').serverTokens;
                 }, 0);
 
                 const totalServerTokens = niosXTokens + totalXaasTokens;
                 const totalNiosReplaced = xaasMembers.length; // 1 connection per NIOS member replaced
 
-                const roleColors: Record<string, string> = {
-                  GM: '#002B49',
-                  GMC: '#1a4a6e',
-                  DNS: '#0078d4',
-                  DHCP: '#00a5e5',
-                  'DNS/DHCP': '#005a9e',
-                  IPAM: '#7fba00',
-                  Reporting: '#8b8b8b',
-                };
+                      const roleColors: Record<string, string> = {
+                        GM: '#002B49',
+                        GMC: '#1a4a6e',
+                        DNS: '#0078d4',
+                        DHCP: '#00a5e5',
+                        'DNS/DHCP': '#005a9e',
+                        IPAM: '#7fba00',
+                        Reporting: '#8b8b8b',
+                      };
 
-                const tierColorClass = (name: string) =>
-                  name === 'XL' ? 'bg-red-100 text-red-700' :
-                  name === 'L' ? 'bg-orange-100 text-orange-700' :
-                  name === 'M' ? 'bg-yellow-100 text-yellow-700' :
-                  name === 'S' ? 'bg-green-100 text-green-700' :
-                  name === 'XS' ? 'bg-sky-100 text-sky-700' :
-                  'bg-gray-100 text-gray-700';
+                      const tierColorClass = (name: string) =>
+                        name === 'XL' ? 'bg-red-100 text-red-700' :
+                        name === 'L' ? 'bg-orange-100 text-orange-700' :
+                        name === 'M' ? 'bg-yellow-100 text-yellow-700' :
+                        name === 'S' ? 'bg-green-100 text-green-700' :
+                        name === 'XS' ? 'bg-sky-100 text-sky-700' :
+                        'bg-gray-100 text-gray-700';
 
-                return (
-                  <div id="section-server-tokens" className="bg-white rounded-xl border-2 border-emerald-200 mb-6 overflow-hidden">
-                    <div className="px-4 py-3 border-b border-[var(--border)] bg-emerald-50/50 flex items-center gap-2 flex-wrap">
+                      return (
+                        <div id="section-server-tokens" className="border-t border-emerald-200 bg-emerald-50/20">
+                          <div className="px-4 py-3 border-b border-emerald-200 bg-emerald-50/50 flex items-center gap-2 flex-wrap">
                       <img src={NIOS_GRID_LOGO} alt="NIOS Grid" className="w-5 h-5 rounded" />
                       <h3 className="text-[14px]" style={{ fontWeight: 600 }}>
                         Server Token Calculator
@@ -2859,8 +3666,9 @@ export function Wizard() {
                     <div className="px-4 py-4 border-b border-[var(--border)] bg-gradient-to-r from-emerald-50/80 to-white">
                       <div className={`grid ${hasAnyXaas ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-1 sm:grid-cols-2'} gap-4`}>
                         <div>
-                          <div className="text-[11px] uppercase tracking-wider text-[var(--muted-foreground)] mb-1" style={{ fontWeight: 600 }}>
+                          <div className="flex items-center gap-1 text-[11px] uppercase tracking-wider text-[var(--muted-foreground)] mb-1" style={{ fontWeight: 600 }}>
                             Allocated Server Tokens
+                            <FieldTooltip text="Server tokens (IB-TOKENS-UDDI-SERV-500) are needed for each NIOS-X appliance or XaaS instance based on its performance tier. This is separate from management tokens." side="top" />
                           </div>
                           <div className="text-[28px] text-emerald-700" style={{ fontWeight: 700 }}>
                             {totalServerTokens.toLocaleString()}
@@ -2942,15 +3750,22 @@ export function Wizard() {
                             <th className="text-right px-3 py-2.5" style={{ fontWeight: 600 }}>
                               <span className="flex items-center justify-end gap-1">
                                 <Activity className="w-3 h-3" /> QPS
+                                <FieldTooltip text="Queries per second — DNS query rate observed on this member. Used with LPS and object count to size the NIOS-X appliance tier." side="top" />
                               </span>
                             </th>
                             <th className="text-right px-3 py-2.5" style={{ fontWeight: 600 }}>
                               <span className="flex items-center justify-end gap-1">
                                 <Gauge className="w-3 h-3" /> LPS
+                                <FieldTooltip text="Leases per second — DHCP lease rate. High LPS drives appliance tier up independently of QPS." side="top" />
                               </span>
                             </th>
                             <th className="text-right px-3 py-2.5" style={{ fontWeight: 600 }}>Objects</th>
-                            <th className="text-center px-3 py-2.5" style={{ fontWeight: 600 }}>Size</th>
+                            <th className="text-center px-3 py-2.5" style={{ fontWeight: 600 }}>
+                              <span className="flex items-center justify-center gap-1">
+                                Size
+                                <FieldTooltip text="NIOS-X appliance T-shirt size (2XS → XL) determined by the highest of QPS, LPS, and object thresholds. Each tier has a fixed server token cost." side="top" />
+                              </span>
+                            </th>
                             <th className="text-center px-3 py-2.5" style={{ fontWeight: 600 }}>
                               <span className="text-emerald-700">Allocated Tokens</span>
                             </th>
@@ -2959,7 +3774,7 @@ export function Wizard() {
                         <tbody>
                           {/* NIOS-X members — individual rows */}
                           {niosXMembers.map((member) => {
-                            const tier = calcServerTokenTier(member.qps, member.lps, member.objectCount, 'nios-x');
+                            const tier = calcServerTokenTier(member.qps, member.lps, serverSizingObjects(member), 'nios-x');
                             return (
                               <tr key={member.memberId} className="border-b border-[var(--border)] hover:bg-gray-50/50 transition-colors">
                                 <td className="px-4 py-2.5">
@@ -2985,7 +3800,7 @@ export function Wizard() {
                                   {member.lps > 0 ? member.lps.toLocaleString() : <span className="text-gray-300">&mdash;</span>}
                                 </td>
                                 <td className="text-right px-3 py-2.5 tabular-nums">
-                                  {member.objectCount > 0 ? member.objectCount.toLocaleString() : <span className="text-gray-300">&mdash;</span>}
+                                  {serverSizingObjects(member) > 0 ? serverSizingObjects(member).toLocaleString() : <span className="text-gray-300">&mdash;</span>}
                                 </td>
                                 <td className="text-center px-3 py-2.5">
                                   <span className={`inline-block px-2 py-0.5 rounded text-[10px] ${tierColorClass(tier.name)}`} style={{ fontWeight: 600 }}>
@@ -3054,7 +3869,7 @@ export function Wizard() {
                                     {member.lps > 0 ? member.lps.toLocaleString() : <span className="text-gray-300">&mdash;</span>}
                                   </td>
                                   <td className="text-right px-3 py-2 tabular-nums text-[11px] text-purple-600">
-                                    {member.objectCount > 0 ? member.objectCount.toLocaleString() : <span className="text-gray-300">&mdash;</span>}
+                                    {serverSizingObjects(member) > 0 ? serverSizingObjects(member).toLocaleString() : <span className="text-gray-300">&mdash;</span>}
                                   </td>
                                   <td className="text-center px-3 py-2" colSpan={2}>
                                     <span className="text-[10px] text-gray-400">(consolidated)</span>
@@ -3125,6 +3940,634 @@ export function Wizard() {
                     </div>
 
 
+                        </div>
+                      );
+                    })()}
+                  </div>
+                );
+              })()}
+
+              {/* AD Migration Planner — interactive, mirrors NIOS Grid Migration Planner */}
+              {selectedProviders.includes('microsoft') && effectiveADMetrics.length > 0 && (() => {
+                const adHostnames = effectiveADMetrics.map(m => m.hostname);
+
+                const toggleAdMigration = (hostname: string) => {
+                  setAdMigrationMap((prev) => {
+                    const next = new Map(prev);
+                    if (next.has(hostname)) next.delete(hostname); else next.set(hostname, 'nios-x');
+                    return next;
+                  });
+                };
+
+                const setAdFormFactor = (hostname: string, ff: ServerFormFactor) => {
+                  setAdMigrationMap((prev) => {
+                    const next = new Map(prev);
+                    next.set(hostname, ff);
+                    return next;
+                  });
+                };
+
+                const filteredADHosts = adMemberSearchFilter
+                  ? adHostnames.filter(h => h.toLowerCase().includes(adMemberSearchFilter.toLowerCase()))
+                  : adHostnames;
+
+                const toggleAllAdMigration = () => {
+                  const targets = adMemberSearchFilter ? filteredADHosts : adHostnames;
+                  const allTargetsMigrated = targets.every(h => adMigrationMap.has(h));
+                  if (allTargetsMigrated) {
+                    setAdMigrationMap(prev => {
+                      const next = new Map(prev);
+                      targets.forEach(h => next.delete(h));
+                      return next;
+                    });
+                  } else {
+                    setAdMigrationMap(prev => {
+                      const next = new Map(prev);
+                      targets.forEach(h => next.set(h, next.get(h) || 'nios-x'));
+                      return next;
+                    });
+                  }
+                };
+
+                // Scenario token calculations — migration-map-aware, XaaS-consolidated.
+                // Helper: compute tokens for a set of DCs respecting their form factor.
+                const calcAdScenarioTokens = (dcs: typeof effectiveADMetrics) => {
+                  if (dcs.length === 0) return 0;
+                  const niosXDcs = dcs.filter(m => adMigrationMap.get(m.hostname) !== 'nios-xaas');
+                  const xaasDcs  = dcs.filter(m => adMigrationMap.get(m.hostname) === 'nios-xaas');
+                  const niosXTok = niosXDcs.reduce((s, m) =>
+                    s + calcServerTokenTier(m.qps, m.lps, m.dnsObjects + m.dhcpObjectsWithOverhead, 'nios-x').serverTokens, 0);
+                  const xaasInst = consolidateXaasInstances(xaasDcs.map(m => ({
+                    memberId: m.hostname, memberName: m.hostname, role: 'DC',
+                    qps: m.qps, lps: m.lps, objectCount: m.dnsObjects + m.dhcpObjectsWithOverhead,
+                  })));
+                  return niosXTok + xaasInst.reduce((s, inst) => s + inst.totalTokens, 0);
+                };
+
+                // Full Migration: all DCs default to NIOS-X when no map entry exists.
+                // We simulate "all migrated to NIOS-X" for the baseline full scenario.
+                const fullMigrationTokens = effectiveADMetrics.reduce((s, m) =>
+                  s + calcServerTokenTier(m.qps, m.lps, m.dnsObjects + m.dhcpObjectsWithOverhead, 'nios-x').serverTokens, 0);
+
+                // Hybrid: only selected DCs, using their actual form factor.
+                const hybridServerTokens = calcAdScenarioTokens(
+                  effectiveADMetrics.filter(m => adMigrationMap.has(m.hostname))
+                );
+
+                const adNiosXCount = Array.from(adMigrationMap.values()).filter(v => v === 'nios-x').length;
+                const adXaasCount = Array.from(adMigrationMap.values()).filter(v => v === 'nios-xaas').length;
+
+                const scenarioCurrent = { label: 'Current', tokens: 0, desc: 'All DCs remain on Windows DNS/DHCP licensing. No NIOS-X server tokens required.' };
+                const scenarioHybrid = {
+                  label: 'Hybrid',
+                  tokens: hybridServerTokens,
+                  desc: adMigrationMap.size > 0
+                    ? `${adMigrationMap.size} of ${adHostnames.length} DCs migrated${adNiosXCount > 0 && adXaasCount > 0 ? ` (${adNiosXCount} NIOS-X, ${adXaasCount} XaaS)` : adNiosXCount > 0 ? ' to NIOS-X' : ' to XaaS'}. Remainder stay on Windows.`
+                    : 'Select DCs to migrate. Remainder stay on Windows licensing.'
+                };
+                const scenarioFull = { label: 'Full Migration', tokens: fullMigrationTokens, desc: `All ${adHostnames.length} DCs migrated to NIOS-X for unified DDI management.` };
+
+                const tierColors: Record<string, string> = {
+                  '2XS': 'bg-gray-100 text-gray-700',
+                  'XS': 'bg-sky-100 text-sky-700',
+                  'S': 'bg-green-100 text-green-700',
+                  'M': 'bg-yellow-100 text-yellow-700',
+                  'L': 'bg-orange-100 text-orange-700',
+                  'XL': 'bg-red-100 text-red-700',
+                };
+
+                return (
+                  <div id="section-ad-migration" className="bg-white rounded-xl border-2 border-[var(--infoblox-blue)]/30 mb-6 overflow-hidden">
+                    <div className="px-4 py-3 border-b border-[var(--border)] bg-gradient-to-r from-blue-50 to-indigo-50 flex items-center gap-2">
+                      <span className="text-[var(--infoblox-blue)] text-[16px]">📊</span>
+                      <ArrowRightLeft className="w-4 h-4 text-[var(--infoblox-blue)]" />
+                      <h3 className="text-[14px]" style={{ fontWeight: 600 }}>
+                        AD Migration Planner
+                      </h3>
+                      <span className="ml-auto text-[11px] text-[var(--muted-foreground)]">
+                        Select domain controllers &amp; target form factor
+                      </span>
+                    </div>
+
+                    {/* DC selector */}
+                    <div className="px-4 py-3 border-b border-[var(--border)]">
+                      {/* Search filter */}
+                      <div className="relative mb-2">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
+                        <input
+                          type="text"
+                          placeholder="Filter domain controllers..."
+                          value={adMemberSearchFilter}
+                          onChange={(e) => setAdMemberSearchFilter(e.target.value)}
+                          className="w-full pl-8 pr-3 py-2 text-[12px] rounded-lg border border-[var(--border)] focus:outline-none focus:ring-1 focus:ring-[var(--infoblox-blue)] focus:border-[var(--infoblox-blue)]"
+                        />
+                      </div>
+                      <div className="flex items-center gap-2 mb-3">
+                        <button
+                          onClick={toggleAllAdMigration}
+                          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[12px] border border-[var(--border)] hover:bg-gray-50 transition-colors"
+                          style={{ fontWeight: 500 }}
+                        >
+                          {(() => {
+                            const targets = adMemberSearchFilter ? filteredADHosts : adHostnames;
+                            const allTargetsMigrated = targets.length > 0 && targets.every(h => adMigrationMap.has(h));
+                            const someTargetsMigrated = targets.some(h => adMigrationMap.has(h));
+                            return (
+                              <>
+                                <div className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition-colors ${
+                                  allTargetsMigrated
+                                    ? 'bg-[var(--infoblox-blue)] border-[var(--infoblox-blue)]'
+                                    : someTargetsMigrated
+                                      ? 'bg-[var(--infoblox-blue)]/60 border-[var(--infoblox-blue)]'
+                                      : 'border-gray-300'
+                                }`}>
+                                  {allTargetsMigrated && <Check className="w-2.5 h-2.5 text-white" />}
+                                  {someTargetsMigrated && !allTargetsMigrated && <Minus className="w-2.5 h-2.5 text-white" />}
+                                </div>
+                                {allTargetsMigrated ? 'Deselect All' : 'Migrate All'}
+                              </>
+                            );
+                          })()}
+                        </button>
+                        <span className="text-[11px] text-[var(--muted-foreground)]">
+                          {adMemberSearchFilter
+                            ? `${filteredADHosts.length} of ${adHostnames.length} DCs`
+                            : `${adMigrationMap.size} of ${adHostnames.length} DCs selected`}
+                          {adMigrationMap.size > 0 && !adMemberSearchFilter && (() => {
+                            if (adNiosXCount > 0 && adXaasCount > 0) return ` (${adNiosXCount} NIOS-X, ${adXaasCount} XaaS)`;
+                            if (adXaasCount > 0) return ` (${adXaasCount} XaaS)`;
+                            return ` (${adNiosXCount} NIOS-X)`;
+                          })()}
+                        </span>
+                      </div>
+                      <div className="max-h-[320px] overflow-y-auto border-t border-b border-gray-100">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 py-1">
+                          {filteredADHosts.map((hostname) => {
+                            const m = effectiveADMetrics.find(met => met.hostname === hostname)!;
+                            const isMigrating = adMigrationMap.has(hostname);
+                            const dcFF = adMigrationMap.get(hostname) || 'nios-x';
+                            return (
+                              <div
+                                key={hostname}
+                                className={`flex items-center gap-2.5 px-3 py-2 rounded-lg transition-colors ${
+                                  isMigrating
+                                    ? dcFF === 'nios-xaas'
+                                      ? 'bg-purple-50 border border-purple-200'
+                                      : 'bg-blue-50 border border-blue-200'
+                                    : 'border border-[var(--border)] hover:bg-gray-50'
+                                }`}
+                              >
+                                <button
+                                  onClick={() => toggleAdMigration(hostname)}
+                                  className="flex items-center gap-0 shrink-0"
+                                >
+                                  <div className={`w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 transition-colors ${
+                                    isMigrating
+                                      ? dcFF === 'nios-xaas'
+                                        ? 'bg-purple-600 border-purple-600'
+                                        : 'bg-[var(--infoblox-blue)] border-[var(--infoblox-blue)]'
+                                      : 'border-gray-300'
+                                  }`}>
+                                    {isMigrating && <Check className="w-3 h-3 text-white" />}
+                                  </div>
+                                </button>
+                                <div className="flex-1 min-w-0">
+                                  <div className="text-[12px] truncate" style={{ fontWeight: 500 }}>{hostname}</div>
+                                  <div className="text-[10px] text-[var(--muted-foreground)] flex items-center gap-2">
+                                    <span>{m.qps.toLocaleString()} QPS</span>
+                                    <span>{m.lps.toLocaleString()} LPS</span>
+                                    <span className={`inline-block px-1.5 py-0 rounded-full text-[9px] ${tierColors[m.tier] || 'bg-gray-100 text-gray-700'}`} style={{ fontWeight: 600 }}>{m.tier}</span>
+                                    <span>{m.serverTokens.toLocaleString()} tokens</span>
+                                  </div>
+                                </div>
+                                {isMigrating && (
+                                  <div className="flex items-center bg-white rounded-md border border-gray-200 p-0.5 shrink-0">
+                                    <button
+                                      onClick={() => setAdFormFactor(hostname, 'nios-x')}
+                                      className={`px-2 py-0.5 rounded text-[9px] transition-all ${
+                                        dcFF === 'nios-x'
+                                          ? 'bg-[var(--infoblox-navy)] text-white shadow-sm'
+                                          : 'text-gray-400 hover:text-gray-600'
+                                      }`}
+                                      style={{ fontWeight: 600 }}
+                                    >
+                                      NIOS-X
+                                    </button>
+                                    <button
+                                      onClick={() => setAdFormFactor(hostname, 'nios-xaas')}
+                                      className={`px-2 py-0.5 rounded text-[9px] transition-all ${
+                                        dcFF === 'nios-xaas'
+                                          ? 'bg-purple-600 text-white shadow-sm'
+                                          : 'text-gray-400 hover:text-gray-600'
+                                      }`}
+                                      style={{ fontWeight: 600 }}
+                                    >
+                                      XaaS
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Scenario comparison cards */}
+                    {(() => {
+                      const adIsActive = (idx: number) =>
+                        idx === 0 ? adMigrationMap.size === 0
+                        : idx === 1 ? adMigrationMap.size > 0 && adMigrationMap.size < adHostnames.length
+                        : adMigrationMap.size === adHostnames.length;
+
+                      // Server Token scenarios — already computed above
+                      const adSrvScenarios: ScenarioCard[] = [
+                        { label: 'Current',        primaryValue: 0,                  desc: 'All DCs remain on Windows DNS/DHCP licensing. No NIOS-X server tokens required.' },
+                        { label: 'Hybrid',         primaryValue: hybridServerTokens, desc: scenarioHybrid.desc },
+                        { label: 'Full Migration', primaryValue: fullMigrationTokens, desc: `All ${adHostnames.length} DCs migrated to NIOS-X for unified DDI management.` },
+                      ];
+
+                      // Management token note — AD management tokens are constant across all migration scenarios
+                      const adMgmtTotal = findings.filter(f => (f.provider as string) === 'ad').reduce((s, f) => s + f.managementTokens, 0);
+                      const nonAdTokens = findings.filter(f => (f.provider as string) !== 'ad').reduce((s, f) => s + f.managementTokens, 0);
+
+                      return (
+                        <>
+                          {/* Management token note — same value across all scenarios, no row needed */}
+                          <div className="px-4 py-3 border-b border-[var(--border)] bg-orange-50/40 flex items-center gap-3">
+                            <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-orange-700" style={{ fontWeight: 700 }}>
+                              <span className="w-2 h-2 rounded-full bg-orange-500 shrink-0" />
+                              Management Tokens
+                            </div>
+                            <div className="text-[22px] text-orange-600" style={{ fontWeight: 700 }}>{(nonAdTokens + adMgmtTotal).toLocaleString()}</div>
+                            <div className="text-[11px] text-[var(--muted-foreground)] leading-tight">
+                              Management tokens count the same across all migration scenarios —
+                              DDI objects (users, computers, IPs) exist regardless of whether DCs run on Windows or NIOS-X.
+                            </div>
+                          </div>
+                          <ScenarioPlannerCards
+                            title="Server Tokens"
+                            unit="Server Tokens (IB-TOKENS-UDDI-SERV-500)"
+                            color="blue"
+                            scenarios={adSrvScenarios}
+                            isActive={adIsActive}
+                          />
+                        </>
+                      );
+                    })()}
+
+                    {/* Knowledge Worker / Computer / Static IP summary */}
+                    <div className="px-4 pb-4">
+                      <div className="grid grid-cols-3 gap-4">
+                        {(() => {
+                          const kwCount = findings.filter(f => f.item === 'user_account' && (f.provider as string) === 'ad').reduce((s, f) => s + f.count, 0);
+                          const compCount = findings.filter(f => f.item === 'computer_count' && (f.provider as string) === 'ad').reduce((s, f) => s + f.count, 0);
+                          const staticCount = findings.filter(f => f.item === 'static_ip_count' && (f.provider as string) === 'ad').reduce((s, f) => s + f.count, 0);
+                          return [
+                            { label: 'Knowledge Workers', value: kwCount, icon: '👥', desc: 'AD User Accounts' },
+                            { label: 'Computer Inventory', value: compCount, icon: '💻', desc: 'Managed Assets' },
+                            { label: 'Static IPs', value: staticCount, icon: '🌐', desc: 'Active IPs' },
+                          ].map((metric, i) => (
+                            <div key={i} className="bg-gray-50 rounded-lg p-3 text-center">
+                              <div className="text-[20px]">{metric.icon}</div>
+                              <div className="text-[20px] mt-1" style={{ fontWeight: 700 }}>{metric.value.toLocaleString()}</div>
+                              <div className="text-[12px]" style={{ fontWeight: 600 }}>{metric.label}</div>
+                              <div className="text-[11px] text-[var(--muted-foreground)]">{metric.desc}</div>
+                            </div>
+                          ));
+                        })()}
+                      </div>
+                    </div>
+
+                    {/* AD Server Token Calculator — inline within AD Migration Planner */}
+                    {effectiveADMetrics.length > 0 && (() => {
+                      const toNiosMetrics = (m: ADServerMetricAPI): NiosServerMetrics => ({
+                        memberId: m.hostname,
+                        memberName: m.hostname,
+                        role: 'DC',
+                        qps: m.qps,
+                        lps: m.lps,
+                        objectCount: m.dnsObjects + m.dhcpObjectsWithOverhead,
+                      });
+
+                      const displayMembers = adMigrationMap.size > 0
+                        ? effectiveADMetrics.filter(m => adMigrationMap.has(m.hostname))
+                        : effectiveADMetrics;
+
+                      const getDcFF = (hostname: string): ServerFormFactor =>
+                        adMigrationMap.get(hostname) || 'nios-x';
+
+                      const hasAnyXaas = displayMembers.some(m => getDcFF(m.hostname) === 'nios-xaas');
+                      const xaasDcs = displayMembers.filter(m => getDcFF(m.hostname) === 'nios-xaas');
+                      const niosXDcs = displayMembers.filter(m => getDcFF(m.hostname) === 'nios-x');
+                      const niosXDcCount = niosXDcs.length;
+                      const xaasDcCount = xaasDcs.length;
+
+                      const xaasInstances = consolidateXaasInstances(xaasDcs.map(toNiosMetrics));
+                      const totalXaasTokens = xaasInstances.reduce((s, inst) => s + inst.totalTokens, 0);
+
+                      const niosXTokens = niosXDcs.reduce((sum, m) => {
+                        return sum + calcServerTokenTier(m.qps, m.lps, m.dnsObjects + m.dhcpObjectsWithOverhead, 'nios-x').serverTokens;
+                      }, 0);
+
+                      const totalServerTokens = niosXTokens + totalXaasTokens;
+                      const totalDcsReplaced = xaasDcs.length;
+
+                      const tierColorClass = (name: string) =>
+                        name === 'XL' ? 'bg-red-100 text-red-700' :
+                        name === 'L' ? 'bg-orange-100 text-orange-700' :
+                        name === 'M' ? 'bg-yellow-100 text-yellow-700' :
+                        name === 'S' ? 'bg-green-100 text-green-700' :
+                        name === 'XS' ? 'bg-sky-100 text-sky-700' :
+                        'bg-gray-100 text-gray-700';
+
+                      return (
+                        <div id="section-ad-server-tokens" className="border-t border-blue-200 bg-blue-50/10">
+                          <div className="px-4 py-3 border-b border-blue-200 bg-blue-50/50 flex items-center gap-2 flex-wrap">
+                      <ProviderIconEl id="microsoft" className="w-5 h-5" />
+                      <h3 className="text-[14px]" style={{ fontWeight: 600 }}>
+                        AD Server Token Calculator
+                      </h3>
+                      <span className="ml-auto text-[11px] text-[var(--muted-foreground)]">
+                        {adMigrationMap.size > 0
+                          ? `${displayMembers.length} DC${displayMembers.length > 1 ? 's' : ''} selected${niosXDcCount > 0 && xaasDcCount > 0 ? ` (${niosXDcCount} NIOS-X, ${xaasDcCount} XaaS)` : niosXDcCount > 0 ? ' → NIOS-X' : ' → XaaS'}`
+                          : `${effectiveADMetrics.length} DC${effectiveADMetrics.length > 1 ? 's' : ''} detected`}
+                      </span>
+                    </div>
+
+                    {/* Summary hero */}
+                    <div className="px-4 py-4 border-b border-[var(--border)] bg-gradient-to-r from-blue-50/80 to-white">
+                      <div className={`grid ${hasAnyXaas ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-1 sm:grid-cols-2'} gap-4`}>
+                        <div>
+                          <div className="flex items-center gap-1 text-[11px] uppercase tracking-wider text-[var(--muted-foreground)] mb-1" style={{ fontWeight: 600 }}>
+                            Allocated Server Tokens
+                            <FieldTooltip text="Server tokens (IB-TOKENS-UDDI-SERV-500) are needed for each NIOS-X appliance or XaaS instance based on its performance tier. This is separate from management tokens." side="top" />
+                          </div>
+                          <div className="text-[28px] text-blue-700" style={{ fontWeight: 700 }}>
+                            {totalServerTokens.toLocaleString()}
+                          </div>
+                          <div className="text-[10px] text-[var(--muted-foreground)]">
+                            {niosXDcCount > 0 && `${niosXTokens.toLocaleString()} NIOS-X`}
+                            {niosXDcCount > 0 && xaasDcCount > 0 && ' + '}
+                            {xaasDcCount > 0 && `${totalXaasTokens.toLocaleString()} XaaS`}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-[11px] uppercase tracking-wider text-[var(--muted-foreground)] mb-1" style={{ fontWeight: 600 }}>
+                            Domain Controllers
+                          </div>
+                          <div className="text-[22px] text-[var(--foreground)]" style={{ fontWeight: 600 }}>
+                            {displayMembers.length}
+                          </div>
+                          <div className="text-[10px] text-[var(--muted-foreground)]">
+                            {niosXDcCount > 0 && `${niosXDcCount} → NIOS-X`}
+                            {niosXDcCount > 0 && xaasDcs.length > 0 && ' · '}
+                            {xaasDcs.length > 0 && `${xaasDcs.length} → XaaS`}
+                          </div>
+                        </div>
+                        {hasAnyXaas && ([
+                          <div key="xaas-inst-summary">
+                            <div className="text-[11px] uppercase tracking-wider text-[var(--muted-foreground)] mb-1" style={{ fontWeight: 600 }}>
+                              XaaS Instances
+                            </div>
+                            <div className="text-[22px] text-purple-700" style={{ fontWeight: 600 }}>
+                              {xaasInstances.length}
+                            </div>
+                            <div className="text-[10px] text-[var(--muted-foreground)]">
+                              replacing {totalDcsReplaced} DC{totalDcsReplaced > 1 ? 's' : ''}
+                            </div>
+                          </div>,
+                          <div key="xaas-consol-ratio">
+                            <div className="text-[11px] uppercase tracking-wider text-[var(--muted-foreground)] mb-1" style={{ fontWeight: 600 }}>
+                              Consolidation Ratio
+                            </div>
+                            <div className="text-[22px] text-purple-700" style={{ fontWeight: 600 }}>
+                              {totalDcsReplaced}:{xaasInstances.length}
+                            </div>
+                            <div className="text-[10px] text-[var(--muted-foreground)]">
+                              {totalDcsReplaced} DC{totalDcsReplaced > 1 ? 's' : ''} → {xaasInstances.length} XaaS instance{xaasInstances.length > 1 ? 's' : ''}
+                            </div>
+                          </div>
+                        ])}
+                      </div>
+                      {hasAnyXaas && (
+                        <div className="mt-3 flex flex-col gap-1.5">
+                          <div className="flex items-start gap-1.5 text-[10px] text-purple-700 bg-purple-50 rounded-lg px-3 py-1.5 border border-purple-200">
+                            <Info className="w-3 h-3 mt-0.5 shrink-0" />
+                            <span>
+                              <b>{xaasDcs.length} DC{xaasDcs.length > 1 ? 's' : ''}</b> consolidated into <b>{xaasInstances.length} XaaS instance{xaasInstances.length > 1 ? 's' : ''}</b>.
+                              {' '}Each XaaS instance uses aggregate QPS/LPS/Objects to determine the T-shirt size.
+                              {' '}1 connection = 1 DC replaced.
+                            </span>
+                          </div>
+                          {xaasInstances.some(inst => inst.extraConnections > 0) && (
+                            <div className="flex items-start gap-1.5 text-[10px] text-amber-700 bg-amber-50 rounded-lg px-3 py-1.5 border border-amber-200">
+                              <Info className="w-3 h-3 mt-0.5 shrink-0" />
+                              <span>
+                                Some instances need extra connections beyond the included tier limit (+{XAAS_EXTRA_CONNECTION_COST} tokens each, up to 400 extra per instance).
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Per-DC table */}
+                    <div className="overflow-x-auto max-h-[500px] overflow-y-auto">
+                      <table className="w-full text-[12px]">
+                        <thead className="sticky top-0 z-10">
+                          <tr className="border-b border-[var(--border)] bg-gray-50">
+                            <th className="text-left px-4 py-2.5" style={{ fontWeight: 600 }}>Hostname</th>
+                            <th className="text-center px-3 py-2.5" style={{ fontWeight: 600 }}>Role</th>
+                            <th className="text-center px-3 py-2.5" style={{ fontWeight: 600 }}>Target</th>
+                            <th className="text-right px-3 py-2.5" style={{ fontWeight: 600 }}>
+                              <span className="flex items-center justify-end gap-1">
+                                <Activity className="w-3 h-3" /> QPS
+                                <FieldTooltip text="Queries per second — DNS query rate observed on this DC. Used with LPS and object count to size the NIOS-X appliance tier." side="top" />
+                              </span>
+                            </th>
+                            <th className="text-right px-3 py-2.5" style={{ fontWeight: 600 }}>
+                              <span className="flex items-center justify-end gap-1">
+                                <Gauge className="w-3 h-3" /> LPS
+                                <FieldTooltip text="Leases per second — DHCP lease rate on this DC. High LPS drives appliance tier up independently of QPS." side="top" />
+                              </span>
+                            </th>
+                            <th className="text-right px-3 py-2.5" style={{ fontWeight: 600 }}>Objects</th>
+                            <th className="text-center px-3 py-2.5" style={{ fontWeight: 600 }}>
+                              <span className="flex items-center justify-center gap-1">
+                                Size
+                                <FieldTooltip text="NIOS-X appliance T-shirt size (2XS → XL) determined by the highest of QPS, LPS, and object thresholds. Each tier has a fixed server token cost." side="top" />
+                              </span>
+                            </th>
+                            <th className="text-center px-3 py-2.5" style={{ fontWeight: 600 }}>
+                              <span className="text-blue-700">Allocated Tokens</span>
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {/* NIOS-X DCs — individual rows */}
+                          {niosXDcs.map((dc) => {
+                            const objCount = dc.dnsObjects + dc.dhcpObjectsWithOverhead;
+                            const tier = calcServerTokenTier(dc.qps, dc.lps, objCount, 'nios-x');
+                            return (
+                              <tr key={dc.hostname} className="border-b border-[var(--border)] hover:bg-gray-50/50 transition-colors">
+                                <td className="px-4 py-2.5">
+                                  <div className="truncate max-w-[260px]" style={{ fontWeight: 500 }}>{dc.hostname}</div>
+                                </td>
+                                <td className="text-center px-3 py-2.5">
+                                  <span className="inline-block px-2 py-0.5 rounded text-[10px] bg-blue-100 text-blue-700" style={{ fontWeight: 600 }}>
+                                    DC
+                                  </span>
+                                </td>
+                                <td className="text-center px-3 py-2.5">
+                                  <span className="inline-block px-2 py-0.5 rounded text-[10px] bg-blue-100 text-blue-700" style={{ fontWeight: 600 }}>
+                                    NIOS-X
+                                  </span>
+                                </td>
+                                <td className="text-right px-3 py-2.5 tabular-nums">
+                                  {dc.qps > 0 ? dc.qps.toLocaleString() : <span className="text-gray-300">&mdash;</span>}
+                                </td>
+                                <td className="text-right px-3 py-2.5 tabular-nums">
+                                  {dc.lps > 0 ? dc.lps.toLocaleString() : <span className="text-gray-300">&mdash;</span>}
+                                </td>
+                                <td className="text-right px-3 py-2.5 tabular-nums">
+                                  {objCount > 0 ? objCount.toLocaleString() : <span className="text-gray-300">&mdash;</span>}
+                                </td>
+                                <td className="text-center px-3 py-2.5">
+                                  <span className={`inline-block px-2 py-0.5 rounded text-[10px] ${tierColorClass(tier.name)}`} style={{ fontWeight: 600 }}>
+                                    {tier.name}
+                                  </span>
+                                </td>
+                                <td className="text-center px-3 py-2.5">
+                                  <span className="inline-flex items-center justify-center min-w-[36px] h-7 px-1.5 rounded-full bg-blue-100 text-blue-700 text-[12px]" style={{ fontWeight: 700 }}>
+                                    {tier.serverTokens.toLocaleString()}
+                                  </span>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                          {/* XaaS consolidated instances */}
+                          {xaasInstances.map((inst) => (
+                            <tbody key={`ad-xaas-inst-${inst.index}`}>
+                              {/* Instance header row */}
+                              <tr className="bg-purple-50 border-b border-purple-200">
+                                <td className="px-4 py-2 text-[11px] text-purple-800" style={{ fontWeight: 700 }} colSpan={8}>
+                                  <div className="flex items-center gap-2">
+                                    <span className="inline-flex items-center gap-1.5">
+                                      <span className="inline-block w-2.5 h-2.5 rounded-full bg-purple-500" />
+                                      XaaS Instance {xaasInstances.length > 1 ? inst.index + 1 : ''}
+                                    </span>
+                                    <span className="text-purple-500" style={{ fontWeight: 400 }}>—</span>
+                                    <span className="text-purple-600" style={{ fontWeight: 500 }}>
+                                      replaces {inst.connectionsUsed} DC{inst.connectionsUsed > 1 ? 's' : ''}
+                                    </span>
+                                    <span className="ml-auto flex items-center gap-2">
+                                      <span className={`inline-block px-2 py-0.5 rounded text-[10px] ${tierColorClass(inst.tier.name)}`} style={{ fontWeight: 600 }}>
+                                        {inst.tier.name}
+                                      </span>
+                                      <span className="inline-flex items-center justify-center min-w-[36px] h-6 px-1.5 rounded-full bg-purple-200 text-purple-800 text-[11px]" style={{ fontWeight: 700 }}>
+                                        {inst.totalTokens.toLocaleString()}
+                                      </span>
+                                    </span>
+                                  </div>
+                                </td>
+                              </tr>
+                              {/* Individual DC rows within this instance */}
+                              {inst.members.map((member) => (
+                                <tr key={member.memberId} className="border-b border-purple-100 hover:bg-purple-50/30 transition-colors">
+                                  <td className="pl-8 pr-4 py-2">
+                                    <div className="truncate max-w-[240px] text-[11px] text-purple-700" style={{ fontWeight: 500 }}>{member.memberName}</div>
+                                  </td>
+                                  <td className="text-center px-3 py-2">
+                                    <span className="inline-block px-2 py-0.5 rounded text-[10px] bg-blue-100 text-blue-700" style={{ fontWeight: 600 }}>
+                                      DC
+                                    </span>
+                                  </td>
+                                  <td className="text-center px-3 py-2">
+                                    <span className="inline-block px-2 py-0.5 rounded text-[9px] bg-purple-100 text-purple-600" style={{ fontWeight: 500 }}>
+                                      1 conn
+                                    </span>
+                                  </td>
+                                  <td className="text-right px-3 py-2 tabular-nums text-[11px] text-purple-600">
+                                    {member.qps > 0 ? member.qps.toLocaleString() : <span className="text-gray-300">&mdash;</span>}
+                                  </td>
+                                  <td className="text-right px-3 py-2 tabular-nums text-[11px] text-purple-600">
+                                    {member.lps > 0 ? member.lps.toLocaleString() : <span className="text-gray-300">&mdash;</span>}
+                                  </td>
+                                  <td className="text-right px-3 py-2 tabular-nums text-[11px] text-purple-600">
+                                    {serverSizingObjects(member) > 0 ? serverSizingObjects(member).toLocaleString() : <span className="text-gray-300">&mdash;</span>}
+                                  </td>
+                                  <td className="text-center px-3 py-2" colSpan={2}>
+                                    <span className="text-[10px] text-gray-400">(consolidated)</span>
+                                  </td>
+                                </tr>
+                              ))}
+                              {/* Consolidated aggregate row */}
+                              <tr className="border-b border-purple-300 bg-purple-50/80">
+                                <td className="pl-8 pr-4 py-2 text-[11px] text-purple-800" style={{ fontWeight: 600 }}>
+                                  Aggregate ({inst.connectionsUsed} connection{inst.connectionsUsed > 1 ? 's' : ''} used / {inst.tier.maxConnections} included)
+                                  {inst.extraConnections > 0 && (
+                                    <span className="text-amber-600 ml-1">+{inst.extraConnections} extra</span>
+                                  )}
+                                </td>
+                                <td className="text-center px-3 py-2">
+                                  <span className="inline-block px-2 py-0.5 rounded text-[10px] bg-purple-100 text-purple-700" style={{ fontWeight: 600 }}>
+                                    XaaS
+                                  </span>
+                                </td>
+                                <td className="text-center px-3 py-2 text-[10px] text-purple-700" style={{ fontWeight: 600 }}>
+                                  {inst.connectionsUsed} conn
+                                </td>
+                                <td className="text-right px-3 py-2 tabular-nums text-purple-800" style={{ fontWeight: 600 }}>
+                                  {inst.totalQps > 0 ? inst.totalQps.toLocaleString() : <span className="text-gray-300">&mdash;</span>}
+                                </td>
+                                <td className="text-right px-3 py-2 tabular-nums text-purple-800" style={{ fontWeight: 600 }}>
+                                  {inst.totalLps > 0 ? inst.totalLps.toLocaleString() : <span className="text-gray-300">&mdash;</span>}
+                                </td>
+                                <td className="text-right px-3 py-2 tabular-nums text-purple-800" style={{ fontWeight: 600 }}>
+                                  {inst.totalObjects > 0 ? inst.totalObjects.toLocaleString() : <span className="text-gray-300">&mdash;</span>}
+                                </td>
+                                <td className="text-center px-3 py-2">
+                                  <span className={`inline-block px-2 py-0.5 rounded text-[10px] ${tierColorClass(inst.tier.name)}`} style={{ fontWeight: 600 }}>
+                                    {inst.tier.name}
+                                  </span>
+                                </td>
+                                <td className="text-center px-3 py-2">
+                                  <span className="inline-flex items-center justify-center min-w-[36px] h-7 px-1.5 rounded-full bg-purple-200 text-purple-800 text-[12px]" style={{ fontWeight: 700 }}>
+                                    {inst.totalTokens.toLocaleString()}
+                                  </span>
+                                  {inst.extraConnectionTokens > 0 && (
+                                    <div className="text-[9px] text-amber-600 mt-0.5">
+                                      incl. {inst.extraConnectionTokens.toLocaleString()} extra conn
+                                    </div>
+                                  )}
+                                </td>
+                              </tr>
+                            </tbody>
+                          ))}
+                        <tfoot className="sticky bottom-0 z-10">
+                          <tr className="bg-blue-50">
+                            <td className="px-4 py-2.5 text-[12px]" style={{ fontWeight: 700 }} colSpan={7}>
+                              Total Allocated Server Tokens
+                              {hasAnyXaas && (
+                                <span className="text-[10px] text-[var(--muted-foreground)] ml-2" style={{ fontWeight: 400 }}>
+                                  ({niosXDcCount > 0 ? `${niosXDcCount} NIOS-X` : ''}{niosXDcCount > 0 && xaasInstances.length > 0 ? ' + ' : ''}{xaasInstances.length > 0 ? `${xaasInstances.length} XaaS instance${xaasInstances.length > 1 ? 's' : ''} replacing ${totalDcsReplaced} DCs` : ''})
+                                </span>
+                              )}
+                            </td>
+                            <td className="text-center px-3 py-2.5">
+                              <span className="inline-flex items-center justify-center min-w-[40px] h-8 px-2 rounded-full bg-blue-600 text-white text-[14px]" style={{ fontWeight: 700 }}>
+                                {totalServerTokens.toLocaleString()}
+                              </span>
+                            </td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </div>
                 );
               })()}

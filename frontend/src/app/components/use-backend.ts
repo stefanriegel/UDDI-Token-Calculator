@@ -13,7 +13,7 @@ import {
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected';
 
-export type UpdateStatus = 'idle' | 'checking' | 'updating' | 'done' | 'restarting' | 'error' | 'managed';
+export type UpdateStatus = 'idle' | 'checking' | 'updating' | 'done' | 'restarting' | 'error';
 
 interface BackendState {
   status: ConnectionStatus;
@@ -56,11 +56,7 @@ export function useBackendConnection(): BackendState {
     setUpdateError(null);
     try {
       const result = await applySelfUpdate();
-      if (result.managedBy === 'homebrew') {
-        // Not an error — binary is managed by Homebrew, show informational hint
-        setUpdateStatus('managed');
-        setUpdateError(result.message || 'Run `brew upgrade uddi-token-calculator` to update.');
-      } else if (result.success) {
+      if (result.success) {
         setUpdateStatus('done');
       } else {
         setUpdateError(result.error || 'Update failed');

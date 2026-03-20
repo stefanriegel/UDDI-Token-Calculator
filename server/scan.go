@@ -450,6 +450,15 @@ func (h *ScanHandler) HandleScanResults(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
+	// Decode ADServerMetricsJSON if an AD scan was performed.
+	var adMetrics []ADServerMetric
+	if len(sess.ADServerMetricsJSON) > 0 {
+		if err := json.Unmarshal(sess.ADServerMetricsJSON, &adMetrics); err != nil {
+			fmt.Fprintf(os.Stderr, "server: failed to decode ADServerMetricsJSON: %v\n", err)
+			adMetrics = nil
+		}
+	}
+
 	writeJSON(w, http.StatusOK, ScanResultsResponse{
 		ScanID:                scanID,
 		CompletedAt:           completedAt,
@@ -461,6 +470,7 @@ func (h *ScanHandler) HandleScanResults(w http.ResponseWriter, r *http.Request) 
 		Findings:              findings,
 		Errors:                errors,
 		NiosServerMetrics:     niosMetrics, // nil → omitted by omitempty
+		ADServerMetrics:       adMetrics,   // nil → omitted by omitempty
 	})
 }
 
@@ -512,6 +522,19 @@ func toOrchestratorProviders(specs []ScanProviderSpec) []orchestrator.ScanProvid
 			MaxWorkers:     s.MaxWorkers,
 			RequestTimeout: s.RequestTimeout,
 			CheckpointPath: s.CheckpointPath,
+		}
+
+		// For AD provider: if the frontend sent per-forest subscriptions, apply
+		// forest 0 subscriptions to the primary request. Additional forests are
+		// expanded by the orchestrator using sess.ADForests — but we need to
+		// carry their per-forest subscriptions through via ADForestSubscriptions.
+		// For the primary request, use ADForestSubscriptions[0] if present.
+		if s.Provider == "ad" && len(s.ADForestSubscriptions) > 0 {
+			for _, fs := range s.ADForestSubscriptions {
+				if fs.ForestIndex == 0 {
+					req.Subscriptions = fs.Subscriptions
+				}
+			}
 		}
 
 		// For NIOS provider: dispatch based on Mode field.
