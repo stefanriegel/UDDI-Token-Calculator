@@ -1,0 +1,10 @@
+# Decisions Register
+
+<!-- Append-only. Never edit or remove existing rows.
+     To reverse a decision, add a new row that supersedes it.
+     Read this file at the start of any planning or research phase. -->
+
+| # | When | Scope | Decision | Choice | Rationale | Revisable? |
+|---|------|-------|----------|--------|-----------|------------|
+| D001 | M011/S02/T01 | numeric precision / formula fidelity | How to compute staticClients from activeIPs and dhcpPct in estimator-calc.ts without IEEE 754 drift | Compute dynamicClients = Math.ceil(activeIPs × dhcpPct) first, then staticClients = activeIPs − dynamicClients (integer subtraction) | The direct formula Math.floor(activeIPs × (1 − dhcpPct)) suffers IEEE 754 drift: 1 − 0.80 = 0.19999999999999996 in JS, so Math.floor(1250 × 0.199...) = 249 instead of 250, breaking Reference Case A and producing ddiObjects = 5219 instead of 5221. Integer subtraction is semantically identical to the spreadsheet (both round dynamic up, take the remainder) but immune to float precision loss. | No — integer subtraction is strictly more correct. Revert only if the spreadsheet's dynamic-client formula changes to use floor instead of ceil. |
+| D002 | M011/S02/T02 | frontend / component architecture | Where and how to render the estimator questionnaire UI within wizard.tsx without major restructuring | EstimatorQuestionnaire renders as a named function component before Wizard() in wizard.tsx, with an early-return in the credentials map when provId === 'estimator' | Defining EstimatorQuestionnaire as a named function before the Wizard export avoids closure/hook-order issues (React rules of hooks require consistent call counts). The early-return pattern in the credentials map avoids nesting the entire existing credential form inside an else branch, keeping the diff minimal and the intent readable. Auto-setting credentialStatus = 'valid' on mount means no validation logic is needed for a client-side-only connector. | Yes — if the questionnaire grows complex enough to warrant its own file, extract to estimator-questionnaire.tsx and import it. |
