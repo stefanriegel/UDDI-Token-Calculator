@@ -44,7 +44,7 @@ export const PROVIDER_LOGOS: Record<ProviderType, string> = {
   nios: niosGridLogo,
   bluecat: bluecatLogo,
   efficientip: efficientipLogo,
-  estimator: infobloxLogo,
+  estimator: niosGridLogo,
 };
 
 export interface CredentialField {
