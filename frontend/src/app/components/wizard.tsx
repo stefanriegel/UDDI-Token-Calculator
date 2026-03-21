@@ -77,7 +77,7 @@ import {
   type ServerFormFactor,
   type ConsolidatedXaasInstance,
 } from './mock-data';
-
+import { calcEstimator, EstimatorDefaults, type EstimatorInputs } from './estimator-calc';
 type Step = 'providers' | 'credentials' | 'sources' | 'scanning' | 'results';
 type SortColumn = 'provider' | 'source' | 'category' | 'item' | 'count' | 'managementTokens';
 type SortDir = 'asc' | 'desc';
@@ -312,6 +312,7 @@ export function Wizard() {
     nios: {},
     bluecat: {},
     efficientip: {},
+    estimator: {},
   });
   const [credentialStatus, setCredentialStatus] = useState<Record<ProviderType, 'idle' | 'validating' | 'valid' | 'error'>>({
     aws: 'idle',
@@ -321,6 +322,7 @@ export function Wizard() {
     nios: 'idle',
     bluecat: 'idle',
     efficientip: 'idle',
+    estimator: 'idle',
   });
   const [subscriptions, setSubscriptions] = useState<
     Record<ProviderType, { id: string; name: string; selected: boolean }[]>
@@ -332,10 +334,11 @@ export function Wizard() {
     nios: [],
     bluecat: [],
     efficientip: [],
+    estimator: [],
   });
   const [scanProgress, setScanProgress] = useState(0);
   const [providerScanProgress, setProviderScanProgress] = useState<Record<ProviderType, number>>({
-    aws: 0, azure: 0, gcp: 0, microsoft: 0, nios: 0, bluecat: 0, efficientip: 0,
+    aws: 0, azure: 0, gcp: 0, microsoft: 0, nios: 0, bluecat: 0, efficientip: 0, estimator: 0,
   });
   const [findings, setFindings] = useState<FindingRow[]>([]);
   // Manual count overrides (issue #28): keyed by "provider::source::item", value is the user-entered count.
@@ -345,7 +348,7 @@ export function Wizard() {
   const [editingFindingKey, setEditingFindingKey] = useState<string | null>(null);
   const [editingCountValue, setEditingCountValue] = useState<string>('');
   const [credentialError, setCredentialError] = useState<Record<ProviderType, string>>({
-    aws: '', azure: '', gcp: '', microsoft: '', nios: '', bluecat: '', efficientip: '',
+    aws: '', azure: '', gcp: '', microsoft: '', nios: '', bluecat: '', efficientip: '', estimator: '',
   });
   const [deviceCodeMessage, setDeviceCodeMessage] = useState<string>('');
   const [scanError, setScanError] = useState<string>('');
@@ -359,13 +362,14 @@ export function Wizard() {
     nios: 'backup-upload',
     bluecat: 'credentials',
     efficientip: 'credentials',
+    estimator: '',
   });
   const [sourceSearch, setSourceSearch] = useState<Record<ProviderType, string>>({
-    aws: '', azure: '', gcp: '', microsoft: '', nios: '', bluecat: '', efficientip: '',
+    aws: '', azure: '', gcp: '', microsoft: '', nios: '', bluecat: '', efficientip: '', estimator: '',
   });
   const [advancedOptions, setAdvancedOptions] = useState<Record<ProviderType, { maxWorkers: number }>>({
     aws: { maxWorkers: 0 }, azure: { maxWorkers: 0 }, gcp: { maxWorkers: 0 },
-    microsoft: { maxWorkers: 0 }, nios: { maxWorkers: 0 }, bluecat: { maxWorkers: 0 }, efficientip: { maxWorkers: 0 },
+    microsoft: { maxWorkers: 0 }, nios: { maxWorkers: 0 }, bluecat: { maxWorkers: 0 }, efficientip: { maxWorkers: 0 }, estimator: { maxWorkers: 0 },
   });
   // Top consumer expandable cards
   const [topDnsExpanded, setTopDnsExpanded] = useState(false);
@@ -382,8 +386,16 @@ export function Wizard() {
 
   // Selection mode: 'include' = checked items will be scanned; 'exclude' = checked items will be SKIPPED
   const [selectionMode, setSelectionMode] = useState<Record<ProviderType, 'include' | 'exclude'>>({
-    aws: 'include', azure: 'include', gcp: 'include', microsoft: 'include', nios: 'include', bluecat: 'include', efficientip: 'include',
+    aws: 'include', azure: 'include', gcp: 'include', microsoft: 'include', nios: 'include', bluecat: 'include', efficientip: 'include', estimator: 'include',
   });
+
+  // ── Manual Estimator state (S02) ───────────────────────────────────────────
+  const [estimatorAnswers, setEstimatorAnswers] = useState<EstimatorInputs>({ ...EstimatorDefaults });
+  const [estimatorMonthlyLogVolume, setEstimatorMonthlyLogVolume] = useState<number>(0);
+
+  // ── Growth buffer & BOM state (S03) ───────────────────────────────────────
+  const [growthBufferPct, setGrowthBufferPct] = useState<number>(0.20);
+  const [bomCopied, setBomCopied] = useState(false);
 
   // NIOS-specific state
   const [niosMode, setNiosMode] = useState<'backup' | 'wapi'>('backup');
@@ -470,7 +482,7 @@ export function Wizard() {
       case 'sources':
         return selectedProviders.some((p) =>
           getEffectiveSelectedCount(p) > 0
-        ) || adForests.some((f) => f.subscriptions.some((s) => s.selected));
+        ) || adForests.some((f) => f.subscriptions.some((s) => s.selected)) || selectedProviders.includes('estimator');
       case 'scanning':
         return scanProgress >= 100;
       default:
@@ -482,6 +494,12 @@ export function Wizard() {
     const nextIndex = currentIndex + 1;
     if (nextIndex < STEPS.length) {
       const nextStep = STEPS[nextIndex].id;
+      // Estimator skips the sources step — jump straight to scanning
+      if (nextStep === 'sources' && selectedProviders.includes('estimator')) {
+        setCurrentStep('scanning');
+        startScan();
+        return;
+      }
       if (nextStep === 'scanning') {
         startScan();
       }
@@ -503,17 +521,17 @@ export function Wizard() {
     clearScanIntervals();
     setCurrentStep('providers');
     setSelectedProviders([]);
-    setCredentials({ aws: {}, azure: {}, gcp: {}, microsoft: {}, nios: {}, bluecat: {}, efficientip: {} });
-    setCredentialStatus({ aws: 'idle', azure: 'idle', gcp: 'idle', microsoft: 'idle', nios: 'idle', bluecat: 'idle', efficientip: 'idle' });
-    setSubscriptions({ aws: [], azure: [], gcp: [], microsoft: [], nios: [], bluecat: [], efficientip: [] });
+    setCredentials({ aws: {}, azure: {}, gcp: {}, microsoft: {}, nios: {}, bluecat: {}, efficientip: {}, estimator: {} });
+    setCredentialStatus({ aws: 'idle', azure: 'idle', gcp: 'idle', microsoft: 'idle', nios: 'idle', bluecat: 'idle', efficientip: 'idle', estimator: 'idle' });
+    setSubscriptions({ aws: [], azure: [], gcp: [], microsoft: [], nios: [], bluecat: [], efficientip: [], estimator: [] });
     setScanProgress(0);
-    setProviderScanProgress({ aws: 0, azure: 0, gcp: 0, microsoft: 0, nios: 0, bluecat: 0, efficientip: 0 });
+    setProviderScanProgress({ aws: 0, azure: 0, gcp: 0, microsoft: 0, nios: 0, bluecat: 0, efficientip: 0, estimator: 0 });
     setFindings([]);
     setCountOverrides({});
-    setCredentialError({ aws: '', azure: '', gcp: '', microsoft: '', nios: '', bluecat: '', efficientip: '' });
+    setCredentialError({ aws: '', azure: '', gcp: '', microsoft: '', nios: '', bluecat: '', efficientip: '', estimator: '' });
     setScanError('');
-    setSourceSearch({ aws: '', azure: '', gcp: '', microsoft: '', nios: '', bluecat: '', efficientip: '' });
-    setSelectionMode({ aws: 'include', azure: 'include', gcp: 'include', microsoft: 'include', nios: 'include', bluecat: 'include', efficientip: 'include' });
+    setSourceSearch({ aws: '', azure: '', gcp: '', microsoft: '', nios: '', bluecat: '', efficientip: '', estimator: '' });
+    setSelectionMode({ aws: 'include', azure: 'include', gcp: 'include', microsoft: 'include', nios: 'include', bluecat: 'include', efficientip: 'include', estimator: 'include' });
     setNiosMode('backup');
     setNiosUploadedFile(null);
     setNiosDragOver(false);
@@ -527,6 +545,10 @@ export function Wizard() {
     setFindingsProviderFilter(new Set());
     setFindingsCategoryFilter(new Set());
     setFindingsSort(null);
+    setEstimatorAnswers({ ...EstimatorDefaults });
+    setEstimatorMonthlyLogVolume(0);
+    setGrowthBufferPct(0.20);
+    setBomCopied(false);
   };
 
   // Provider toggle
@@ -773,10 +795,36 @@ export function Wizard() {
     clearScanIntervals();
     setScanProgress(0);
     setScanError('');
-    const initProgress: Record<ProviderType, number> = { aws: 0, azure: 0, gcp: 0, microsoft: 0, nios: 0, bluecat: 0, efficientip: 0 };
+    const initProgress: Record<ProviderType, number> = { aws: 0, azure: 0, gcp: 0, microsoft: 0, nios: 0, bluecat: 0, efficientip: 0, estimator: 0 };
     setProviderScanProgress(initProgress);
     setFindings([]);
     setCountOverrides({});
+
+    // ── Manual Estimator short-circuit (no API call) ───────────────────────
+    if (selectedProviders.includes('estimator')) {
+      const out = calcEstimator(estimatorAnswers);
+      const estimatorFindings: FindingRow[] = [];
+      if (out.ddiObjects > 0) estimatorFindings.push({
+        provider: 'estimator', source: 'Manual Estimator',
+        category: 'DDI Object', item: 'Estimated DDI Objects', count: out.ddiObjects,
+        tokensPerUnit: TOKEN_RATES['DDI Object'], managementTokens: Math.ceil(out.ddiObjects / TOKEN_RATES['DDI Object']),
+      });
+      if (out.activeIPs > 0) estimatorFindings.push({
+        provider: 'estimator', source: 'Manual Estimator',
+        category: 'Active IP', item: 'Estimated Active IPs', count: out.activeIPs,
+        tokensPerUnit: TOKEN_RATES['Active IP'], managementTokens: Math.ceil(out.activeIPs / TOKEN_RATES['Active IP']),
+      });
+      if (out.discoveredAssets > 0) estimatorFindings.push({
+        provider: 'estimator', source: 'Manual Estimator',
+        category: 'Asset', item: 'Estimated Assets', count: out.discoveredAssets,
+        tokensPerUnit: TOKEN_RATES['Asset'], managementTokens: Math.ceil(out.discoveredAssets / TOKEN_RATES['Asset']),
+      });
+      setFindings(estimatorFindings);
+      setEstimatorMonthlyLogVolume(out.monthlyLogVolume);
+      setScanProgress(100);
+      setProviderScanProgress(prev => ({ ...prev, estimator: 100 }));
+      return;
+    }
 
     if (backend.isDemo) {
       // Demo mode: simulate parallel scanning with mock data
@@ -950,9 +998,21 @@ export function Wizard() {
 
   // Export
   const totalTokens = useMemo(
-    () => effectiveFindings.reduce((sum, f) => sum + f.managementTokens, 0),
-    [effectiveFindings]
+    () => {
+      const raw = effectiveFindings.reduce((sum, f) => sum + f.managementTokens, 0);
+      return Math.ceil(raw * (1 + growthBufferPct));
+    },
+    [effectiveFindings, growthBufferPct]
   );
+
+  // Reporting tokens: based on monthly log volume from estimator or future scan sources
+  const reportingTokens = useMemo(() => {
+    if (estimatorMonthlyLogVolume <= 0) return 0;
+    // Three destination types: CSP active search (80 tk/10M), S3 (40 tk/10M), Ecosystem/CDC (40 tk/10M)
+    const events10M = Math.ceil(estimatorMonthlyLogVolume / 10_000_000);
+    const raw = events10M * (80 + 40 + 40); // all three destinations enabled
+    return Math.ceil(raw * (1 + growthBufferPct));
+  }, [estimatorMonthlyLogVolume, growthBufferPct]);
 
   // Category subtotals for summary
   const categoryTotals = useMemo(() => {
@@ -1220,9 +1280,13 @@ export function Wizard() {
     }
     summary += `\n\nRecommended SKUs`;
     summary += `\nSKU Code,Description,Pack Count`;
+    summary += `\nGrowth Buffer,${Math.round(growthBufferPct * 100)}%`;
     summary += `\nIB-TOKENS-UDDI-MGMT-1000,Management Token Pack (1000 tokens),${Math.ceil(totalTokens / 1000)}`;
     if (hasServerMetrics) {
       summary += `\nIB-TOKENS-UDDI-SERV-500,Server Token Pack (500 tokens),${Math.ceil(totalServerTokens / 500)}`;
+    }
+    if (reportingTokens > 0) {
+      summary += `\nIB-TOKENS-REPORTING-40,Reporting Token Pack (40 tokens),${Math.ceil(reportingTokens / 40)}`;
     }
     const csv = [header, ...rows].join('\n') + summary;
     downloadFile(csv, 'ddi-token-assessment.csv', 'text/csv');
@@ -1337,11 +1401,15 @@ export function Wizard() {
       }
     }
     html += '<h3 style="margin-top:20px">Recommended SKUs</h3>';
+    html += `<p>Growth Buffer: ${Math.round(growthBufferPct * 100)}%</p>`;
     html += '<table border="1" cellpadding="4" cellspacing="0" style="border-collapse:collapse">';
     html += '<tr style="background:#002B49;color:white;font-weight:bold"><td>SKU Code</td><td>Description</td><td>Pack Count</td></tr>';
     html += `<tr><td>IB-TOKENS-UDDI-MGMT-1000</td><td>Management Token Pack (1000 tokens)</td><td style="text-align:center;font-weight:bold">${Math.ceil(totalTokens / 1000).toLocaleString()}</td></tr>`;
     if (hasServerMetrics) {
       html += `<tr><td>IB-TOKENS-UDDI-SERV-500</td><td>Server Token Pack (500 tokens)</td><td style="text-align:center;font-weight:bold">${Math.ceil(totalServerTokens / 500).toLocaleString()}</td></tr>`;
+    }
+    if (reportingTokens > 0) {
+      html += `<tr><td>IB-TOKENS-REPORTING-40</td><td>Reporting Token Pack (40 tokens)</td><td style="text-align:center;font-weight:bold">${Math.ceil(reportingTokens / 40).toLocaleString()}</td></tr>`;
     }
     html += '</table>';
 
@@ -1582,7 +1650,90 @@ export function Wizard() {
                     (m) => !m.windowsOnly || platform === 'windows'
                   );
                   const currentAuth = availableAuthMethods.find((m) => m.id === currentAuthId) || availableAuthMethods[0];
-                  const hasFields = currentAuth.fields.length > 0;
+                  const hasFields = currentAuth ? currentAuth.fields.length > 0 : false;
+
+                  // ── Manual Estimator: show questionnaire instead of credentials ──
+                  if (provId === 'estimator') {
+                    // Auto-mark as valid so Next is enabled
+                    if (credentialStatus['estimator'] !== 'valid') {
+                      setCredentialStatus(prev => ({ ...prev, estimator: 'valid' }));
+                    }
+                    return (
+                      <div key={provId} className="bg-white rounded-xl border border-[var(--border)] overflow-hidden">
+                        <div className="flex items-center gap-3 px-4 py-3 border-b border-[var(--border)] bg-gray-50/50">
+                          <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ backgroundColor: '#00A5E515' }}>
+                            <ProviderIconEl id={provId} className="w-4 h-4" color="#00A5E5" />
+                          </div>
+                          <span className="text-[14px]" style={{ fontWeight: 600 }}>Manual Sizing Estimator</span>
+                          <span className="ml-auto flex items-center gap-1 text-[12px] text-green-600">
+                            <CheckCircle2 className="w-3.5 h-3.5" /> Ready
+                          </span>
+                        </div>
+                        <div className="px-4 py-4 space-y-4">
+                          <p className="text-[13px] text-[var(--muted-foreground)]">
+                            Enter your environment size. Tokens are calculated instantly — no connection required.
+                          </p>
+                          <div className="grid grid-cols-2 gap-4">
+                            <div>
+                              <label className="block text-[12px] text-[var(--muted-foreground)] mb-1" style={{ fontWeight: 500 }}>Active IP Addresses</label>
+                              <input
+                                type="number" min={1}
+                                className="w-full border border-[var(--border)] rounded-lg px-3 py-2 text-[13px] focus:outline-none focus:ring-1 focus:ring-[var(--infoblox-orange)]"
+                                value={estimatorAnswers.activeIPs}
+                                onChange={e => setEstimatorAnswers(prev => ({ ...prev, activeIPs: Math.max(1, parseInt(e.target.value) || 1) }))}
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[12px] text-[var(--muted-foreground)] mb-1" style={{ fontWeight: 500 }}>DHCP % (0–100)</label>
+                              <input
+                                type="number" min={0} max={100}
+                                className="w-full border border-[var(--border)] rounded-lg px-3 py-2 text-[13px] focus:outline-none focus:ring-1 focus:ring-[var(--infoblox-orange)]"
+                                value={Math.round(estimatorAnswers.dhcpPct * 100)}
+                                onChange={e => setEstimatorAnswers(prev => ({ ...prev, dhcpPct: Math.min(1, Math.max(0, (parseInt(e.target.value) || 0) / 100)) }))}
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[12px] text-[var(--muted-foreground)] mb-1" style={{ fontWeight: 500 }}>Number of Sites</label>
+                              <input
+                                type="number" min={1}
+                                className="w-full border border-[var(--border)] rounded-lg px-3 py-2 text-[13px] focus:outline-none focus:ring-1 focus:ring-[var(--infoblox-orange)]"
+                                value={estimatorAnswers.sites}
+                                onChange={e => setEstimatorAnswers(prev => ({ ...prev, sites: Math.max(1, parseInt(e.target.value) || 1) }))}
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[12px] text-[var(--muted-foreground)] mb-1" style={{ fontWeight: 500 }}>Networks per Site</label>
+                              <input
+                                type="number" min={1}
+                                className="w-full border border-[var(--border)] rounded-lg px-3 py-2 text-[13px] focus:outline-none focus:ring-1 focus:ring-[var(--infoblox-orange)]"
+                                value={estimatorAnswers.networksPerSite}
+                                onChange={e => setEstimatorAnswers(prev => ({ ...prev, networksPerSite: Math.max(1, parseInt(e.target.value) || 1) }))}
+                              />
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-2 gap-x-6 gap-y-2 pt-1">
+                            {[
+                              { key: 'enableIPAM' as const, label: 'IPAM Module' },
+                              { key: 'enableDNS' as const, label: 'DNS Management' },
+                              { key: 'enableDHCP' as const, label: 'DHCP Management' },
+                              { key: 'enableDNSProtocol' as const, label: 'DNS Protocol Logging' },
+                              { key: 'enableDHCPLog' as const, label: 'DHCP Lease Logging' },
+                            ].map(({ key, label }) => (
+                              <label key={key} className="flex items-center gap-2 text-[13px] cursor-pointer select-none">
+                                <input
+                                  type="checkbox"
+                                  className="w-4 h-4 accent-[var(--infoblox-orange)]"
+                                  checked={estimatorAnswers[key] as boolean}
+                                  onChange={e => setEstimatorAnswers(prev => ({ ...prev, [key]: e.target.checked }))}
+                                />
+                                {label}
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  }
 
                   return (
                     <div
@@ -3131,6 +3282,87 @@ export function Wizard() {
                   </div>
                 )}
               </div>{/* end hero card */}
+
+              {/* ── Growth buffer + BOM panel (S03) ────────────────────── */}
+              <div id="section-bom" className="bg-white rounded-xl border border-[var(--border)] p-5 mb-6">
+                <div className="flex items-center justify-between mb-4">
+                  <div>
+                    <h3 className="text-[15px]" style={{ fontWeight: 600 }}>Bill of Materials</h3>
+                    <p className="text-[12px] text-[var(--muted-foreground)] mt-0.5">Copy-paste ready SKU list for quoting</p>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <label className="flex items-center gap-2 text-[13px]">
+                      <span className="text-[var(--muted-foreground)]" style={{ fontWeight: 500 }}>Growth Buffer</span>
+                      <div className="flex items-center border border-[var(--border)] rounded-lg overflow-hidden">
+                        <input
+                          type="number" min={0} max={100} step={5}
+                          className="w-16 px-2 py-1.5 text-[13px] text-right focus:outline-none focus:ring-1 focus:ring-[var(--infoblox-orange)]"
+                          value={Math.round(growthBufferPct * 100)}
+                          onChange={e => setGrowthBufferPct(Math.min(1, Math.max(0, (parseInt(e.target.value) || 0) / 100)))}
+                        />
+                        <span className="px-2 py-1.5 bg-gray-50 text-[13px] text-[var(--muted-foreground)] border-l border-[var(--border)]">%</span>
+                      </div>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const mgmtPacks = Math.ceil(totalTokens / 1000);
+                        const servPacks = hasServerMetrics ? Math.ceil(totalServerTokens / 500) : 0;
+                        const rptPacks = reportingTokens > 0 ? Math.ceil(reportingTokens / 40) : 0;
+                        const lines = [
+                          `SKU Code\tDescription\tPack Count`,
+                          `IB-TOKENS-UDDI-MGMT-1000\tManagement Token Pack (1000 tokens)\t${mgmtPacks}`,
+                          ...(servPacks > 0 ? [`IB-TOKENS-UDDI-SERV-500\tServer Token Pack (500 tokens)\t${servPacks}`] : []),
+                          ...(rptPacks > 0 ? [`IB-TOKENS-REPORTING-40\tReporting Token Pack (40 tokens)\t${rptPacks}`] : []),
+                        ];
+                        navigator.clipboard.writeText(lines.join('\n')).then(() => {
+                          setBomCopied(true);
+                          setTimeout(() => setBomCopied(false), 2000);
+                        });
+                      }}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] border transition-colors ${bomCopied ? 'bg-green-50 border-green-300 text-green-700' : 'bg-white border-[var(--border)] hover:bg-gray-50'}`}
+                      style={{ fontWeight: 500 }}
+                    >
+                      {bomCopied ? <><Check className="w-3.5 h-3.5" /> Copied!</> : <><Download className="w-3.5 h-3.5" /> Copy BOM</>}
+                    </button>
+                  </div>
+                </div>
+                <table className="w-full text-[13px]">
+                  <thead>
+                    <tr className="border-b border-[var(--border)]">
+                      <th className="text-left py-2 text-[var(--muted-foreground)] text-[12px]" style={{ fontWeight: 500 }}>SKU Code</th>
+                      <th className="text-left py-2 text-[var(--muted-foreground)] text-[12px]" style={{ fontWeight: 500 }}>Description</th>
+                      <th className="text-right py-2 text-[var(--muted-foreground)] text-[12px]" style={{ fontWeight: 500 }}>Pack Count</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr className="border-b border-[var(--border)]/50">
+                      <td className="py-2.5 font-mono text-[12px] text-orange-800">IB-TOKENS-UDDI-MGMT-1000</td>
+                      <td className="py-2.5 text-[var(--muted-foreground)]">Management Token Pack (1000 tokens)</td>
+                      <td className="py-2.5 text-right tabular-nums" style={{ fontWeight: 600 }}>{Math.ceil(totalTokens / 1000).toLocaleString()}</td>
+                    </tr>
+                    {hasServerMetrics && (
+                      <tr className="border-b border-[var(--border)]/50">
+                        <td className="py-2.5 font-mono text-[12px] text-blue-800">IB-TOKENS-UDDI-SERV-500</td>
+                        <td className="py-2.5 text-[var(--muted-foreground)]">Server Token Pack (500 tokens)</td>
+                        <td className="py-2.5 text-right tabular-nums" style={{ fontWeight: 600 }}>{Math.ceil(totalServerTokens / 500).toLocaleString()}</td>
+                      </tr>
+                    )}
+                    {reportingTokens > 0 && (
+                      <tr>
+                        <td className="py-2.5 font-mono text-[12px] text-purple-800">IB-TOKENS-REPORTING-40</td>
+                        <td className="py-2.5 text-[var(--muted-foreground)]">Reporting Token Pack (40 tokens)</td>
+                        <td className="py-2.5 text-right tabular-nums" style={{ fontWeight: 600 }}>{Math.ceil(reportingTokens / 40).toLocaleString()}</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+                {growthBufferPct > 0 && (
+                  <p className="text-[11px] text-[var(--muted-foreground)] mt-3">
+                    Includes {Math.round(growthBufferPct * 100)}% growth buffer applied to management{reportingTokens > 0 ? ' and reporting' : ''} tokens.
+                  </p>
+                )}
+              </div>
 
               {/* Section jump navigation — only for NIOS scans */}
               {(selectedProviders.includes('nios') || (selectedProviders.includes('microsoft') && effectiveADMetrics.length > 0)) && (

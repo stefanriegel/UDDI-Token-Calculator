@@ -7,7 +7,7 @@ import microsoftLogo from '../../assets/logos/microsoft.svg';
 import bluecatLogo from '../../assets/logos/bluecat.svg';
 import efficientipLogo from '../../assets/logos/efficientip.svg';
 
-export type ProviderType = 'aws' | 'azure' | 'gcp' | 'microsoft' | 'nios' | 'bluecat' | 'efficientip';
+export type ProviderType = 'aws' | 'azure' | 'gcp' | 'microsoft' | 'nios' | 'bluecat' | 'efficientip' | 'estimator';
 
 /**
  * Map frontend provider IDs to backend API provider IDs.
@@ -21,6 +21,7 @@ export const BACKEND_PROVIDER_ID: Record<ProviderType, string> = {
   nios: 'nios',
   bluecat: 'bluecat',
   efficientip: 'efficientip',
+  estimator: 'estimator',
 };
 
 /**
@@ -43,6 +44,7 @@ export const PROVIDER_LOGOS: Record<ProviderType, string> = {
   nios: niosGridLogo,
   bluecat: bluecatLogo,
   efficientip: efficientipLogo,
+  estimator: infobloxLogo,
 };
 
 export interface CredentialField {
@@ -347,6 +349,15 @@ export const PROVIDERS: ProviderOption[] = [
       },
     ],
   },
+  {
+    id: 'estimator',
+    name: 'Manual Estimator',
+    fullName: 'Manual Sizing Estimator',
+    color: '#00A5E5',
+    description: 'Calculate tokens from environment size without a live scan',
+    subscriptionLabel: 'Environments',
+    authMethods: [],
+  },
 ];
 
 // Mock subscription/account lists per provider
@@ -456,6 +467,7 @@ export const MOCK_SUBSCRIPTIONS: Record<ProviderType, { id: string; name: string
   efficientip: [
     { id: 'efficientip-1', name: 'EfficientIP Instance', selected: true },
   ],
+  estimator: [],
 };
 
 // Management Token rates per Infoblox Universal DDI Licensing
@@ -708,6 +720,8 @@ export function generateMockFindings(selectedProviders: ProviderType[]): Finding
       row('efficientip', 'EfficientIP Instance', 'DDI Object', 'DHCP Scopes', 48),
       row('efficientip', 'EfficientIP Instance', 'DDI Object', 'DHCP Ranges', 38),
     ],
+    // Estimator findings are generated dynamically in wizard.tsx via calcEstimator — empty here
+    estimator: [],
   };
 
   selectedProviders.forEach(p => {
