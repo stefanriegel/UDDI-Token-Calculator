@@ -4971,6 +4971,13 @@ export function Wizard() {
                     )}
                   </div>
                 </div>
+                {/* Editable counts tip — shown until first override is made */}
+                {Object.keys(countOverrides).length === 0 && findings.length > 0 && (
+                  <div className="px-4 py-2 bg-blue-50/60 border-b border-blue-100 flex items-center gap-2 text-[12px] text-blue-700">
+                    <Pencil className="w-3.5 h-3.5 shrink-0 opacity-70" />
+                    <span>Click any value in the <span style={{ fontWeight: 600 }}>Count</span> column to adjust it. Token totals recalculate instantly.</span>
+                  </div>
+                )}
 
                 {/* Quick filters */}
                 <div className="px-4 py-3 border-b border-[var(--border)] flex flex-col gap-2.5">
@@ -5068,7 +5075,7 @@ export function Wizard() {
                           { col: 'source' as SortColumn, label: 'Source', align: 'left' },
                           { col: 'category' as SortColumn, label: 'Token Category', align: 'left' },
                           { col: 'item' as SortColumn, label: 'Item', align: 'left' },
-                          { col: 'count' as SortColumn, label: 'Count', align: 'right' },
+                          { col: 'count' as SortColumn, label: 'Count', align: 'right', editHint: true },
                           { col: 'managementTokens' as SortColumn, label: 'Mgmt Tokens', align: 'right' },
                         ]).map((header) => {
                           const isSorted = findingsSort?.col === header.col;
@@ -5088,6 +5095,11 @@ export function Wizard() {
                                 }`}
                               >
                                 {header.label}
+                                {'editHint' in header && header.editHint && (
+                                  <span className="inline-flex items-center gap-0.5 text-[10px] font-normal normal-case ml-0.5 text-[var(--infoblox-blue)] opacity-75">
+                                    <Pencil className="w-2.5 h-2.5" />editable
+                                  </span>
+                                )}
                                 <SortIcon className={`w-3 h-3 shrink-0 transition-opacity ${
                                   isSorted ? 'opacity-100' : 'opacity-0 group-hover:opacity-50'
                                 }`} />
@@ -5184,11 +5196,11 @@ export function Wizard() {
                                         setEditingFindingKey(key);
                                         setEditingCountValue(String(f.count));
                                       }}
-                                      className="hover:text-[var(--infoblox-blue)] transition-colors inline-flex items-center gap-1"
-                                      title="Click to manually adjust count"
+                                      className="hover:text-[var(--infoblox-blue)] transition-colors inline-flex items-center gap-1 border-b border-dashed border-[var(--muted-foreground)]/30 hover:border-[var(--infoblox-blue)] pb-px"
+                                      title="Click to adjust count"
                                     >
                                       {f.count.toLocaleString()}
-                                      <Pencil className="w-3 h-3 opacity-0 group-hover:opacity-40 transition-opacity" />
+                                      <Pencil className="w-3 h-3 opacity-20 group-hover:opacity-70 transition-opacity" />
                                     </button>
                                     {hasOverride && (
                                       <span className="inline-flex items-center gap-0.5">
