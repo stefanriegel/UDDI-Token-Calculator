@@ -1,5 +1,5 @@
 /**
- * estimator-calc.ts — Pure computation module for the Manual Sizing Estimator.
+ * estimator-calc.ts - Pure computation module for the Manual Sizing Estimator.
  *
  * No React imports. No side effects. All functions are deterministic and stateless.
  * Implements the full ESTIMATOR derivation chain from the official Infoblox UDDI
@@ -56,7 +56,7 @@ export const EstimatorDefaults: EstimatorInputs = {
   networksPerSite: 4,
 };
 
-// Spreadsheet constants — do not alter
+// Spreadsheet constants - do not alter
 const QPD_PER_IP = 3500;           // queries per day per IP (DNS protocol logging)
 const DNS_RECS_PER_IP = 2;         // static DNS records per static client
 const DNS_RECS_PER_LEASE = 4;      // DNS records per dynamic/DHCP client
@@ -119,7 +119,7 @@ export function calcEstimator(inputs: EstimatorInputs): EstimatorOutputs {
   let monthlyLogVolume = 0;
 
   if (enableDNSProtocol || enableDHCPLog) {
-    // DNS protocol logs — static clients generate queries every calendar day;
+    // DNS protocol logs - static clients generate queries every calendar day;
     // dynamic clients only on workdays (lease churn pattern)
     const dnsLogsStatic = enableDNSProtocol
       ? DAYS_PER_MONTH * QPD_PER_IP * staticClients
@@ -128,7 +128,7 @@ export function calcEstimator(inputs: EstimatorInputs): EstimatorOutputs {
       ? WORKDAYS_PER_MONTH * QPD_PER_IP * dynamicClients
       : 0;
 
-    // DHCP logs — lease events per workday; lease event rate = renewals per hour × hours
+    // DHCP logs - lease events per workday; lease event rate = renewals per hour × hours
     const dhcpClients = enableIPAM ? activeIPs * dhcpPct : 0;
     const dhcpLogs = enableDHCPLog
       ? (HOURS_PER_WORKDAY / (DHCP_LEASE_HOURS / 2) + 1) * WORKDAYS_PER_MONTH * dhcpClients

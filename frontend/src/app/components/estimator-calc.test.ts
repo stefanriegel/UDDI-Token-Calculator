@@ -4,7 +4,7 @@ import { calcEstimator } from './estimator-calc';
 describe('calcEstimator', () => {
 
   /**
-   * Reference Case A — Small office, DNS+DHCP+IPAM, all logging enabled
+   * Reference Case A - Small office, DNS+DHCP+IPAM, all logging enabled
    *
    * Inputs: activeIPs=1250, dhcpPct=0.80, enableIPAM=true, enableDNS=true,
    *         enableDNSProtocol=true, enableDHCP=true, enableDHCPLog=true,
@@ -21,7 +21,7 @@ describe('calcEstimator', () => {
    *   discoveredAssets = 1250 (defaults to activeIPs)
    *   monthlyLogVolume > 0 (DNS+DHCP logging both on)
    */
-  it('Case A — small office DNS+DHCP+logging', () => {
+  it('Case A - small office DNS+DHCP+logging', () => {
     const out = calcEstimator({
       activeIPs: 1250,
       dhcpPct: 0.80,
@@ -41,7 +41,7 @@ describe('calcEstimator', () => {
   });
 
   /**
-   * Reference Case B — Medium enterprise, DNS only, no reporting
+   * Reference Case B - Medium enterprise, DNS only, no reporting
    *
    * Inputs: activeIPs=5000, dhcpPct=0.80, enableIPAM=true, enableDNS=true,
    *         enableDNSProtocol=false, enableDHCP=false, enableDHCPLog=false,
@@ -58,7 +58,7 @@ describe('calcEstimator', () => {
    *   discoveredAssets = 5000
    *   monthlyLogVolume = 0 (no logging)
    */
-  it('Case B — medium enterprise DNS only, no logging', () => {
+  it('Case B - medium enterprise DNS only, no logging', () => {
     const out = calcEstimator({
       activeIPs: 5000,
       dhcpPct: 0.80,
@@ -78,7 +78,7 @@ describe('calcEstimator', () => {
   });
 
   /**
-   * Reference Case C — No IPAM, DNS only
+   * Reference Case C - No IPAM, DNS only
    *
    * Inputs: activeIPs=2000, dhcpPct=0.80, enableIPAM=false, enableDNS=true,
    *         enableDNSProtocol=false, enableDHCP=false, enableDHCPLog=false,
@@ -95,7 +95,7 @@ describe('calcEstimator', () => {
    *   discoveredAssets = 0 (IPAM disabled)
    *   monthlyLogVolume = 0
    */
-  it('Case C — no IPAM, DNS only', () => {
+  it('Case C - no IPAM, DNS only', () => {
     const out = calcEstimator({
       activeIPs: 2000,
       dhcpPct: 0.80,
