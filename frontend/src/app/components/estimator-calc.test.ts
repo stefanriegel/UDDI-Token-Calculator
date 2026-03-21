@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { calcEstimator } from './estimator-calc';
+import { calcEstimator, EstimatorDefaults } from './estimator-calc';
 
 describe('calcEstimator', () => {
 
@@ -23,6 +23,7 @@ describe('calcEstimator', () => {
    */
   it('Case A - small office DNS+DHCP+logging', () => {
     const out = calcEstimator({
+      ...EstimatorDefaults,
       activeIPs: 1250,
       dhcpPct: 0.80,
       enableIPAM: true,
@@ -60,6 +61,7 @@ describe('calcEstimator', () => {
    */
   it('Case B - medium enterprise DNS only, no logging', () => {
     const out = calcEstimator({
+      ...EstimatorDefaults,
       activeIPs: 5000,
       dhcpPct: 0.80,
       enableIPAM: true,
@@ -97,6 +99,7 @@ describe('calcEstimator', () => {
    */
   it('Case C - no IPAM, DNS only', () => {
     const out = calcEstimator({
+      ...EstimatorDefaults,
       activeIPs: 2000,
       dhcpPct: 0.80,
       enableIPAM: false,
@@ -112,6 +115,70 @@ describe('calcEstimator', () => {
     expect(out.activeIPs).toBe(0);
     expect(out.discoveredAssets).toBe(0);
     expect(out.monthlyLogVolume).toBe(0);
+  });
+
+  /**
+   * Reference Case D - Server tokens: 4 NIOS-X appliances, M tier
+   *
+   * Inputs: serverApplianceCount=4, serverFormFactor='nios-x',
+   *         serverQps=35000, serverLps=250, serverObjects=80000
+   *
+   * Derivation:
+   *   calcServerTokenTier(35000, 250, 80000, 'nios-x') -> M tier (880 tokens)
+   *   serverTokens = 880 * 4 = 3520
+   */
+  it('Case D - 4 NIOS-X appliances, M tier server tokens', () => {
+    const out = calcEstimator({
+      activeIPs: 1000, dhcpPct: 0.80,
+      enableIPAM: true, enableDNS: true, enableDNSProtocol: false,
+      enableDHCP: true, enableDHCPLog: false,
+      sites: 1, networksPerSite: 4,
+      serverApplianceCount: 4, serverFormFactor: 'nios-x',
+      serverQps: 35000, serverLps: 250, serverObjects: 80000,
+    });
+
+    expect(out.serverTokens).toBe(3520);
+    // Management tokens should still be calculated normally
+    expect(out.ddiObjects).toBeGreaterThan(0);
+  });
+
+  /**
+   * Reference Case E - Server tokens: 2 XaaS instances, S tier
+   *
+   * Inputs: serverApplianceCount=2, serverFormFactor='nios-xaas',
+   *         serverQps=15000, serverLps=100, serverObjects=20000
+   *
+   * Derivation:
+   *   calcServerTokenTier(15000, 100, 20000, 'nios-xaas') -> S tier (2400 tokens)
+   *   serverTokens = 2400 * 2 = 4800
+   */
+  it('Case E - 2 XaaS instances, S tier server tokens', () => {
+    const out = calcEstimator({
+      activeIPs: 1000, dhcpPct: 0.80,
+      enableIPAM: true, enableDNS: true, enableDNSProtocol: false,
+      enableDHCP: true, enableDHCPLog: false,
+      sites: 1, networksPerSite: 4,
+      serverApplianceCount: 2, serverFormFactor: 'nios-xaas',
+      serverQps: 15000, serverLps: 100, serverObjects: 20000,
+    });
+
+    expect(out.serverTokens).toBe(4800);
+  });
+
+  /**
+   * Reference Case F - No server sizing (default: 0 appliances)
+   */
+  it('Case F - 0 appliances, no server tokens', () => {
+    const out = calcEstimator({
+      activeIPs: 1000, dhcpPct: 0.80,
+      enableIPAM: true, enableDNS: true, enableDNSProtocol: false,
+      enableDHCP: true, enableDHCPLog: false,
+      sites: 1, networksPerSite: 4,
+      serverApplianceCount: 0, serverFormFactor: 'nios-x',
+      serverQps: 0, serverLps: 0, serverObjects: 0,
+    });
+
+    expect(out.serverTokens).toBe(0);
   });
 
 });

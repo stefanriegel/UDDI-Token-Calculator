@@ -392,6 +392,7 @@ export function Wizard() {
   // ── Manual Estimator state (S02) ───────────────────────────────────────────
   const [estimatorAnswers, setEstimatorAnswers] = useState<EstimatorInputs>({ ...EstimatorDefaults });
   const [estimatorMonthlyLogVolume, setEstimatorMonthlyLogVolume] = useState<number>(0);
+  const [estimatorServerTokens, setEstimatorServerTokens] = useState<number>(0);
 
   // ── Growth buffer & BOM state (S03) ───────────────────────────────────────
   const [growthBufferPct, setGrowthBufferPct] = useState<number>(0.20);
@@ -547,6 +548,7 @@ export function Wizard() {
     setFindingsSort(null);
     setEstimatorAnswers({ ...EstimatorDefaults });
     setEstimatorMonthlyLogVolume(0);
+    setEstimatorServerTokens(0);
     setGrowthBufferPct(0.20);
     setBomCopied(false);
   };
@@ -821,6 +823,7 @@ export function Wizard() {
       });
       setFindings(estimatorFindings);
       setEstimatorMonthlyLogVolume(out.monthlyLogVolume);
+      setEstimatorServerTokens(out.serverTokens);
       setScanProgress(100);
       setProviderScanProgress(prev => ({ ...prev, estimator: 100 }));
       return;
@@ -1055,11 +1058,12 @@ export function Wizard() {
       }
     }
 
-    return niosTokens + adTokens;
-  }, [effectiveNiosMetrics, effectiveADMetrics, adMigrationMap, selectedProviders]);
+    return niosTokens + adTokens + estimatorServerTokens;
+  }, [effectiveNiosMetrics, effectiveADMetrics, adMigrationMap, selectedProviders, estimatorServerTokens]);
 
   const hasServerMetrics = (selectedProviders.includes('nios') && effectiveNiosMetrics.length > 0)
-    || (selectedProviders.includes('microsoft') && effectiveADMetrics.length > 0);
+    || (selectedProviders.includes('microsoft') && effectiveADMetrics.length > 0)
+    || estimatorServerTokens > 0;
 
   // Hybrid-scenario totals — only meaningful when a migration map has selections.
   // Uses the same logic as the Migration Planner scenario cards.
@@ -1742,6 +1746,103 @@ export function Wizard() {
                                 <FieldTooltip text={tooltip} side="right" />
                               </label>
                             ))}
+                          </div>
+                          {/* Server Sizing (optional) */}
+                          <div className="border-t border-[var(--border)] pt-3 mt-1">
+                            <p className="text-[12px] text-[var(--muted-foreground)] mb-2" style={{ fontWeight: 600 }}>
+                              Server Sizing (optional)
+                            </p>
+                            <div className="grid grid-cols-2 gap-4">
+                              <div>
+                                <label className="flex items-center gap-1 text-[12px] text-[var(--muted-foreground)] mb-1" style={{ fontWeight: 500 }}>
+                                  Appliance Count
+                                  <FieldTooltip text="Number of NIOS-X appliances or XaaS instances to size. Set to 0 to skip server token estimation. Each appliance is sized individually based on the QPS, LPS, and object count you enter below." side="right" />
+                                </label>
+                                <input
+                                  type="number" min={0}
+                                  className="w-full border border-[var(--border)] rounded-lg px-3 py-2 text-[13px] focus:outline-none focus:ring-1 focus:ring-[var(--infoblox-orange)]"
+                                  value={estimatorAnswers.serverApplianceCount}
+                                  onChange={e => setEstimatorAnswers(prev => ({ ...prev, serverApplianceCount: Math.max(0, parseInt(e.target.value) || 0) }))}
+                                />
+                              </div>
+                              <div>
+                                <label className="flex items-center gap-1 text-[12px] text-[var(--muted-foreground)] mb-1" style={{ fontWeight: 500 }}>
+                                  Form Factor
+                                  <FieldTooltip text="NIOS-X: on-premises appliances with fixed resource allocation. XaaS: cloud-hosted instances with connection-based pricing and higher per-tier token costs." side="right" />
+                                </label>
+                                <select
+                                  className="w-full border border-[var(--border)] rounded-lg px-3 py-2 text-[13px] focus:outline-none focus:ring-1 focus:ring-[var(--infoblox-orange)] bg-white"
+                                  value={estimatorAnswers.serverFormFactor}
+                                  onChange={e => setEstimatorAnswers(prev => ({ ...prev, serverFormFactor: e.target.value as ServerFormFactor }))}
+                                  disabled={estimatorAnswers.serverApplianceCount === 0}
+                                >
+                                  <option value="nios-x">NIOS-X (on-prem)</option>
+                                  <option value="nios-xaas">XaaS (cloud)</option>
+                                </select>
+                              </div>
+                            </div>
+                            {estimatorAnswers.serverApplianceCount > 0 && (
+                              <>
+                                <div className="grid grid-cols-3 gap-4 mt-3">
+                                  <div>
+                                    <label className="flex items-center gap-1 text-[12px] text-[var(--muted-foreground)] mb-1" style={{ fontWeight: 500 }}>
+                                      QPS per Appliance
+                                      <FieldTooltip text="Average DNS queries per second per appliance. Typical ranges: small branch 2-5K, medium site 10-20K, large campus 40-70K, major hub 70-115K." side="right" />
+                                    </label>
+                                    <input
+                                      type="number" min={0}
+                                      className="w-full border border-[var(--border)] rounded-lg px-3 py-2 text-[13px] focus:outline-none focus:ring-1 focus:ring-[var(--infoblox-orange)]"
+                                      value={estimatorAnswers.serverQps}
+                                      onChange={e => setEstimatorAnswers(prev => ({ ...prev, serverQps: Math.max(0, parseInt(e.target.value) || 0) }))}
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="flex items-center gap-1 text-[12px] text-[var(--muted-foreground)] mb-1" style={{ fontWeight: 500 }}>
+                                      LPS per Appliance
+                                      <FieldTooltip text="Average DHCP leases per second per appliance. Typical ranges: small 50-100, medium 150-300, large 400-675." side="right" />
+                                    </label>
+                                    <input
+                                      type="number" min={0}
+                                      className="w-full border border-[var(--border)] rounded-lg px-3 py-2 text-[13px] focus:outline-none focus:ring-1 focus:ring-[var(--infoblox-orange)]"
+                                      value={estimatorAnswers.serverLps}
+                                      onChange={e => setEstimatorAnswers(prev => ({ ...prev, serverLps: Math.max(0, parseInt(e.target.value) || 0) }))}
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="flex items-center gap-1 text-[12px] text-[var(--muted-foreground)] mb-1" style={{ fontWeight: 500 }}>
+                                      Objects per Appliance
+                                      <FieldTooltip text="Total DNS + DHCP objects managed per appliance: zones, resource records, DHCP scopes, ranges. Typical: small 3K, medium 30-110K, large 440K+." side="right" />
+                                    </label>
+                                    <input
+                                      type="number" min={0}
+                                      className="w-full border border-[var(--border)] rounded-lg px-3 py-2 text-[13px] focus:outline-none focus:ring-1 focus:ring-[var(--infoblox-orange)]"
+                                      value={estimatorAnswers.serverObjects}
+                                      onChange={e => setEstimatorAnswers(prev => ({ ...prev, serverObjects: Math.max(0, parseInt(e.target.value) || 0) }))}
+                                    />
+                                  </div>
+                                </div>
+                                {/* Live tier readout */}
+                                {(() => {
+                                  const tier = calcServerTokenTier(
+                                    estimatorAnswers.serverQps,
+                                    estimatorAnswers.serverLps,
+                                    estimatorAnswers.serverObjects,
+                                    estimatorAnswers.serverFormFactor,
+                                  );
+                                  const total = tier.serverTokens * estimatorAnswers.serverApplianceCount;
+                                  return (
+                                    <div className="mt-2 px-3 py-2 bg-blue-50/60 rounded-lg text-[12px] text-blue-800 flex items-center justify-between">
+                                      <span>
+                                        Auto-determined tier: <span style={{ fontWeight: 600 }}>{tier.name}</span> ({tier.serverTokens.toLocaleString()} tokens/appliance)
+                                      </span>
+                                      <span style={{ fontWeight: 600 }}>
+                                        Total: {total.toLocaleString()} server tokens ({Math.ceil(total / 500)} SERV-500 packs)
+                                      </span>
+                                    </div>
+                                  );
+                                })()}
+                              </>
+                            )}
                           </div>
                         </div>
                       </div>

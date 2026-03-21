@@ -6,12 +6,14 @@
  * Estimator spreadsheet. Used by wizard.tsx and consumed by S03 (Reporting Tokens).
  */
 
+import { calcServerTokenTier, type ServerFormFactor } from './nios-calc';
+
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
 export interface EstimatorInputs {
   /** Total active IP addresses in the environment */
   activeIPs: number;
-  /** Fraction of IPs served by DHCP (0.0–1.0, e.g. 0.80 = 80%) */
+  /** Fraction of IPs served by DHCP (0.0-1.0, e.g. 0.80 = 80%) */
   dhcpPct: number;
   /** Enable IPAM module (required for activeIPsOut + discoveredAssets) */
   enableIPAM: boolean;
@@ -29,6 +31,18 @@ export interface EstimatorInputs {
   networksPerSite: number;
   /** Optional override for discovered assets (defaults to activeIPs when IPAM enabled) */
   assets?: number;
+
+  // ── Server sizing (optional) ──────────────────────────────────────────────
+  /** Number of NIOS-X appliances or XaaS instances (0 = skip server sizing) */
+  serverApplianceCount: number;
+  /** Form factor: on-prem NIOS-X or cloud-hosted XaaS */
+  serverFormFactor: ServerFormFactor;
+  /** Average DNS queries per second per appliance */
+  serverQps: number;
+  /** Average DHCP leases per second per appliance */
+  serverLps: number;
+  /** DNS + DHCP objects managed per appliance */
+  serverObjects: number;
 }
 
 export interface EstimatorOutputs {
@@ -40,6 +54,8 @@ export interface EstimatorOutputs {
   discoveredAssets: number;
   /** Monthly log volume in events (0 when no protocol logging enabled) */
   monthlyLogVolume: number;
+  /** Total server tokens across all appliances (0 when no appliances specified) */
+  serverTokens: number;
 }
 
 // ─── Constants (spreadsheet defaults) ──────────────────────────────────────────
@@ -54,6 +70,11 @@ export const EstimatorDefaults: EstimatorInputs = {
   enableDHCPLog: false,
   sites: 1,
   networksPerSite: 4,
+  serverApplianceCount: 0,
+  serverFormFactor: 'nios-x',
+  serverQps: 0,
+  serverLps: 0,
+  serverObjects: 0,
 };
 
 // Spreadsheet constants - do not alter
@@ -86,6 +107,11 @@ export function calcEstimator(inputs: EstimatorInputs): EstimatorOutputs {
     sites,
     networksPerSite,
     assets,
+    serverApplianceCount,
+    serverFormFactor,
+    serverQps,
+    serverLps,
+    serverObjects,
   } = inputs;
 
   // ── Client split ──────────────────────────────────────────────────────────
@@ -137,10 +163,18 @@ export function calcEstimator(inputs: EstimatorInputs): EstimatorOutputs {
     monthlyLogVolume = dnsLogsStatic + dnsLogsDynamic + dhcpLogs;
   }
 
+  // ── Server tokens (optional) ──────────────────────────────────────────────
+  let serverTokens = 0;
+  if (serverApplianceCount > 0) {
+    const tier = calcServerTokenTier(serverQps, serverLps, serverObjects, serverFormFactor);
+    serverTokens = tier.serverTokens * serverApplianceCount;
+  }
+
   return {
     ddiObjects,
     activeIPs: activeIPsOut,
     discoveredAssets,
     monthlyLogVolume,
+    serverTokens,
   };
 }
