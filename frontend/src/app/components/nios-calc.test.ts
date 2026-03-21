@@ -63,7 +63,7 @@ describe('consolidateXaasInstances', () => {
 
   it('returns 1 instance with no extra connections for a single tiny member', () => {
     const members: NiosServerMetrics[] = [
-      { memberId: 'm1', memberName: 'member-1', role: 'DNS', qps: 100, lps: 1, objectCount: 10 },
+      { memberId: 'm1', memberName: 'member-1', role: 'DNS', qps: 100, lps: 1, objectCount: 10, activeIPCount: 0 },
     ];
     const result = consolidateXaasInstances(members);
     expect(result).toHaveLength(1);
@@ -85,6 +85,7 @@ describe('consolidateXaasInstances', () => {
       qps: 100,
       lps: 1,
       objectCount: 10,
+      activeIPCount: 0,
     }));
     const result = consolidateXaasInstances(members);
     expect(result).toHaveLength(1);
@@ -106,6 +107,7 @@ describe('consolidateXaasInstances', () => {
       qps: 100,
       lps: 1,
       objectCount: 10,
+      activeIPCount: 0,
     }));
     const result = consolidateXaasInstances(members);
     expect(result).toHaveLength(1);
@@ -125,6 +127,7 @@ describe('consolidateXaasInstances', () => {
       qps: 100,
       lps: 1,
       objectCount: 10,
+      activeIPCount: 0,
     }));
     const result = consolidateXaasInstances(members);
     expect(result).toHaveLength(1);
@@ -139,8 +142,8 @@ describe('consolidateXaasInstances', () => {
   it('packs 2 moderate members into 1 XL instance (SUM aggregation)', () => {
     // With SUM aggregation: 60000+50000=110000 QPS fits XL (115000 max)
     const members: NiosServerMetrics[] = [
-      { memberId: 'm1', memberName: 'member-1', role: 'DNS',  qps: 60000, lps: 300, objectCount: 400000 },
-      { memberId: 'm2', memberName: 'member-2', role: 'DNS',  qps: 50000, lps: 300, objectCount: 400000 },
+      { memberId: 'm1', memberName: 'member-1', role: 'DNS',  qps: 60000, lps: 300, objectCount: 400000, activeIPCount: 0 },
+      { memberId: 'm2', memberName: 'member-2', role: 'DNS',  qps: 50000, lps: 300, objectCount: 400000, activeIPCount: 0 },
     ];
     const result = consolidateXaasInstances(members);
     expect(result).toHaveLength(1);
@@ -154,8 +157,8 @@ describe('consolidateXaasInstances', () => {
   it('creates 2 instances when SUM exceeds XL capacity', () => {
     // With SUM: 60000+60000=120000 > 115000 XL max QPS -> must split
     const members: NiosServerMetrics[] = [
-      { memberId: 'm1', memberName: 'member-1', role: 'DNS', qps: 60000, lps: 300, objectCount: 400000 },
-      { memberId: 'm2', memberName: 'member-2', role: 'DNS', qps: 60000, lps: 300, objectCount: 400000 },
+      { memberId: 'm1', memberName: 'member-1', role: 'DNS', qps: 60000, lps: 300, objectCount: 400000, activeIPCount: 0 },
+      { memberId: 'm2', memberName: 'member-2', role: 'DNS', qps: 60000, lps: 300, objectCount: 400000, activeIPCount: 0 },
     ];
     const result = consolidateXaasInstances(members);
     expect(result).toHaveLength(2);

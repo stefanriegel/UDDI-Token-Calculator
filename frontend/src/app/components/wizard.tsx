@@ -1045,7 +1045,7 @@ export function Wizard() {
           s + calcServerTokenTier(m.qps, m.lps, m.dnsObjects + m.dhcpObjectsWithOverhead, 'nios-x').serverTokens, 0);
         const xaasInstances = consolidateXaasInstances(xaasDcs.map(m => ({
           memberId: m.hostname, memberName: m.hostname, role: 'DC',
-          qps: m.qps, lps: m.lps, objectCount: m.dnsObjects + m.dhcpObjectsWithOverhead,
+          qps: m.qps, lps: m.lps, objectCount: m.dnsObjects + m.dhcpObjectsWithOverhead, activeIPCount: 0,
         })));
         const xaasTokens = xaasInstances.reduce((s, inst) => s + inst.totalTokens, 0);
         adTokens = niosXTokens + xaasTokens;
@@ -1103,7 +1103,7 @@ export function Wizard() {
         s + calcServerTokenTier(m.qps, m.lps, m.dnsObjects + m.dhcpObjectsWithOverhead, 'nios-x').serverTokens, 0);
       const xaasInst = consolidateXaasInstances(xaasDcs.map(m => ({
         memberId: m.hostname, memberName: m.hostname, role: 'DC',
-        qps: m.qps, lps: m.lps, objectCount: m.dnsObjects + m.dhcpObjectsWithOverhead,
+        qps: m.qps, lps: m.lps, objectCount: m.dnsObjects + m.dhcpObjectsWithOverhead, activeIPCount: 0,
       })));
       hybridSrv += xaasInst.reduce((s, inst) => s + inst.totalTokens, 0);
     }
@@ -1242,7 +1242,7 @@ export function Wizard() {
     if (selectedProviders.includes('microsoft') && effectiveADMetrics.length > 0) {
       const toNiosMetrics = (m: ADServerMetricAPI): NiosServerMetrics => ({
         memberId: m.hostname, memberName: m.hostname, role: 'DC',
-        qps: m.qps, lps: m.lps, objectCount: m.dnsObjects + m.dhcpObjectsWithOverhead,
+        qps: m.qps, lps: m.lps, objectCount: m.dnsObjects + m.dhcpObjectsWithOverhead, activeIPCount: 0,
       });
       const metricsToExport = adMigrationMap.size > 0
         ? effectiveADMetrics.filter(m => adMigrationMap.has(m.hostname))
@@ -1365,7 +1365,7 @@ export function Wizard() {
     if (selectedProviders.includes('microsoft') && effectiveADMetrics.length > 0) {
       const toNiosMetrics = (m: ADServerMetricAPI): NiosServerMetrics => ({
         memberId: m.hostname, memberName: m.hostname, role: 'DC',
-        qps: m.qps, lps: m.lps, objectCount: m.dnsObjects + m.dhcpObjectsWithOverhead,
+        qps: m.qps, lps: m.lps, objectCount: m.dnsObjects + m.dhcpObjectsWithOverhead, activeIPCount: 0,
       });
       const metricsToExport = adMigrationMap.size > 0
         ? effectiveADMetrics.filter(m => adMigrationMap.has(m.hostname))
@@ -4340,7 +4340,7 @@ export function Wizard() {
                     s + calcServerTokenTier(m.qps, m.lps, m.dnsObjects + m.dhcpObjectsWithOverhead, 'nios-x').serverTokens, 0);
                   const xaasInst = consolidateXaasInstances(xaasDcs.map(m => ({
                     memberId: m.hostname, memberName: m.hostname, role: 'DC',
-                    qps: m.qps, lps: m.lps, objectCount: m.dnsObjects + m.dhcpObjectsWithOverhead,
+                    qps: m.qps, lps: m.lps, objectCount: m.dnsObjects + m.dhcpObjectsWithOverhead, activeIPCount: 0,
                   })));
                   return niosXTok + xaasInst.reduce((s, inst) => s + inst.totalTokens, 0);
                 };
@@ -4589,6 +4589,7 @@ export function Wizard() {
                         qps: m.qps,
                         lps: m.lps,
                         objectCount: m.dnsObjects + m.dhcpObjectsWithOverhead,
+                        activeIPCount: 0,
                       });
 
                       const displayMembers = adMigrationMap.size > 0
