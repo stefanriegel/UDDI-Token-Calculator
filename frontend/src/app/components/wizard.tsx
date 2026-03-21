@@ -1671,11 +1671,14 @@ export function Wizard() {
                         </div>
                         <div className="px-4 py-4 space-y-4">
                           <p className="text-[13px] text-[var(--muted-foreground)]">
-                            Enter your environment size. Tokens are calculated instantly — no connection required.
+                            Enter your environment size. Tokens are calculated instantly - no connection required.
                           </p>
                           <div className="grid grid-cols-2 gap-4">
                             <div>
-                              <label className="block text-[12px] text-[var(--muted-foreground)] mb-1" style={{ fontWeight: 500 }}>Active IP Addresses</label>
+                              <label className="flex items-center gap-1 text-[12px] text-[var(--muted-foreground)] mb-1" style={{ fontWeight: 500 }}>
+                                Active IP Addresses
+                                <FieldTooltip text="Total number of IP addresses actively in use in your environment. This is the primary sizing input - it drives DNS record counts, DHCP client counts, and IPAM object totals." side="right" />
+                              </label>
                               <input
                                 type="number" min={1}
                                 className="w-full border border-[var(--border)] rounded-lg px-3 py-2 text-[13px] focus:outline-none focus:ring-1 focus:ring-[var(--infoblox-orange)]"
@@ -1684,7 +1687,10 @@ export function Wizard() {
                               />
                             </div>
                             <div>
-                              <label className="block text-[12px] text-[var(--muted-foreground)] mb-1" style={{ fontWeight: 500 }}>DHCP % (0–100)</label>
+                              <label className="flex items-center gap-1 text-[12px] text-[var(--muted-foreground)] mb-1" style={{ fontWeight: 500 }}>
+                                DHCP % (0-100)
+                                <FieldTooltip text="Percentage of active IPs assigned dynamically via DHCP. The remainder are static. Typical environments: 70-85% DHCP. Affects DNS record counts and log volume." side="right" />
+                              </label>
                               <input
                                 type="number" min={0} max={100}
                                 className="w-full border border-[var(--border)] rounded-lg px-3 py-2 text-[13px] focus:outline-none focus:ring-1 focus:ring-[var(--infoblox-orange)]"
@@ -1693,7 +1699,10 @@ export function Wizard() {
                               />
                             </div>
                             <div>
-                              <label className="block text-[12px] text-[var(--muted-foreground)] mb-1" style={{ fontWeight: 500 }}>Number of Sites</label>
+                              <label className="flex items-center gap-1 text-[12px] text-[var(--muted-foreground)] mb-1" style={{ fontWeight: 500 }}>
+                                Number of Sites
+                                <FieldTooltip text="Number of physical locations, branches, or data centres. Each site contributes DHCP scope objects and discovered assets to the DDI object count." side="right" />
+                              </label>
                               <input
                                 type="number" min={1}
                                 className="w-full border border-[var(--border)] rounded-lg px-3 py-2 text-[13px] focus:outline-none focus:ring-1 focus:ring-[var(--infoblox-orange)]"
@@ -1702,7 +1711,10 @@ export function Wizard() {
                               />
                             </div>
                             <div>
-                              <label className="block text-[12px] text-[var(--muted-foreground)] mb-1" style={{ fontWeight: 500 }}>Networks per Site</label>
+                              <label className="flex items-center gap-1 text-[12px] text-[var(--muted-foreground)] mb-1" style={{ fontWeight: 500 }}>
+                                Networks per Site
+                                <FieldTooltip text="Average number of IP subnets or VLANs per site. Used to estimate DHCP scope and range objects. Typical branch: 2-6 networks; large campus: 10-20+." side="right" />
+                              </label>
                               <input
                                 type="number" min={1}
                                 className="w-full border border-[var(--border)] rounded-lg px-3 py-2 text-[13px] focus:outline-none focus:ring-1 focus:ring-[var(--infoblox-orange)]"
@@ -1713,12 +1725,12 @@ export function Wizard() {
                           </div>
                           <div className="grid grid-cols-2 gap-x-6 gap-y-2 pt-1">
                             {[
-                              { key: 'enableIPAM' as const, label: 'IPAM Module' },
-                              { key: 'enableDNS' as const, label: 'DNS Management' },
-                              { key: 'enableDHCP' as const, label: 'DHCP Management' },
-                              { key: 'enableDNSProtocol' as const, label: 'DNS Protocol Logging' },
-                              { key: 'enableDHCPLog' as const, label: 'DHCP Lease Logging' },
-                            ].map(({ key, label }) => (
+                              { key: 'enableIPAM' as const, label: 'IPAM Module', tooltip: 'Include IP Address Management. Enables active IP counting, asset discovery, and subnet/network object tracking. Disable only if you are sizing DNS/DHCP only.' },
+                              { key: 'enableDNS' as const, label: 'DNS Management', tooltip: 'Include DNS zone and record management. Contributes DNS resource records to the DDI object count. Required for most Universal DDI deployments.' },
+                              { key: 'enableDHCP' as const, label: 'DHCP Management', tooltip: 'Include DHCP scope and range management. Each network gets a scope object plus HA/failover range objects (2x multiplier). Disable if using external DHCP only.' },
+                              { key: 'enableDNSProtocol' as const, label: 'DNS Protocol Logging', tooltip: 'Enable DNS query logging to BloxOne Threat Defense or reporting. Generates high log volume (QPD x active IPs). Drives Reporting Token (IB-TOKENS-REPORTING-40) requirements.' },
+                              { key: 'enableDHCPLog' as const, label: 'DHCP Lease Logging', tooltip: 'Enable DHCP lease event logging. Generates log volume based on lease churn rate. Together with DNS protocol logging this determines your Reporting Token needs.' },
+                            ].map(({ key, label, tooltip }) => (
                               <label key={key} className="flex items-center gap-2 text-[13px] cursor-pointer select-none">
                                 <input
                                   type="checkbox"
@@ -1727,6 +1739,7 @@ export function Wizard() {
                                   onChange={e => setEstimatorAnswers(prev => ({ ...prev, [key]: e.target.checked }))}
                                 />
                                 {label}
+                                <FieldTooltip text={tooltip} side="right" />
                               </label>
                             ))}
                           </div>
@@ -3293,6 +3306,7 @@ export function Wizard() {
                   <div className="flex items-center gap-3">
                     <label className="flex items-center gap-2 text-[13px]">
                       <span className="text-[var(--muted-foreground)]" style={{ fontWeight: 500 }}>Growth Buffer</span>
+                      <FieldTooltip text="Additional capacity added on top of the calculated token requirement to account for environment growth. Applied to management and reporting tokens before pack rounding. Default 20% is typical for a 1-year planning horizon." side="left" />
                       <div className="flex items-center border border-[var(--border)] rounded-lg overflow-hidden">
                         <input
                           type="number" min={0} max={100} step={5}
@@ -3338,20 +3352,35 @@ export function Wizard() {
                   <tbody>
                     <tr className="border-b border-[var(--border)]/50">
                       <td className="py-2.5 font-mono text-[12px] text-orange-800">IB-TOKENS-UDDI-MGMT-1000</td>
-                      <td className="py-2.5 text-[var(--muted-foreground)]">Management Token Pack (1000 tokens)</td>
+                      <td className="py-2.5 text-[var(--muted-foreground)]">
+                        <span className="flex items-center gap-1">
+                          Management Token Pack (1000 tokens)
+                          <FieldTooltip text="Covers DDI Objects, Active IPs, and Managed Assets. Pack size: 1000 tokens. Count = ceil(total management tokens / 1000). Growth buffer already included." side="top" />
+                        </span>
+                      </td>
                       <td className="py-2.5 text-right tabular-nums" style={{ fontWeight: 600 }}>{Math.ceil(totalTokens / 1000).toLocaleString()}</td>
                     </tr>
                     {hasServerMetrics && (
                       <tr className="border-b border-[var(--border)]/50">
                         <td className="py-2.5 font-mono text-[12px] text-blue-800">IB-TOKENS-UDDI-SERV-500</td>
-                        <td className="py-2.5 text-[var(--muted-foreground)]">Server Token Pack (500 tokens)</td>
+                        <td className="py-2.5 text-[var(--muted-foreground)]">
+                          <span className="flex items-center gap-1">
+                            Server Token Pack (500 tokens)
+                            <FieldTooltip text="Covers NIOS-X appliances and XaaS instances sized by QPS, LPS, and object count. Pack size: 500 tokens. Separate from management tokens - no growth buffer applied." side="top" />
+                          </span>
+                        </td>
                         <td className="py-2.5 text-right tabular-nums" style={{ fontWeight: 600 }}>{Math.ceil(totalServerTokens / 500).toLocaleString()}</td>
                       </tr>
                     )}
                     {reportingTokens > 0 && (
                       <tr>
                         <td className="py-2.5 font-mono text-[12px] text-purple-800">IB-TOKENS-REPORTING-40</td>
-                        <td className="py-2.5 text-[var(--muted-foreground)]">Reporting Token Pack (40 tokens)</td>
+                        <td className="py-2.5 text-[var(--muted-foreground)]">
+                          <span className="flex items-center gap-1">
+                            Reporting Token Pack (40 tokens)
+                            <FieldTooltip text="Covers DNS protocol and DHCP lease log forwarding. Calculated from monthly log volume across three destination types (CSP active search: 80 tk/10M events, S3: 40 tk/10M, Ecosystem: 40 tk/10M). Pack size: 40 tokens." side="top" />
+                          </span>
+                        </td>
                         <td className="py-2.5 text-right tabular-nums" style={{ fontWeight: 600 }}>{Math.ceil(reportingTokens / 40).toLocaleString()}</td>
                       </tr>
                     )}
