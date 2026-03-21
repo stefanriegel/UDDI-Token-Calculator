@@ -77,7 +77,7 @@ import {
   type ServerFormFactor,
   type ConsolidatedXaasInstance,
 } from './mock-data';
-import { calcEstimator, EstimatorDefaults, type EstimatorInputs } from './estimator-calc';
+import { calcEstimator, EstimatorDefaults, type EstimatorInputs, type ServerEntry, type ServerTokenDetail } from './estimator-calc';
 type Step = 'providers' | 'credentials' | 'sources' | 'scanning' | 'results';
 type SortColumn = 'provider' | 'source' | 'category' | 'item' | 'count' | 'managementTokens';
 type SortDir = 'asc' | 'desc';
@@ -393,6 +393,7 @@ export function Wizard() {
   const [estimatorAnswers, setEstimatorAnswers] = useState<EstimatorInputs>({ ...EstimatorDefaults });
   const [estimatorMonthlyLogVolume, setEstimatorMonthlyLogVolume] = useState<number>(0);
   const [estimatorServerTokens, setEstimatorServerTokens] = useState<number>(0);
+  const [estimatorServerDetails, setEstimatorServerDetails] = useState<ServerTokenDetail[]>([]);
 
   // ── Growth buffer & BOM state (S03) ───────────────────────────────────────
   const [growthBufferPct, setGrowthBufferPct] = useState<number>(0.20);
@@ -549,6 +550,7 @@ export function Wizard() {
     setEstimatorAnswers({ ...EstimatorDefaults });
     setEstimatorMonthlyLogVolume(0);
     setEstimatorServerTokens(0);
+    setEstimatorServerDetails([]);
     setGrowthBufferPct(0.20);
     setBomCopied(false);
   };
@@ -824,6 +826,7 @@ export function Wizard() {
       setFindings(estimatorFindings);
       setEstimatorMonthlyLogVolume(out.monthlyLogVolume);
       setEstimatorServerTokens(out.serverTokens);
+      setEstimatorServerDetails(out.serverTokenDetails);
       setScanProgress(100);
       setProviderScanProgress(prev => ({ ...prev, estimator: 100 }));
       return;
@@ -1747,101 +1750,127 @@ export function Wizard() {
                               </label>
                             ))}
                           </div>
-                          {/* Server Sizing (optional) */}
+                          {/* Server Sizing (optional) - granular per-server entries */}
                           <div className="border-t border-[var(--border)] pt-3 mt-1">
-                            <p className="text-[12px] text-[var(--muted-foreground)] mb-2" style={{ fontWeight: 600 }}>
-                              Server Sizing (optional)
-                            </p>
-                            <div className="grid grid-cols-2 gap-4">
-                              <div>
-                                <label className="flex items-center gap-1 text-[12px] text-[var(--muted-foreground)] mb-1" style={{ fontWeight: 500 }}>
-                                  Appliance Count
-                                  <FieldTooltip text="Number of NIOS-X appliances or XaaS instances to size. Set to 0 to skip server token estimation. Each appliance is sized individually based on the QPS, LPS, and object count you enter below." side="right" />
-                                </label>
-                                <input
-                                  type="number" min={0}
-                                  className="w-full border border-[var(--border)] rounded-lg px-3 py-2 text-[13px] focus:outline-none focus:ring-1 focus:ring-[var(--infoblox-orange)]"
-                                  value={estimatorAnswers.serverApplianceCount}
-                                  onChange={e => setEstimatorAnswers(prev => ({ ...prev, serverApplianceCount: Math.max(0, parseInt(e.target.value) || 0) }))}
-                                />
-                              </div>
-                              <div>
-                                <label className="flex items-center gap-1 text-[12px] text-[var(--muted-foreground)] mb-1" style={{ fontWeight: 500 }}>
-                                  Form Factor
-                                  <FieldTooltip text="NIOS-X: on-premises appliances with fixed resource allocation. XaaS: cloud-hosted instances with connection-based pricing and higher per-tier token costs." side="right" />
-                                </label>
-                                <select
-                                  className="w-full border border-[var(--border)] rounded-lg px-3 py-2 text-[13px] focus:outline-none focus:ring-1 focus:ring-[var(--infoblox-orange)] bg-white"
-                                  value={estimatorAnswers.serverFormFactor}
-                                  onChange={e => setEstimatorAnswers(prev => ({ ...prev, serverFormFactor: e.target.value as ServerFormFactor }))}
-                                  disabled={estimatorAnswers.serverApplianceCount === 0}
-                                >
-                                  <option value="nios-x">NIOS-X (on-prem)</option>
-                                  <option value="nios-xaas">XaaS (cloud)</option>
-                                </select>
-                              </div>
+                            <div className="flex items-center justify-between mb-2">
+                              <p className="text-[12px] text-[var(--muted-foreground)] flex items-center gap-1" style={{ fontWeight: 600 }}>
+                                Server Sizing (optional)
+                                <FieldTooltip text="Add individual NIOS-X appliances or XaaS instances with different sizes. Each server is sized independently based on its QPS, LPS, and object count. XaaS entries are consolidated into shared instances automatically." side="right" />
+                              </p>
+                              <button
+                                type="button"
+                                onClick={() => setEstimatorAnswers(prev => ({
+                                  ...prev,
+                                  serverEntries: [...prev.serverEntries, { name: `Server ${prev.serverEntries.length + 1}`, formFactor: 'nios-x', qps: 0, lps: 0, objects: 0 }],
+                                }))}
+                                className="flex items-center gap-1 px-2.5 py-1 bg-[var(--infoblox-blue)] text-white text-[11px] font-medium rounded-lg hover:bg-[var(--infoblox-blue)]/90 transition-colors"
+                              >
+                                <Plus className="w-3 h-3" />
+                                Add Server
+                              </button>
                             </div>
-                            {estimatorAnswers.serverApplianceCount > 0 && (
-                              <>
-                                <div className="grid grid-cols-3 gap-4 mt-3">
-                                  <div>
-                                    <label className="flex items-center gap-1 text-[12px] text-[var(--muted-foreground)] mb-1" style={{ fontWeight: 500 }}>
-                                      QPS per Appliance
-                                      <FieldTooltip text="Average DNS queries per second per appliance. Typical ranges: small branch 2-5K, medium site 10-20K, large campus 40-70K, major hub 70-115K." side="right" />
-                                    </label>
-                                    <input
-                                      type="number" min={0}
-                                      className="w-full border border-[var(--border)] rounded-lg px-3 py-2 text-[13px] focus:outline-none focus:ring-1 focus:ring-[var(--infoblox-orange)]"
-                                      value={estimatorAnswers.serverQps}
-                                      onChange={e => setEstimatorAnswers(prev => ({ ...prev, serverQps: Math.max(0, parseInt(e.target.value) || 0) }))}
-                                    />
-                                  </div>
-                                  <div>
-                                    <label className="flex items-center gap-1 text-[12px] text-[var(--muted-foreground)] mb-1" style={{ fontWeight: 500 }}>
-                                      LPS per Appliance
-                                      <FieldTooltip text="Average DHCP leases per second per appliance. Typical ranges: small 50-100, medium 150-300, large 400-675." side="right" />
-                                    </label>
-                                    <input
-                                      type="number" min={0}
-                                      className="w-full border border-[var(--border)] rounded-lg px-3 py-2 text-[13px] focus:outline-none focus:ring-1 focus:ring-[var(--infoblox-orange)]"
-                                      value={estimatorAnswers.serverLps}
-                                      onChange={e => setEstimatorAnswers(prev => ({ ...prev, serverLps: Math.max(0, parseInt(e.target.value) || 0) }))}
-                                    />
-                                  </div>
-                                  <div>
-                                    <label className="flex items-center gap-1 text-[12px] text-[var(--muted-foreground)] mb-1" style={{ fontWeight: 500 }}>
-                                      Objects per Appliance
-                                      <FieldTooltip text="Total DNS + DHCP objects managed per appliance: zones, resource records, DHCP scopes, ranges. Typical: small 3K, medium 30-110K, large 440K+." side="right" />
-                                    </label>
-                                    <input
-                                      type="number" min={0}
-                                      className="w-full border border-[var(--border)] rounded-lg px-3 py-2 text-[13px] focus:outline-none focus:ring-1 focus:ring-[var(--infoblox-orange)]"
-                                      value={estimatorAnswers.serverObjects}
-                                      onChange={e => setEstimatorAnswers(prev => ({ ...prev, serverObjects: Math.max(0, parseInt(e.target.value) || 0) }))}
-                                    />
-                                  </div>
-                                </div>
-                                {/* Live tier readout */}
-                                {(() => {
-                                  const tier = calcServerTokenTier(
-                                    estimatorAnswers.serverQps,
-                                    estimatorAnswers.serverLps,
-                                    estimatorAnswers.serverObjects,
-                                    estimatorAnswers.serverFormFactor,
-                                  );
-                                  const total = tier.serverTokens * estimatorAnswers.serverApplianceCount;
+                            {estimatorAnswers.serverEntries.length > 0 && (
+                              <div className="space-y-2">
+                                {estimatorAnswers.serverEntries.map((entry, idx) => {
+                                  const tier = calcServerTokenTier(entry.qps, entry.lps, entry.objects, entry.formFactor);
                                   return (
-                                    <div className="mt-2 px-3 py-2 bg-blue-50/60 rounded-lg text-[12px] text-blue-800 flex items-center justify-between">
-                                      <span>
-                                        Auto-determined tier: <span style={{ fontWeight: 600 }}>{tier.name}</span> ({tier.serverTokens.toLocaleString()} tokens/appliance)
-                                      </span>
-                                      <span style={{ fontWeight: 600 }}>
-                                        Total: {total.toLocaleString()} server tokens ({Math.ceil(total / 500)} SERV-500 packs)
-                                      </span>
+                                    <div key={idx} className="border border-[var(--border)] rounded-lg p-3 bg-[var(--input-background)]/30">
+                                      <div className="flex items-center gap-2 mb-2">
+                                        <input
+                                          type="text"
+                                          className="flex-1 border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-[12px] font-medium focus:outline-none focus:ring-1 focus:ring-[var(--infoblox-orange)]"
+                                          value={entry.name}
+                                          onChange={e => setEstimatorAnswers(prev => ({
+                                            ...prev,
+                                            serverEntries: prev.serverEntries.map((s, i) => i === idx ? { ...s, name: e.target.value } : s),
+                                          }))}
+                                          placeholder="Server name"
+                                        />
+                                        <select
+                                          className="border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-[12px] focus:outline-none focus:ring-1 focus:ring-[var(--infoblox-orange)] bg-white"
+                                          value={entry.formFactor}
+                                          onChange={e => setEstimatorAnswers(prev => ({
+                                            ...prev,
+                                            serverEntries: prev.serverEntries.map((s, i) => i === idx ? { ...s, formFactor: e.target.value as ServerFormFactor } : s),
+                                          }))}
+                                        >
+                                          <option value="nios-x">NIOS-X</option>
+                                          <option value="nios-xaas">XaaS</option>
+                                        </select>
+                                        <button
+                                          type="button"
+                                          onClick={() => setEstimatorAnswers(prev => ({
+                                            ...prev,
+                                            serverEntries: prev.serverEntries.filter((_, i) => i !== idx),
+                                          }))}
+                                          className="flex-shrink-0 text-[var(--muted-foreground)] hover:text-red-500 transition-colors p-1"
+                                          aria-label={`Remove ${entry.name}`}
+                                        >
+                                          <X className="w-3.5 h-3.5" />
+                                        </button>
+                                      </div>
+                                      <div className="grid grid-cols-3 gap-3">
+                                        <div>
+                                          <label className="text-[11px] text-[var(--muted-foreground)] mb-0.5 block">QPS</label>
+                                          <input
+                                            type="number" min={0}
+                                            className="w-full border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-[12px] focus:outline-none focus:ring-1 focus:ring-[var(--infoblox-orange)]"
+                                            value={entry.qps}
+                                            onChange={e => setEstimatorAnswers(prev => ({
+                                              ...prev,
+                                              serverEntries: prev.serverEntries.map((s, i) => i === idx ? { ...s, qps: Math.max(0, parseInt(e.target.value) || 0) } : s),
+                                            }))}
+                                          />
+                                        </div>
+                                        <div>
+                                          <label className="text-[11px] text-[var(--muted-foreground)] mb-0.5 block">LPS</label>
+                                          <input
+                                            type="number" min={0}
+                                            className="w-full border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-[12px] focus:outline-none focus:ring-1 focus:ring-[var(--infoblox-orange)]"
+                                            value={entry.lps}
+                                            onChange={e => setEstimatorAnswers(prev => ({
+                                              ...prev,
+                                              serverEntries: prev.serverEntries.map((s, i) => i === idx ? { ...s, lps: Math.max(0, parseInt(e.target.value) || 0) } : s),
+                                            }))}
+                                          />
+                                        </div>
+                                        <div>
+                                          <label className="text-[11px] text-[var(--muted-foreground)] mb-0.5 block">Objects</label>
+                                          <input
+                                            type="number" min={0}
+                                            className="w-full border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-[12px] focus:outline-none focus:ring-1 focus:ring-[var(--infoblox-orange)]"
+                                            value={entry.objects}
+                                            onChange={e => setEstimatorAnswers(prev => ({
+                                              ...prev,
+                                              serverEntries: prev.serverEntries.map((s, i) => i === idx ? { ...s, objects: Math.max(0, parseInt(e.target.value) || 0) } : s),
+                                            }))}
+                                          />
+                                        </div>
+                                      </div>
+                                      {/* Live tier readout per server */}
+                                      <div className="mt-2 px-2.5 py-1.5 bg-blue-50/60 rounded-lg text-[11px] text-blue-800 flex items-center justify-between">
+                                        <span>
+                                          Tier: <span style={{ fontWeight: 600 }}>{tier.name}</span>
+                                          {entry.formFactor === 'nios-xaas' && <span className="text-blue-600 ml-1">(XaaS, consolidated at scan)</span>}
+                                        </span>
+                                        <span style={{ fontWeight: 600 }}>
+                                          {tier.serverTokens.toLocaleString()} tokens
+                                        </span>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                                {/* Totals summary */}
+                                {(() => {
+                                  const out = calcEstimator(estimatorAnswers);
+                                  return (
+                                    <div className="px-3 py-2 bg-blue-50/80 rounded-lg text-[12px] text-blue-800 flex items-center justify-between" style={{ fontWeight: 600 }}>
+                                      <span>{estimatorAnswers.serverEntries.length} server{estimatorAnswers.serverEntries.length !== 1 ? 's' : ''}</span>
+                                      <span>Total: {out.serverTokens.toLocaleString()} server tokens ({Math.ceil(out.serverTokens / 500)} SERV-500 packs)</span>
                                     </div>
                                   );
                                 })()}
-                              </>
+                              </div>
                             )}
                           </div>
                         </div>

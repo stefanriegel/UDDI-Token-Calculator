@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { calcEstimator, EstimatorDefaults } from './estimator-calc';
+import { calcEstimator, EstimatorDefaults, type ServerEntry } from './estimator-calc';
 
 describe('calcEstimator', () => {
 
@@ -11,13 +11,13 @@ describe('calcEstimator', () => {
    *         sites=5, networksPerSite=4
    *
    * Derivation:
-   *   dynamicClients = ceil(1250 × 0.80)  = 1000
+   *   dynamicClients = ceil(1250 x 0.80)  = 1000
    *   staticClients  = 1250 - 1000        = 250
-   *   dnsRecords     = (1000 × 4) + (250 × 2) = 4500
+   *   dnsRecords     = (1000 x 4) + (250 x 2) = 4500
    *   dhcpRangeMult  = 2 (both DHCP+IPAM enabled)
-   *   rawDdi         = 4500 + (4 × 5 × 2) = 4540
-   *   ddiObjects     = round(4540 × 1.15) = round(5221) = 5221
-   *   activeIPsOut   = 1250 + (2 × 5 × 4) = 1290
+   *   rawDdi         = 4500 + (4 x 5 x 2) = 4540
+   *   ddiObjects     = round(4540 x 1.15) = round(5221) = 5221
+   *   activeIPsOut   = 1250 + (2 x 5 x 4) = 1290
    *   discoveredAssets = 1250 (defaults to activeIPs)
    *   monthlyLogVolume > 0 (DNS+DHCP logging both on)
    */
@@ -43,21 +43,6 @@ describe('calcEstimator', () => {
 
   /**
    * Reference Case B - Medium enterprise, DNS only, no reporting
-   *
-   * Inputs: activeIPs=5000, dhcpPct=0.80, enableIPAM=true, enableDNS=true,
-   *         enableDNSProtocol=false, enableDHCP=false, enableDHCPLog=false,
-   *         sites=10, networksPerSite=6
-   *
-   * Derivation:
-   *   dynamicClients = ceil(5000 × 0.80)  = 4000
-   *   staticClients  = 5000 - 4000        = 1000
-   *   dnsRecords     = (4000 × 4) + (1000 × 2) = 18000
-   *   dhcpRangeMult  = 0 (DHCP disabled)
-   *   rawDdi         = 18000 + 0 = 18000
-   *   ddiObjects     = round(18000 × 1.15) = round(20700) = 20700
-   *   activeIPsOut   = 5000 + (2 × 10 × 6) = 5120
-   *   discoveredAssets = 5000
-   *   monthlyLogVolume = 0 (no logging)
    */
   it('Case B - medium enterprise DNS only, no logging', () => {
     const out = calcEstimator({
@@ -81,21 +66,6 @@ describe('calcEstimator', () => {
 
   /**
    * Reference Case C - No IPAM, DNS only
-   *
-   * Inputs: activeIPs=2000, dhcpPct=0.80, enableIPAM=false, enableDNS=true,
-   *         enableDNSProtocol=false, enableDHCP=false, enableDHCPLog=false,
-   *         sites=3, networksPerSite=4
-   *
-   * Derivation:
-   *   dynamicClients = ceil(2000 × 0.80)  = 1600
-   *   staticClients  = 2000 - 1600        = 400
-   *   dnsRecords     = (1600 × 4) + (400 × 2) = 7200
-   *   dhcpRangeMult  = 0 (IPAM disabled)
-   *   rawDdi         = 7200
-   *   ddiObjects     = round(7200 × 1.15) = round(8280) = 8280
-   *   activeIPsOut   = 0 (IPAM disabled)
-   *   discoveredAssets = 0 (IPAM disabled)
-   *   monthlyLogVolume = 0
    */
   it('Case C - no IPAM, DNS only', () => {
     const out = calcEstimator({
@@ -118,67 +88,147 @@ describe('calcEstimator', () => {
   });
 
   /**
-   * Reference Case D - Server tokens: 4 NIOS-X appliances, M tier
+   * Reference Case D - 4 identical NIOS-X servers, M tier
    *
-   * Inputs: serverApplianceCount=4, serverFormFactor='nios-x',
-   *         serverQps=35000, serverLps=250, serverObjects=80000
-   *
-   * Derivation:
-   *   calcServerTokenTier(35000, 250, 80000, 'nios-x') -> M tier (880 tokens)
-   *   serverTokens = 880 * 4 = 3520
+   * Each server: qps=35000, lps=250, objects=80000 -> M tier (880 tokens)
+   * Total: 880 x 4 = 3520
    */
-  it('Case D - 4 NIOS-X appliances, M tier server tokens', () => {
+  it('Case D - 4 NIOS-X servers, M tier server tokens', () => {
+    const servers: ServerEntry[] = Array.from({ length: 4 }, (_, i) => ({
+      name: `Server ${i + 1}`,
+      formFactor: 'nios-x' as const,
+      qps: 35000,
+      lps: 250,
+      objects: 80000,
+    }));
+
     const out = calcEstimator({
-      activeIPs: 1000, dhcpPct: 0.80,
-      enableIPAM: true, enableDNS: true, enableDNSProtocol: false,
-      enableDHCP: true, enableDHCPLog: false,
-      sites: 1, networksPerSite: 4,
-      serverApplianceCount: 4, serverFormFactor: 'nios-x',
-      serverQps: 35000, serverLps: 250, serverObjects: 80000,
+      ...EstimatorDefaults,
+      serverEntries: servers,
     });
 
     expect(out.serverTokens).toBe(3520);
+    expect(out.serverTokenDetails).toHaveLength(4);
+    expect(out.serverTokenDetails[0].tierName).toBe('M');
+    expect(out.serverTokenDetails[0].serverTokens).toBe(880);
     // Management tokens should still be calculated normally
     expect(out.ddiObjects).toBeGreaterThan(0);
   });
 
   /**
-   * Reference Case E - Server tokens: 2 XaaS instances, S tier
+   * Reference Case E - 2 identical XaaS instances, S tier
    *
-   * Inputs: serverApplianceCount=2, serverFormFactor='nios-xaas',
-   *         serverQps=15000, serverLps=100, serverObjects=20000
-   *
-   * Derivation:
-   *   calcServerTokenTier(15000, 100, 20000, 'nios-xaas') -> S tier (2400 tokens)
-   *   serverTokens = 2400 * 2 = 4800
+   * Each server: qps=15000, lps=100, objects=20000 -> S tier (2400 tokens)
+   * 2 XaaS entries consolidate: aggregate qps=30000, lps=200, objects=40000
+   * -> fits M tier (maxQps=40000, maxLps=300, maxObjects=110000)
+   *    with 2 connections, M maxConnections=20, so M tier
+   * M tier = 4100 tokens for consolidated instance
    */
-  it('Case E - 2 XaaS instances, S tier server tokens', () => {
+  it('Case E - 2 XaaS entries consolidated', () => {
+    const servers: ServerEntry[] = [
+      { name: 'XaaS-1', formFactor: 'nios-xaas', qps: 15000, lps: 100, objects: 20000 },
+      { name: 'XaaS-2', formFactor: 'nios-xaas', qps: 15000, lps: 100, objects: 20000 },
+    ];
+
     const out = calcEstimator({
-      activeIPs: 1000, dhcpPct: 0.80,
-      enableIPAM: true, enableDNS: true, enableDNSProtocol: false,
-      enableDHCP: true, enableDHCPLog: false,
-      sites: 1, networksPerSite: 4,
-      serverApplianceCount: 2, serverFormFactor: 'nios-xaas',
-      serverQps: 15000, serverLps: 100, serverObjects: 20000,
+      ...EstimatorDefaults,
+      serverEntries: servers,
     });
 
-    expect(out.serverTokens).toBe(4800);
+    // Consolidated: aggregate fits S tier (qps=30000 > S max 20000, so M tier)
+    // M tier = 4100 tokens, 2 connections within M's 20 limit
+    expect(out.serverTokens).toBe(4100);
+    expect(out.serverTokenDetails).toHaveLength(2);
   });
 
   /**
-   * Reference Case F - No server sizing (default: 0 appliances)
+   * Reference Case F - No servers, no server tokens
    */
-  it('Case F - 0 appliances, no server tokens', () => {
+  it('Case F - empty entries, no server tokens', () => {
     const out = calcEstimator({
-      activeIPs: 1000, dhcpPct: 0.80,
-      enableIPAM: true, enableDNS: true, enableDNSProtocol: false,
-      enableDHCP: true, enableDHCPLog: false,
-      sites: 1, networksPerSite: 4,
-      serverApplianceCount: 0, serverFormFactor: 'nios-x',
-      serverQps: 0, serverLps: 0, serverObjects: 0,
+      ...EstimatorDefaults,
+      serverEntries: [],
     });
 
     expect(out.serverTokens).toBe(0);
+    expect(out.serverTokenDetails).toHaveLength(0);
+  });
+
+  /**
+   * Case G - Mixed form factors: 2 NIOS-X + 1 XaaS
+   *
+   * NIOS-X #1: qps=5000, lps=75, objects=3000 -> 2XS tier (130 tokens)
+   * NIOS-X #2: qps=40000, lps=300, objects=110000 -> M tier (880 tokens)
+   * XaaS #1:   qps=15000, lps=100, objects=20000 -> S tier (2400 tokens, single instance)
+   * Total: 130 + 880 + 2400 = 3410
+   */
+  it('Case G - mixed NIOS-X and XaaS form factors', () => {
+    const servers: ServerEntry[] = [
+      { name: 'Branch DNS', formFactor: 'nios-x', qps: 5000, lps: 75, objects: 3000 },
+      { name: 'Campus DNS', formFactor: 'nios-x', qps: 40000, lps: 300, objects: 110000 },
+      { name: 'Cloud Instance', formFactor: 'nios-xaas', qps: 15000, lps: 100, objects: 20000 },
+    ];
+
+    const out = calcEstimator({
+      ...EstimatorDefaults,
+      serverEntries: servers,
+    });
+
+    expect(out.serverTokens).toBe(130 + 880 + 2400);
+    expect(out.serverTokenDetails).toHaveLength(3);
+
+    const niosXDetails = out.serverTokenDetails.filter(d => d.formFactor === 'nios-x');
+    const xaasDetails = out.serverTokenDetails.filter(d => d.formFactor === 'nios-xaas');
+    expect(niosXDetails).toHaveLength(2);
+    expect(xaasDetails).toHaveLength(1);
+
+    expect(niosXDetails[0].tierName).toBe('2XS');
+    expect(niosXDetails[1].tierName).toBe('M');
+    expect(xaasDetails[0].tierName).toBe('S');
+  });
+
+  /**
+   * Case H - Different-sized NIOS-X servers
+   *
+   * Validates that each server is sized independently (not averaged).
+   * Server 1: qps=5000, lps=50, objects=1000 -> 2XS (130)
+   * Server 2: qps=70000, lps=400, objects=440000 -> L (1900)
+   * Total: 130 + 1900 = 2030
+   */
+  it('Case H - different-sized NIOS-X servers sized independently', () => {
+    const servers: ServerEntry[] = [
+      { name: 'Small Branch', formFactor: 'nios-x', qps: 5000, lps: 50, objects: 1000 },
+      { name: 'Data Center', formFactor: 'nios-x', qps: 70000, lps: 400, objects: 440000 },
+    ];
+
+    const out = calcEstimator({
+      ...EstimatorDefaults,
+      serverEntries: servers,
+    });
+
+    expect(out.serverTokens).toBe(2030);
+    expect(out.serverTokenDetails[0].tierName).toBe('2XS');
+    expect(out.serverTokenDetails[0].serverTokens).toBe(130);
+    expect(out.serverTokenDetails[1].tierName).toBe('L');
+    expect(out.serverTokenDetails[1].serverTokens).toBe(1900);
+  });
+
+  /**
+   * Case I - serverTokenDetails includes correct input metrics
+   */
+  it('Case I - details include input QPS/LPS/objects', () => {
+    const out = calcEstimator({
+      ...EstimatorDefaults,
+      serverEntries: [
+        { name: 'Test', formFactor: 'nios-x', qps: 12345, lps: 67, objects: 8900 },
+      ],
+    });
+
+    expect(out.serverTokenDetails).toHaveLength(1);
+    expect(out.serverTokenDetails[0].qps).toBe(12345);
+    expect(out.serverTokenDetails[0].lps).toBe(67);
+    expect(out.serverTokenDetails[0].objects).toBe(8900);
+    expect(out.serverTokenDetails[0].name).toBe('Test');
   });
 
 });

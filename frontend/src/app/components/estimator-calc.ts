@@ -6,9 +6,23 @@
  * Estimator spreadsheet. Used by wizard.tsx and consumed by S03 (Reporting Tokens).
  */
 
-import { calcServerTokenTier, type ServerFormFactor } from './nios-calc';
+import { calcServerTokenTier, consolidateXaasInstances, type ServerFormFactor } from './nios-calc';
 
-// ─── Types ─────────────────────────────────────────────────────────────────────
+// ── Types ──────────────────────────────────────────────────────────────────────
+
+/** A single server entry for granular per-server sizing in the Manual Estimator. */
+export interface ServerEntry {
+  /** Display name (e.g. "DNS Primary", "Branch Office 1") */
+  name: string;
+  /** Form factor: on-prem NIOS-X or cloud-hosted XaaS */
+  formFactor: ServerFormFactor;
+  /** Average DNS queries per second */
+  qps: number;
+  /** Average DHCP leases per second */
+  lps: number;
+  /** DNS + DHCP objects managed */
+  objects: number;
+}
 
 export interface EstimatorInputs {
   /** Total active IP addresses in the environment */
@@ -32,17 +46,27 @@ export interface EstimatorInputs {
   /** Optional override for discovered assets (defaults to activeIPs when IPAM enabled) */
   assets?: number;
 
-  // ── Server sizing (optional) ──────────────────────────────────────────────
-  /** Number of NIOS-X appliances or XaaS instances (0 = skip server sizing) */
-  serverApplianceCount: number;
-  /** Form factor: on-prem NIOS-X or cloud-hosted XaaS */
-  serverFormFactor: ServerFormFactor;
-  /** Average DNS queries per second per appliance */
-  serverQps: number;
-  /** Average DHCP leases per second per appliance */
-  serverLps: number;
-  /** DNS + DHCP objects managed per appliance */
-  serverObjects: number;
+  // ── Server sizing ─────────────────────────────────────────────────────────
+  /** Granular per-server entries with individual form factor and metrics. */
+  serverEntries: ServerEntry[];
+}
+
+/** Per-server token breakdown returned alongside totals. */
+export interface ServerTokenDetail {
+  /** Server name from the entry */
+  name: string;
+  /** Form factor */
+  formFactor: ServerFormFactor;
+  /** Tier name (e.g. "M", "XL") */
+  tierName: string;
+  /** Tokens for this individual server (before XaaS consolidation) */
+  serverTokens: number;
+  /** Input QPS */
+  qps: number;
+  /** Input LPS */
+  lps: number;
+  /** Input objects */
+  objects: number;
 }
 
 export interface EstimatorOutputs {
@@ -54,11 +78,13 @@ export interface EstimatorOutputs {
   discoveredAssets: number;
   /** Monthly log volume in events (0 when no protocol logging enabled) */
   monthlyLogVolume: number;
-  /** Total server tokens across all appliances (0 when no appliances specified) */
+  /** Total server tokens across all entries (0 when no entries) */
   serverTokens: number;
+  /** Per-server token breakdown for UI display */
+  serverTokenDetails: ServerTokenDetail[];
 }
 
-// ─── Constants (spreadsheet defaults) ──────────────────────────────────────────
+// ── Constants (spreadsheet defaults) ───────────────────────────────────────────
 
 export const EstimatorDefaults: EstimatorInputs = {
   activeIPs: 1000,
@@ -70,11 +96,7 @@ export const EstimatorDefaults: EstimatorInputs = {
   enableDHCPLog: false,
   sites: 1,
   networksPerSite: 4,
-  serverApplianceCount: 0,
-  serverFormFactor: 'nios-x',
-  serverQps: 0,
-  serverLps: 0,
-  serverObjects: 0,
+  serverEntries: [],
 };
 
 // Spreadsheet constants - do not alter
@@ -89,7 +111,7 @@ const DAYS_PER_MONTH = 31;
 const WORKDAYS_PER_MONTH = 22;
 const HOURS_PER_WORKDAY = 9;
 
-// ─── Main Calc ─────────────────────────────────────────────────────────────────
+// ── Main Calc ──────────────────────────────────────────────────────────────────
 
 /**
  * Derive all estimator outputs from questionnaire inputs.
@@ -107,11 +129,7 @@ export function calcEstimator(inputs: EstimatorInputs): EstimatorOutputs {
     sites,
     networksPerSite,
     assets,
-    serverApplianceCount,
-    serverFormFactor,
-    serverQps,
-    serverLps,
-    serverObjects,
+    serverEntries,
   } = inputs;
 
   // ── Client split ──────────────────────────────────────────────────────────
@@ -125,7 +143,7 @@ export function calcEstimator(inputs: EstimatorInputs): EstimatorOutputs {
     ? dynamicClients * DNS_RECS_PER_LEASE + staticClients * DNS_RECS_PER_IP
     : 0;
 
-  // ── DHCP range multiplier (HA/FO requires 2× objects per scope/range) ────
+  // ── DHCP range multiplier (HA/FO requires 2x objects per scope/range) ────
   const dhcpRangeMult = enableDHCP && enableIPAM ? DHCP_OBJ_MODIFIER : 0;
 
   // ── DDI objects (DNS records + DHCP networks/ranges + 15% buffer) ─────────
@@ -154,7 +172,7 @@ export function calcEstimator(inputs: EstimatorInputs): EstimatorOutputs {
       ? WORKDAYS_PER_MONTH * QPD_PER_IP * dynamicClients
       : 0;
 
-    // DHCP logs - lease events per workday; lease event rate = renewals per hour × hours
+    // DHCP logs - lease events per workday; lease event rate = renewals per hour x hours
     const dhcpClients = enableIPAM ? activeIPs * dhcpPct : 0;
     const dhcpLogs = enableDHCPLog
       ? (HOURS_PER_WORKDAY / (DHCP_LEASE_HOURS / 2) + 1) * WORKDAYS_PER_MONTH * dhcpClients
@@ -163,11 +181,62 @@ export function calcEstimator(inputs: EstimatorInputs): EstimatorOutputs {
     monthlyLogVolume = dnsLogsStatic + dnsLogsDynamic + dhcpLogs;
   }
 
-  // ── Server tokens (optional) ──────────────────────────────────────────────
+  // ── Server tokens (per-entry granular sizing) ─────────────────────────────
   let serverTokens = 0;
-  if (serverApplianceCount > 0) {
-    const tier = calcServerTokenTier(serverQps, serverLps, serverObjects, serverFormFactor);
-    serverTokens = tier.serverTokens * serverApplianceCount;
+  const serverTokenDetails: ServerTokenDetail[] = [];
+
+  if (serverEntries.length > 0) {
+    // NIOS-X entries: each gets its own tier independently
+    const niosXEntries = serverEntries.filter(e => e.formFactor === 'nios-x');
+    for (const entry of niosXEntries) {
+      const tier = calcServerTokenTier(entry.qps, entry.lps, entry.objects, 'nios-x');
+      serverTokens += tier.serverTokens;
+      serverTokenDetails.push({
+        name: entry.name,
+        formFactor: 'nios-x',
+        tierName: tier.name,
+        serverTokens: tier.serverTokens,
+        qps: entry.qps,
+        lps: entry.lps,
+        objects: entry.objects,
+      });
+    }
+
+    // XaaS entries: consolidate into instances using the same algorithm
+    // as the NIOS migration planner
+    const xaasEntries = serverEntries.filter(e => e.formFactor === 'nios-xaas');
+    if (xaasEntries.length > 0) {
+      const xaasMetrics = xaasEntries.map(e => ({
+        memberId: e.name,
+        memberName: e.name,
+        role: 'Manual' as const,
+        qps: e.qps,
+        lps: e.lps,
+        objectCount: e.objects,
+        activeIPCount: 0,
+      }));
+      const instances = consolidateXaasInstances(xaasMetrics);
+      // For details, attribute the instance tokens back to individual entries
+      // proportionally. For single-entry instances, it's exact.
+      for (const inst of instances) {
+        serverTokens += inst.totalTokens;
+        // Each member in the instance gets a detail line showing the instance tier
+        for (const member of inst.members) {
+          const entry = xaasEntries.find(e => e.name === member.memberName);
+          serverTokenDetails.push({
+            name: entry?.name ?? member.memberName,
+            formFactor: 'nios-xaas',
+            tierName: inst.tier.name,
+            serverTokens: inst.members.length === 1
+              ? inst.totalTokens
+              : Math.round(inst.totalTokens / inst.members.length),
+            qps: member.qps,
+            lps: member.lps,
+            objects: member.objectCount,
+          });
+        }
+      }
+    }
   }
 
   return {
@@ -176,5 +245,6 @@ export function calcEstimator(inputs: EstimatorInputs): EstimatorOutputs {
     discoveredAssets,
     monthlyLogVolume,
     serverTokens,
+    serverTokenDetails,
   };
 }
