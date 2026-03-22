@@ -77,7 +77,7 @@ import {
   type ServerFormFactor,
   type ConsolidatedXaasInstance,
 } from './mock-data';
-import { calcEstimator, EstimatorDefaults, type EstimatorInputs, type ServerEntry, type ServerTokenDetail } from './estimator-calc';
+import { calcEstimator, calcReportingTokens, computeEstimatorWarnings, REPORTING_DESTINATIONS, EstimatorDefaults, type EstimatorInputs, type ReportingDestinationInput, type ReportingDestinationResult, type ServerEntry, type ServerTokenDetail } from './estimator-calc';
 type Step = 'providers' | 'credentials' | 'sources' | 'scanning' | 'results';
 type SortColumn = 'provider' | 'source' | 'category' | 'item' | 'count' | 'managementTokens';
 type SortDir = 'asc' | 'desc';
@@ -394,6 +394,16 @@ export function Wizard() {
   const [estimatorMonthlyLogVolume, setEstimatorMonthlyLogVolume] = useState<number>(0);
   const [estimatorServerTokens, setEstimatorServerTokens] = useState<number>(0);
   const [estimatorServerDetails, setEstimatorServerDetails] = useState<ServerTokenDetail[]>([]);
+
+  // ── Reporting destination toggle state ──────────────────────────────────────
+  const [reportingDestEnabled, setReportingDestEnabled] = useState<Record<string, boolean>>(
+    () => Object.fromEntries(REPORTING_DESTINATIONS.map(d => [d.id, true]))
+  );
+  const [reportingDestEvents, setReportingDestEvents] = useState<Record<string, number>>(
+    () => Object.fromEntries(REPORTING_DESTINATIONS.map(d => [d.id, 0]))
+  );
+  // Track whether the user manually typed an Ecosystem event count
+  const ecosystemManualOverride = useRef(false);
 
   // ── Growth buffer & BOM state (S03) ───────────────────────────────────────
   const [growthBufferPct, setGrowthBufferPct] = useState<number>(0.20);
@@ -1011,14 +1021,56 @@ export function Wizard() {
     [effectiveFindings, growthBufferPct]
   );
 
-  // Reporting tokens: based on monthly log volume from estimator or future scan sources
+  // Ecosystem event count syncs to 40% of monthly log volume unless user has manually overridden it
+  useEffect(() => {
+    if (!ecosystemManualOverride.current) {
+      const ecosystemDest = REPORTING_DESTINATIONS.find(d => d.id === 'ecosystem');
+      if (ecosystemDest) {
+        const liveVol = calcEstimator(estimatorAnswers).monthlyLogVolume;
+        setReportingDestEvents(prev => ({
+          ...prev,
+          [ecosystemDest.id]: Math.round(liveVol * 0.4),
+        }));
+      }
+    }
+  }, [estimatorAnswers]);
+
+  // Reporting tokens: per-destination totals via calcReportingTokens.
+  // Uses liveLogVolume (computed directly from estimatorAnswers) so the destinations
+  // table and BOM pack count update in real time as the user changes inputs, without
+  // waiting for the scan step to set estimatorMonthlyLogVolume.
+  const liveLogVolume = useMemo(() => calcEstimator(estimatorAnswers).monthlyLogVolume, [estimatorAnswers]);
+
+  const reportingBreakdown = useMemo((): ReportingDestinationResult[] => {
+    if (liveLogVolume <= 0) return [];
+    const inputs: ReportingDestinationInput[] = REPORTING_DESTINATIONS.map(d => ({
+      destinationId: d.id,
+      events: reportingDestEvents[d.id] ?? 0,
+      enabled: reportingDestEnabled[d.id] ?? true,
+    }));
+    return calcReportingTokens(inputs, growthBufferPct).breakdown;
+  }, [liveLogVolume, reportingDestEnabled, reportingDestEvents, growthBufferPct]);
+
   const reportingTokens = useMemo(() => {
-    if (estimatorMonthlyLogVolume <= 0) return 0;
-    // Three destination types: CSP active search (80 tk/10M), S3 (40 tk/10M), Ecosystem/CDC (40 tk/10M)
-    const events10M = Math.ceil(estimatorMonthlyLogVolume / 10_000_000);
-    const raw = events10M * (80 + 40 + 40); // all three destinations enabled
-    return Math.ceil(raw * (1 + growthBufferPct));
-  }, [estimatorMonthlyLogVolume, growthBufferPct]);
+    if (liveLogVolume <= 0) return 0;
+    const inputs: ReportingDestinationInput[] = REPORTING_DESTINATIONS.map(d => ({
+      destinationId: d.id,
+      events: reportingDestEvents[d.id] ?? 0,
+      enabled: reportingDestEnabled[d.id] ?? true,
+    }));
+    return calcReportingTokens(inputs, growthBufferPct).total;
+  }, [liveLogVolume, reportingDestEnabled, reportingDestEvents, growthBufferPct]);
+
+  // Validation warnings for the Manual Sizing Estimator (non-blocking advisory).
+  // Gated on 'estimator' being an active provider to avoid unnecessary computation.
+  // An empty array means no banner is shown in the UI.
+  const estimatorWarnings = useMemo(
+    () =>
+      selectedProviders.includes('estimator')
+        ? computeEstimatorWarnings(estimatorAnswers, growthBufferPct)
+        : [],
+    [estimatorAnswers, growthBufferPct, selectedProviders],
+  );
 
   // Category subtotals for summary
   const categoryTotals = useMemo(() => {
@@ -1750,6 +1802,75 @@ export function Wizard() {
                               </label>
                             ))}
                           </div>
+                          {/* Reporting Destinations table -- shown when log volume is non-zero */}
+                          {liveLogVolume > 0 && (
+                            <div className="border-t border-[var(--border)] pt-3 mt-1">
+                              <p className="text-[12px] text-[var(--muted-foreground)] flex items-center gap-1 mb-2" style={{ fontWeight: 600 }}>
+                                Reporting Destinations
+                                <FieldTooltip text="Select which destinations receive your log data. Each enabled destination consumes reporting tokens independently. Local Syslog is display-only and never consumes tokens." side="right" />
+                              </p>
+                              <table className="w-full text-[12px]">
+                                <thead>
+                                  <tr className="text-[var(--muted-foreground)] border-b border-[var(--border)]">
+                                    <th className="pb-1 text-left w-6"></th>
+                                    <th className="pb-1 text-left">Destination</th>
+                                    <th className="pb-1 text-right pr-2">Events/Month</th>
+                                    <th className="pb-1 text-right">Tokens</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {REPORTING_DESTINATIONS.map(dest => {
+                                    const enabled = reportingDestEnabled[dest.id] ?? true;
+                                    const events = reportingDestEvents[dest.id] ?? 0;
+                                    const destResult = reportingBreakdown.find(r => r.destinationId === dest.id);
+                                    const tokens = dest.isDisplayOnly ? 0 : (destResult?.tokens ?? 0);
+                                    const ecosystemDefault = Math.round(liveLogVolume * 0.4);
+                                    return (
+                                      <tr key={dest.id} className="border-b border-[var(--border)]/50 last:border-0">
+                                        <td className="py-1.5">
+                                          <input
+                                            type="checkbox"
+                                            className="w-3.5 h-3.5 accent-[var(--infoblox-orange)]"
+                                            checked={enabled}
+                                            onChange={e => setReportingDestEnabled(prev => ({ ...prev, [dest.id]: e.target.checked }))}
+                                          />
+                                        </td>
+                                        <td className="py-1.5">
+                                          <span className={enabled ? '' : 'text-[var(--muted-foreground)]'}>{dest.label}</span>
+                                          {dest.isDisplayOnly && (
+                                            <span className="ml-1 text-[10px] text-[var(--muted-foreground)]">(display only)</span>
+                                          )}
+                                        </td>
+                                        <td className="py-1.5 pr-2 text-right">
+                                          <div className="flex flex-col items-end gap-0.5">
+                                            <input
+                                              type="number"
+                                              min={0}
+                                              className="w-28 border border-[var(--border)] rounded px-2 py-0.5 text-right text-[11px] focus:outline-none focus:ring-1 focus:ring-[var(--infoblox-orange)]"
+                                              value={events}
+                                              onChange={e => {
+                                                const val = Math.max(0, parseInt(e.target.value) || 0);
+                                                if (dest.id === 'ecosystem') {
+                                                  ecosystemManualOverride.current = val !== ecosystemDefault;
+                                                }
+                                                setReportingDestEvents(prev => ({ ...prev, [dest.id]: val }));
+                                              }}
+                                            />
+                                            {dest.id === 'ecosystem' && (
+                                              <span className="text-[10px] text-[var(--muted-foreground)]">default: 40% of log volume</span>
+                                            )}
+                                          </div>
+                                        </td>
+                                        <td className="py-1.5 text-right tabular-nums" style={{ fontWeight: enabled ? 600 : 400, color: enabled ? undefined : 'var(--muted-foreground)' }}>
+                                          {enabled ? tokens.toLocaleString() : '0'}
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
                           {/* Server Sizing (optional) - granular per-server entries */}
                           <div className="border-t border-[var(--border)] pt-3 mt-1">
                             <div className="flex items-center justify-between mb-2">
@@ -1853,6 +1974,9 @@ export function Wizard() {
                                           Tier: <span style={{ fontWeight: 600 }}>{tier.name}</span>
                                           {entry.formFactor === 'nios-xaas' && <span className="text-blue-600 ml-1">(XaaS, consolidated at scan)</span>}
                                         </span>
+                                        {entry.formFactor === 'nios-x' && tier.discAssets > 0 && (
+                                          <span className="text-blue-600 text-[10px]">Disc Assets: {tier.discAssets.toLocaleString()}</span>
+                                        )}
                                         <span style={{ fontWeight: 600 }}>
                                           {tier.serverTokens.toLocaleString()} tokens
                                         </span>
@@ -1874,6 +1998,20 @@ export function Wizard() {
                             )}
                           </div>
                         </div>
+                      {/* Validation warning banner — advisory only, never blocks submission */}
+                      {estimatorWarnings.length > 0 && (
+                        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 mx-4 mb-4">
+                          <p className="text-[12px] text-amber-800 font-medium mb-1.5">Sizing Notes</p>
+                          <ul className="space-y-1">
+                            {estimatorWarnings.map((w, i) => (
+                              <li key={i} className="flex items-start gap-1.5 text-[12px] text-amber-700">
+                                <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0 text-amber-500" />
+                                <span>{w}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
                       </div>
                     );
                   }
@@ -3240,7 +3378,7 @@ export function Wizard() {
                     <div>
                       <div className="flex items-center gap-1.5 text-[13px] text-[var(--muted-foreground)] mb-1">
                         Total Management Tokens
-                        <FieldTooltip text="The total number of Infoblox Universal DDI management tokens required for your environment. This drives the IB-TOKENS-UDDI-MGMT-1000 pack count." side="right" />
+                        <FieldTooltip text="Management tokens cover DDI Objects (1 token per 25 objects), Active IPs (1 token per 13 IPs), and Managed Assets (1 token per 3 assets). Pack size: 1,000 tokens. Growth buffer is included. Source: NOTES tab rows 12-20." side="right" />
                       </div>
                       <div className="text-[32px] text-[var(--infoblox-orange)]" style={{ fontWeight: 700 }}>
                         {totalTokens.toLocaleString()}
@@ -3274,7 +3412,7 @@ export function Wizard() {
                       <div className="border-l border-[var(--border)] pl-6">
                         <div className="flex items-center gap-1.5 text-[13px] text-[var(--muted-foreground)] mb-1">
                           Total Server Tokens
-                          <FieldTooltip text="Server tokens (IB-TOKENS-UDDI-SERV-500) cover NIOS-X appliances and XaaS instances based on their performance tier. Separate from management tokens." side="right" />
+                          <FieldTooltip text="Server tokens (IB-TOKENS-UDDI-SERV-500) cover NIOS-X appliances and XaaS instances sized by QPS, LPS, and object count. Tier capacities range from 2XS (130 tokens) to XL (2,700 tokens) for NIOS-X. Separate from management tokens. No growth buffer applied. Source: NOTES tab rows 21-30." side="right" />
                         </div>
                         <div className="text-[32px] text-blue-700" style={{ fontWeight: 700 }}>
                           {totalServerTokens.toLocaleString()}
@@ -3496,7 +3634,7 @@ export function Wizard() {
                         <td className="py-2.5 text-[var(--muted-foreground)]">
                           <span className="flex items-center gap-1">
                             Server Token Pack (500 tokens)
-                            <FieldTooltip text="Covers NIOS-X appliances and XaaS instances sized by QPS, LPS, and object count. Pack size: 500 tokens. Separate from management tokens - no growth buffer applied." side="top" />
+                            <FieldTooltip text="Server tokens (IB-TOKENS-UDDI-SERV-500) cover NIOS-X appliances and XaaS instances sized by QPS, LPS, and object count. Tier capacities range from 2XS (130 tokens) to XL (2,700 tokens) for NIOS-X. Separate from management tokens. No growth buffer applied. Source: NOTES tab rows 21-30." side="top" />
                           </span>
                         </td>
                         <td className="py-2.5 text-right tabular-nums" style={{ fontWeight: 600 }}>{Math.ceil(totalServerTokens / 500).toLocaleString()}</td>
@@ -3508,7 +3646,7 @@ export function Wizard() {
                         <td className="py-2.5 text-[var(--muted-foreground)]">
                           <span className="flex items-center gap-1">
                             Reporting Token Pack (40 tokens)
-                            <FieldTooltip text="Covers DNS protocol and DHCP lease log forwarding. Calculated from monthly log volume across three destination types (CSP active search: 80 tk/10M events, S3: 40 tk/10M, Ecosystem: 40 tk/10M). Pack size: 40 tokens." side="top" />
+                            <FieldTooltip text="Reporting tokens (IB-TOKENS-REPORTING-40) cover DNS protocol and DHCP lease log forwarding. Rate: CSP=80 tokens per 10M events, S3 Bucket=40, Ecosystem (CDC)=40. Local Syslog is display-only and contributes 0 tokens. Ecosystem receives 40% of total log volume by default. Growth buffer is applied. Source: NOTES tab rows 31-44." side="top" />
                           </span>
                         </td>
                         <td className="py-2.5 text-right tabular-nums" style={{ fontWeight: 600 }}>{Math.ceil(reportingTokens / 40).toLocaleString()}</td>

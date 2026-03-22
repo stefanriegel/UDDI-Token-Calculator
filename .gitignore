@@ -25,6 +25,7 @@ frontend/node_modules/
 
 # GSD agent workspace — local only, never committed
 .gsd/
+.gsd-backup-*/
 
 # Editor / IDE
 *.swp

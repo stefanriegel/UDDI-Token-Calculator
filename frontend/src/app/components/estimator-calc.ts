@@ -82,7 +82,68 @@ export interface EstimatorOutputs {
   serverTokens: number;
   /** Per-server token breakdown for UI display */
   serverTokenDetails: ServerTokenDetail[];
+  /**
+   * Per-destination reporting token breakdown. Populated by the wizard which owns
+   * destination toggle state; NOT populated by calcEstimator (always []).
+   */
+  reportingTokenBreakdown: ReportingDestinationResult[];
+  /**
+   * Total reporting tokens across enabled destinations with growth buffer applied.
+   * Populated by the wizard; NOT populated by calcEstimator (always 0).
+   */
+  totalReportingTokens: number;
 }
+
+// ── Reporting Token Types ──────────────────────────────────────────────────────
+
+/** Metadata for a single reporting destination (CSP, S3, Ecosystem, Local Syslog). */
+export interface ReportingDestination {
+  /** Stable identifier used in inputs/outputs (e.g. "csp", "s3", "ecosystem", "local-syslog") */
+  id: string;
+  /** Human-readable label shown in the UI */
+  label: string;
+  /** Reporting tokens per 10M events (0 for display-only destinations) */
+  rate: number;
+  /** When true the destination always contributes 0 tokens regardless of event count */
+  isDisplayOnly: boolean;
+}
+
+/** Input for a single destination in a calcReportingTokens call. */
+export interface ReportingDestinationInput {
+  /** Must match a ReportingDestination.id in REPORTING_DESTINATIONS */
+  destinationId: string;
+  /** Event count for this destination (e.g. monthlyLogVolume or monthlyLogVolume * 0.4) */
+  events: number;
+  /** When false, this destination contributes 0 tokens even if rate > 0 */
+  enabled: boolean;
+}
+
+/** Per-destination result returned by calcReportingTokens. */
+export interface ReportingDestinationResult {
+  /** Echoes the input destinationId */
+  destinationId: string;
+  /** Human-readable label from REPORTING_DESTINATIONS */
+  label: string;
+  /** Event count used in this calculation */
+  events: number;
+  /** Tokens contributed by this destination (0 when disabled or isDisplayOnly) */
+  tokens: number;
+  /** Echoes the input enabled flag */
+  enabled: boolean;
+}
+
+// ── Reporting Destinations Constant ────────────────────────────────────────────
+
+/**
+ * PM-approved destination list from CALCULATOR sheet.
+ * Rates are tokens per 10M events (ROUNDUP semantics via Math.ceil).
+ */
+export const REPORTING_DESTINATIONS: ReportingDestination[] = [
+  { id: 'csp',          label: 'CSP Active Search', rate: 80, isDisplayOnly: false },
+  { id: 's3',           label: 'S3 Bucket',         rate: 40, isDisplayOnly: false },
+  { id: 'ecosystem',    label: 'Ecosystem (CDC)',    rate: 40, isDisplayOnly: false },
+  { id: 'local-syslog', label: 'Local Syslog',       rate: 0,  isDisplayOnly: true  },
+];
 
 // ── Constants (spreadsheet defaults) ───────────────────────────────────────────
 
@@ -110,6 +171,62 @@ const DHCP_LEASE_HOURS = 1;        // average DHCP lease duration (hours)
 const DAYS_PER_MONTH = 31;
 const WORKDAYS_PER_MONTH = 22;
 const HOURS_PER_WORKDAY = 9;
+
+// ── Reporting Token Calc ───────────────────────────────────────────────────────
+
+/**
+ * Compute per-destination reporting token breakdown and total.
+ *
+ * Formula per enabled, non-display-only destination:
+ *   tokens = ROUNDUP(events / 10_000_000) * rate
+ *          = Math.ceil(events / 10_000_000) * rate
+ *
+ * Growth buffer is applied to the sum:
+ *   total = Math.ceil(sum * (1 + growthBufferPct))
+ *
+ * Local Syslog (isDisplayOnly) always contributes 0 regardless of enabled state
+ * or event count -- its rate is 0 by definition.
+ *
+ * The caller is responsible for deriving each destination's event count.
+ * Ecosystem (CDC) defaults to 40% of monthlyLogVolume (wizard responsibility).
+ *
+ * Failure visibility: if an unknown destinationId is passed, that input is skipped
+ * and does NOT appear in the breakdown. Callers can detect this by comparing
+ * breakdown.length to inputs.length.
+ *
+ * @param inputs       Per-destination event counts and enabled flags
+ * @param growthBufferPct  Fractional growth buffer (e.g. 0.15 for 15%)
+ */
+export function calcReportingTokens(
+  inputs: ReportingDestinationInput[],
+  growthBufferPct: number,
+): { breakdown: ReportingDestinationResult[]; total: number } {
+  const breakdown: ReportingDestinationResult[] = [];
+  let sum = 0;
+
+  for (const input of inputs) {
+    const dest = REPORTING_DESTINATIONS.find(d => d.id === input.destinationId);
+    if (!dest) continue; // unknown id -- skip silently; caller can detect via breakdown.length
+
+    const tokens =
+      input.enabled && !dest.isDisplayOnly
+        ? Math.ceil(input.events / 10_000_000) * dest.rate
+        : 0;
+
+    sum += tokens;
+    breakdown.push({
+      destinationId: input.destinationId,
+      label: dest.label,
+      events: input.events,
+      tokens,
+      enabled: input.enabled,
+    });
+  }
+
+  const total = breakdown.length === 0 ? 0 : Math.ceil(sum * (1 + growthBufferPct));
+
+  return { breakdown, total };
+}
 
 // ── Main Calc ──────────────────────────────────────────────────────────────────
 
@@ -246,5 +363,81 @@ export function calcEstimator(inputs: EstimatorInputs): EstimatorOutputs {
     monthlyLogVolume,
     serverTokens,
     serverTokenDetails,
+    reportingTokenBreakdown: [],
+    totalReportingTokens: 0,
   };
+}
+
+// ── Validation Warnings ────────────────────────────────────────────────────────
+
+/**
+ * Derive a list of non-blocking advisory warnings for the Manual Sizing Estimator.
+ * Each warning is a plain string — no em-dashes, no HTML markup.
+ *
+ * Five rules (source: ESTIMATOR spreadsheet advisory notes):
+ *   W1 — Discovered assets exceed active IPs (suggests a data entry error)
+ *   W2 — Protocol logging enabled but no server entries (incomplete sizing)
+ *   W3 — DDI-to-IP ratio is unusually low (modules may not be fully enabled)
+ *   W4 — Server entries defined with IPAM disabled (asset counts excluded)
+ *   W5 — Growth buffer is 0% (environment growth not accounted for)
+ *
+ * Observability: the returned array is rendered in the amber advisory banner in
+ * wizard.tsx. An empty array means no banner is shown. Each element maps to one
+ * list item. Future agents can inspect warnings by calling this function directly
+ * with the current estimatorAnswers state object.
+ *
+ * @param answers        Current estimator questionnaire answers
+ * @param growthBufferPct  Fractional growth buffer (e.g. 0.15 for 15%)
+ * @returns Array of warning strings; empty when all checks pass
+ */
+export function computeEstimatorWarnings(
+  answers: EstimatorInputs,
+  growthBufferPct: number,
+): string[] {
+  const warnings: string[] = [];
+
+  // W1: Assets exceed active IPs
+  if (
+    answers.enableIPAM &&
+    answers.assets !== undefined &&
+    answers.assets > answers.activeIPs
+  ) {
+    warnings.push(
+      `Discovered assets (${answers.assets.toLocaleString()}) exceed active IPs (${answers.activeIPs.toLocaleString()}). Verify the asset count is correct.`,
+    );
+  }
+
+  // W2: Protocol logging enabled but no server entries defined
+  if (
+    (answers.enableDNSProtocol || answers.enableDHCPLog) &&
+    answers.serverEntries.length === 0
+  ) {
+    warnings.push(
+      'Protocol logging is enabled but no server entries are defined. Add at least one server to complete the sizing.',
+    );
+  }
+
+  // W3: Low DDI-to-IP ratio
+  const out = calcEstimator(answers);
+  if (out.activeIPs > 0 && out.ddiObjects / out.activeIPs < 2) {
+    warnings.push(
+      'DDI object count relative to active IPs is unusually low. Verify that DNS and DHCP modules are enabled and the object counts are correct.',
+    );
+  }
+
+  // W4: Server entries defined but IPAM disabled
+  if (answers.serverEntries.length > 0 && !answers.enableIPAM) {
+    warnings.push(
+      'Server entries are defined but IPAM is disabled. Enable IPAM to include discovered asset counts in the estimate.',
+    );
+  }
+
+  // W5: Growth buffer is 0%
+  if (growthBufferPct === 0) {
+    warnings.push(
+      'Growth buffer is 0%. Consider adding at least 10-20% to account for environment growth over the subscription period.',
+    );
+  }
+
+  return warnings;
 }
