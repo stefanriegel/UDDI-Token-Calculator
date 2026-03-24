@@ -410,6 +410,7 @@ export function Wizard() {
   const [bomCopied, setBomCopied] = useState(false);
 
   // NIOS-specific state
+  const [efficientipAPIVersion, setEfficientipAPIVersion] = useState<'legacy' | 'v2'>('legacy');
   const [niosMode, setNiosMode] = useState<'backup' | 'wapi'>('backup');
   const [niosUploadedFile, setNiosUploadedFile] = useState<File | null>(null);
   const [niosDragOver, setNiosDragOver] = useState(false);
@@ -686,7 +687,12 @@ export function Wizard() {
         }
       } else if (providerId === 'efficientip') {
         // EfficientIP API
-        const creds = credentials.efficientip || {};
+        const authMethod = selectedAuthMethod['efficientip'] || 'credentials';
+        const creds = {
+          ...(credentials.efficientip || {}),
+          authMethod,
+          api_version: efficientipAPIVersion,
+        };
         const result = await apiValidateEfficientip(creds);
         if (result.valid) {
           setCredentialStatus((prev) => ({ ...prev, efficientip: 'valid' }));
@@ -2490,6 +2496,26 @@ export function Wizard() {
                                   />
                                   <p className="text-[11px] text-[var(--muted-foreground)] mt-1">
                                     Comma-separated list of site IDs to restrict scanning scope
+                                  </p>
+                                  <label className="block text-[12px] text-[var(--muted-foreground)] mb-1 mt-3">
+                                    API Version
+                                  </label>
+                                  <div className="flex gap-3">
+                                    {(['legacy', 'v2'] as const).map((v) => (
+                                      <label key={v} className="flex items-center gap-1.5 text-[12px] cursor-pointer">
+                                        <input
+                                          type="radio"
+                                          name="efficientip-api-version"
+                                          value={v}
+                                          checked={efficientipAPIVersion === v}
+                                          onChange={() => setEfficientipAPIVersion(v)}
+                                        />
+                                        {v === 'legacy' ? 'Legacy (/rest/)' : 'API v2.0 (/api/v2.0/)'}
+                                      </label>
+                                    ))}
+                                  </div>
+                                  <p className="text-[11px] text-[var(--muted-foreground)] mt-1">
+                                    Choose the API version that matches your SOLIDserver deployment
                                   </p>
                                 </div>
                               </details>
