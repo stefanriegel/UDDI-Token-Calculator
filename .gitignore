@@ -56,3 +56,6 @@ coverage/
 tmp/
 Thumbs.db
 .gsd
+
+# Caliber local state
+.caliber/
