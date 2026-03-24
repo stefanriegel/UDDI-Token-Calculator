@@ -166,7 +166,7 @@ func TestBuildEndpointURL_V2(t *testing.T) {
 		want    string
 	}{
 		{"dns_view_list", "https://host/api/v2.0/dns/view/list?"},
-		{"ip_site_list", "https://host/api/v2.0/ipam/site/list?"},
+		{"ip_site_list", "https://host/api/v2.0/ipam/space/list?"},
 		{"dhcp_range6_list", "https://host/api/v2.0/dhcp/range6/list?"},
 		{"member_list", "https://host/api/v2.0/app/node/list?"},
 		{"ip_address_list", "https://host/api/v2.0/ipam/address/list?"},
@@ -595,3 +595,198 @@ func TestScan_TokenAuth(t *testing.T) {
 		t.Errorf("views: got %d, want 1", found["EfficientIP DNS Views"])
 	}
 }
+
+// --- New tests: Endpoint Alignment + Response Parsing (S02/T01) ---
+
+// TestBuildEndpointURL_V2_IPAMPaths verifies the three corrected IPAM path entries.
+func TestBuildEndpointURL_V2_IPAMPaths(t *testing.T) {
+	cases := []struct {
+		service  string
+		wantSuffix string
+	}{
+		{"ip_site_list", "ipam/space/list"},
+		{"ip_subnet_list", "ipam/network/list"},
+		{"ip_subnet6_list", "ipam/network6/list"},
+	}
+	for _, tc := range cases {
+		got := buildEndpointURL("https://host", "v2", tc.service)
+		if !strings.Contains(got, tc.wantSuffix) {
+			t.Errorf("service %q: got %q, want it to contain %q", tc.service, got, tc.wantSuffix)
+		}
+	}
+}
+
+// TestCountService_V2ResponseWrapper verifies that countService correctly unwraps
+// the v2.0 response envelope {"success":true,"data":[...]} and counts elements.
+func TestCountService_V2ResponseWrapper(t *testing.T) {
+	pageOnce := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		offset := r.URL.Query().Get("offset")
+		if offset == "" || offset == "0" {
+			if !pageOnce {
+				pageOnce = true
+				// First page: 3 items wrapped in v2.0 envelope
+				_, _ = w.Write([]byte(`{"success":true,"data":[{"id":"1"},{"id":"2"},{"id":"3"}]}`))
+				return
+			}
+		}
+		// Subsequent pages: empty v2.0 envelope
+		_, _ = w.Write([]byte(`{"success":true,"data":[]}`))
+	}))
+	defer srv.Close()
+
+	s := New()
+	client := srv.Client()
+	count, _, err := s.countService(
+		context.Background(),
+		srv.URL, "basic", "v2", "admin", "secret", "", "",
+		client,
+		"dns_rr_list", "", false,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if count != 3 {
+		t.Fatalf("expected count 3, got %d", count)
+	}
+}
+
+// TestSplitDNSRecords_RrTypeField verifies that rr_type is the primary key used
+// for DNS record type classification, with "type" as a fallback.
+func TestSplitDNSRecords_RrTypeField(t *testing.T) {
+	records := []map[string]interface{}{
+		// rr_type wins over type
+		{"rr_type": "A", "type": "CNAME"},
+		// fallback to type when rr_type absent
+		{"type": "MX"},
+		// unsupported type is excluded from supported count
+		{"rr_type": "UNKNOWN_TYPE"},
+		// record with no type fields
+		{},
+	}
+
+	supported, unsupported := splitDNSRecords(records)
+
+	// Record 0: rr_type="A" → supported (would be CNAME if type was used, also supported)
+	// We verify rr_type is primary by using a case where only rr_type produces the expected split.
+	// Record 1: type="MX" → supported
+	// Record 2: rr_type="UNKNOWN_TYPE" → unsupported
+	// Record 3: no type → unsupported
+	if supported != 2 {
+		t.Errorf("supported: got %d, want 2", supported)
+	}
+	if unsupported != 2 {
+		t.Errorf("unsupported: got %d, want 2", unsupported)
+	}
+
+	// Confirm rr_type is primary: a record with rr_type="BOGUS" and type="A"
+	// should be unsupported (rr_type wins).
+	records2 := []map[string]interface{}{
+		{"rr_type": "BOGUS", "type": "A"},
+	}
+	sup2, unsup2 := splitDNSRecords(records2)
+	if sup2 != 0 || unsup2 != 1 {
+		t.Errorf("rr_type priority: expected 0 supported / 1 unsupported, got %d/%d", sup2, unsup2)
+	}
+}
+
+// TestScan_V2WrappedResponses runs a full Scan() against a mock server that
+// returns v2.0 wrapped responses ({"success":true,"data":[...]}) for all endpoints.
+func TestScan_V2WrappedResponses(t *testing.T) {
+	wrap := func(items string) string {
+		return `{"success":true,"data":` + items + `}`
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		path := r.URL.Path
+
+		// Auth probe uses /api/v2.0/app/node/list for v2 mode.
+		// Accept basic auth for the probe.
+		if strings.Contains(path, "app/node/list") || strings.Contains(path, "member_list") {
+			user, pass, ok := r.BasicAuth()
+			if ok && user == "admin" && pass == "secret" {
+				_, _ = w.Write([]byte(wrap(`[{"name":"node1"}]`)))
+				return
+			}
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+
+		switch {
+		case strings.Contains(path, "dns/view/list") || strings.Contains(path, "dns_view_list"):
+			_, _ = w.Write([]byte(wrap(`[{"name":"default"},{"name":"internal"}]`)))
+		case strings.Contains(path, "dns/zone/list") || strings.Contains(path, "dns_zone_list"):
+			_, _ = w.Write([]byte(wrap(`[{"name":"example.com"},{"name":"test.com"}]`)))
+		case strings.Contains(path, "dns/rr/list") || strings.Contains(path, "dns_rr_list"):
+			_, _ = w.Write([]byte(wrap(`[{"rr_type":"A"},{"rr_type":"AAAA"},{"rr_type":"MX"},{"rr_type":"BOGUS"}]`)))
+		case strings.Contains(path, "ipam/space/list"):
+			_, _ = w.Write([]byte(wrap(`[{"id":"1"},{"id":"2"}]`)))
+		case strings.Contains(path, "ipam/network/list") && !strings.Contains(path, "network6"):
+			_, _ = w.Write([]byte(wrap(`[{"id":"1"},{"id":"2"},{"id":"3"}]`)))
+		case strings.Contains(path, "ipam/network6/list"):
+			_, _ = w.Write([]byte(wrap(`[{"id":"1"}]`)))
+		default:
+			_, _ = w.Write([]byte(wrap(`[]`)))
+		}
+	}))
+	defer srv.Close()
+
+	s := New()
+	req := scanner.ScanRequest{
+		Provider: "efficientip",
+		Credentials: map[string]string{
+			"efficientip_url":             srv.URL,
+			"efficientip_username":        "admin",
+			"efficientip_password":        "secret",
+			"efficientip_api_version":     "v2",
+			"efficientip_auth_method":     "credentials",
+		},
+	}
+
+	var events []scanner.Event
+	rows, err := s.Scan(context.Background(), req, func(e scanner.Event) {
+		events = append(events, e)
+	})
+	if err != nil {
+		t.Fatalf("Scan with v2 wrapped responses failed: %v", err)
+	}
+	if len(rows) == 0 {
+		t.Fatal("expected non-empty FindingRow results from v2 Scan")
+	}
+
+	found := map[string]int{}
+	for _, r := range rows {
+		found[r.Item] = r.Count
+	}
+
+	// DNS records should be present with correct split
+	if found["EfficientIP DNS Records (Supported Types)"] == 0 {
+		t.Errorf("expected non-zero supported DNS records, got 0; all rows: %+v", found)
+	}
+	// 3 supported (A, AAAA, MX) + 1 unsupported (BOGUS)
+	if found["EfficientIP DNS Records (Supported Types)"] != 3 {
+		t.Errorf("supported DNS records: got %d, want 3", found["EfficientIP DNS Records (Supported Types)"])
+	}
+	if found["EfficientIP DNS Records (Unsupported Types)"] != 1 {
+		t.Errorf("unsupported DNS records: got %d, want 1", found["EfficientIP DNS Records (Unsupported Types)"])
+	}
+
+	// IPAM: spaces/networks correctly routed to corrected v2 paths
+	if found["EfficientIP IP Sites"] != 2 {
+		t.Errorf("IP Sites: got %d, want 2", found["EfficientIP IP Sites"])
+	}
+	if found["EfficientIP IP4 Subnets"] != 3 {
+		t.Errorf("IP4 Subnets: got %d, want 3", found["EfficientIP IP4 Subnets"])
+	}
+	if found["EfficientIP IP6 Subnets"] != 1 {
+		t.Errorf("IP6 Subnets: got %d, want 1", found["EfficientIP IP6 Subnets"])
+	}
+
+	// Verify events were published
+	if len(events) == 0 {
+		t.Error("expected progress events, got none")
+	}
+}
+
