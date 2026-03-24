@@ -122,11 +122,15 @@ type BluecatCredentials struct {
 // EfficientIPCredentials holds EfficientIP SOLIDserver authentication material.
 // No json tags — credentials must never be accidentally serialized.
 type EfficientIPCredentials struct {
-	URL      string
-	Username string
-	Password string
-	SkipTLS  bool
-	SiteIDs  []string // optional site ID filter
+	URL         string
+	Username    string
+	Password    string
+	SkipTLS     bool
+	SiteIDs     []string // optional site ID filter
+	AuthMethod  string   // "credentials" or "token"
+	TokenID     string   // API token ID (when AuthMethod == "token")
+	TokenSecret string   // API token secret (when AuthMethod == "token")
+	APIVersion  string   // "legacy" or "v2"
 }
 
 // NiosWAPICredentials holds NIOS WAPI live scanner authentication material.

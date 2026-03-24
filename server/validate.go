@@ -31,6 +31,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/masterzen/winrm"
 	pkgbrowser "github.com/pkg/browser"
+	"golang.org/x/crypto/sha3"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 
@@ -333,11 +334,15 @@ func storeCredentials(sess *session.Session, provider, authMethod string, creds 
 			}
 		}
 		sess.EfficientIP = &session.EfficientIPCredentials{
-			URL:      creds["efficientip_url"],
-			Username: creds["efficientip_username"],
-			Password: creds["efficientip_password"],
-			SkipTLS:  creds["skip_tls"] == "true",
-			SiteIDs:  siteIDs,
+			URL:         creds["efficientip_url"],
+			Username:    creds["efficientip_username"],
+			Password:    creds["efficientip_password"],
+			SkipTLS:     creds["skip_tls"] == "true",
+			SiteIDs:     siteIDs,
+			AuthMethod:  creds["authMethod"],
+			TokenID:     creds["efficientip_token_id"],
+			TokenSecret: creds["efficientip_token_secret"],
+			APIVersion:  creds["api_version"],
 		}
 	case "nios":
 		// Only store WAPI credentials when authMethod is "wapi".
@@ -1472,15 +1477,11 @@ func realBluecatValidator(ctx context.Context, creds map[string]string) ([]Subsc
 }
 
 // realEfficientIPValidator validates EfficientIP SOLIDserver credentials.
-// Tries HTTP Basic auth first, then native X-IPM headers with base64-encoded credentials.
+// Supports three auth modes: Basic, native X-IPM headers, and SHA3-256 token auth (SDS scheme).
 // Returns a single SubscriptionItem identifying the detected auth mode.
 func realEfficientIPValidator(ctx context.Context, creds map[string]string) ([]SubscriptionItem, error) {
 	baseURL := strings.TrimRight(creds["efficientip_url"], "/")
-	username := creds["efficientip_username"]
-	password := creds["efficientip_password"]
-	if baseURL == "" || username == "" || password == "" {
-		return nil, errors.New("efficientip_url, efficientip_username, and efficientip_password are required")
-	}
+	authMethod := creds["authMethod"]
 
 	skipTLS := creds["skip_tls"] == "true"
 	client := &http.Client{Timeout: 15 * time.Second}
@@ -1488,6 +1489,53 @@ func realEfficientIPValidator(ctx context.Context, creds map[string]string) ([]S
 		client.Transport = &http.Transport{
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
 		}
+	}
+
+	if authMethod == "token" {
+		// Token auth: validate URL, tokenID, and tokenSecret; probe with SHA3 signature.
+		tokenID := creds["efficientip_token_id"]
+		tokenSecret := creds["efficientip_token_secret"]
+		if baseURL == "" || tokenID == "" || tokenSecret == "" {
+			return nil, errors.New("efficientip_url, efficientip_token_id, and efficientip_token_secret are required")
+		}
+
+		// Build probe URL — use v2.0 path if api_version is "v2"
+		var probeURL string
+		if creds["api_version"] == "v2" {
+			probeURL = baseURL + "/api/v2.0/app/node/list?limit=1&offset=0"
+		} else {
+			probeURL = baseURL + "/rest/member_list?limit=1&offset=0"
+		}
+
+		tokenReq, err := http.NewRequestWithContext(ctx, "GET", probeURL, nil)
+		if err != nil {
+			return nil, fmt.Errorf("efficientip: failed to create token request: %w", err)
+		}
+		// Compute SHA3-256 SDS signature inline (same formula as setTokenAuth in scanner).
+		ts := time.Now().Unix()
+		sigInput := fmt.Sprintf("%s\n%d\n%s\n%s", tokenSecret, ts, tokenReq.Method, tokenReq.URL.String())
+		sum := sha3.Sum256([]byte(sigInput))
+		tokenReq.Header.Set("Authorization", fmt.Sprintf("SDS %s:%x", tokenID, sum))
+		tokenReq.Header.Set("X-SDS-TS", fmt.Sprintf("%d", ts))
+		tokenReq.Header.Set("Accept", "application/json")
+
+		resp, err := client.Do(tokenReq)
+		if err != nil {
+			return nil, fmt.Errorf("efficientip: token auth connection failed: %w", err)
+		}
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode >= 400 {
+			return nil, fmt.Errorf("efficientip: token auth failed: HTTP %d from %s", resp.StatusCode, tokenReq.URL.Path)
+		}
+		return []SubscriptionItem{{ID: "efficientip", Name: "EfficientIP (Token auth)"}}, nil
+	}
+
+	// Credentials auth: require URL, username, password.
+	username := creds["efficientip_username"]
+	password := creds["efficientip_password"]
+	if baseURL == "" || username == "" || password == "" {
+		return nil, errors.New("efficientip_url, efficientip_username, and efficientip_password are required")
 	}
 
 	probeURL := baseURL + "/rest/member_list?limit=1&offset=0"

@@ -6,8 +6,11 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
+
+	"golang.org/x/crypto/sha3"
 
 	"github.com/stefanriegel/UDDI-Token-Calculator/internal/calculator"
 	"github.com/stefanriegel/UDDI-Token-Calculator/internal/scanner"
@@ -61,7 +64,7 @@ func TestAuthenticate_BasicSuccess(t *testing.T) {
 
 	s := New()
 	client := srv.Client()
-	mode, err := s.authenticate(context.Background(), srv.URL, "admin", "secret", client)
+	mode, err := s.authenticate(context.Background(), srv.URL, "credentials", "legacy", "admin", "secret", "", "", client)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -88,7 +91,7 @@ func TestAuthenticate_NativeFallback(t *testing.T) {
 
 	s := New()
 	client := srv.Client()
-	mode, err := s.authenticate(context.Background(), srv.URL, "admin", "secret", client)
+	mode, err := s.authenticate(context.Background(), srv.URL, "credentials", "legacy", "admin", "secret", "", "", client)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -105,9 +108,113 @@ func TestAuthenticate_BothFail(t *testing.T) {
 
 	s := New()
 	client := srv.Client()
-	_, err := s.authenticate(context.Background(), srv.URL, "admin", "wrong", client)
+	_, err := s.authenticate(context.Background(), srv.URL, "credentials", "legacy", "admin", "wrong", "", "", client)
 	if err == nil {
 		t.Fatal("expected error when both auth modes fail")
+	}
+}
+
+// --- token auth tests ---
+
+func TestSetTokenAuth_SignatureFormat(t *testing.T) {
+	req, err := http.NewRequest(http.MethodGet, "https://host/rest/member_list?limit=1&offset=0", nil)
+	if err != nil {
+		t.Fatalf("failed to create request: %v", err)
+	}
+	fullURL := req.URL.String()
+	tokenID := "tid"
+	tokenSecret := "sec"
+
+	setTokenAuth(req, tokenID, tokenSecret, fullURL)
+
+	authHeader := req.Header.Get("Authorization")
+	tsHeader := req.Header.Get("X-SDS-TS")
+
+	if !strings.HasPrefix(authHeader, "SDS tid:") {
+		t.Fatalf("Authorization header does not start with 'SDS tid:': %q", authHeader)
+	}
+	if tsHeader == "" {
+		t.Fatal("X-SDS-TS header is missing")
+	}
+
+	// Reconstruct expected signature from the captured timestamp
+	ts, err := strconv.ParseInt(tsHeader, 10, 64)
+	if err != nil {
+		t.Fatalf("X-SDS-TS is not a valid integer: %q", tsHeader)
+	}
+	input := fmt.Sprintf("%s\n%d\n%s\n%s", tokenSecret, ts, http.MethodGet, fullURL)
+	expected := sha3.Sum256([]byte(input))
+	expectedHex := fmt.Sprintf("%x", expected)
+
+	gotHex := strings.TrimPrefix(authHeader, "SDS tid:")
+	if gotHex != expectedHex {
+		t.Fatalf("SHA3-256 mismatch:\n  got:  %s\n  want: %s", gotHex, expectedHex)
+	}
+}
+
+func TestBuildEndpointURL_Legacy(t *testing.T) {
+	got := buildEndpointURL("https://host", "legacy", "dns_view_list")
+	want := "https://host/rest/dns_view_list?"
+	if got != want {
+		t.Fatalf("legacy url: got %q, want %q", got, want)
+	}
+}
+
+func TestBuildEndpointURL_V2(t *testing.T) {
+	tests := []struct {
+		service string
+		want    string
+	}{
+		{"dns_view_list", "https://host/api/v2.0/dns/view/list?"},
+		{"ip_site_list", "https://host/api/v2.0/ipam/site/list?"},
+		{"dhcp_range6_list", "https://host/api/v2.0/dhcp/range6/list?"},
+		{"member_list", "https://host/api/v2.0/app/node/list?"},
+		{"ip_address_list", "https://host/api/v2.0/ipam/address/list?"},
+		{"dhcp_scope_list", "https://host/api/v2.0/dhcp/scope/list?"},
+	}
+	for _, tt := range tests {
+		got := buildEndpointURL("https://host", "v2", tt.service)
+		if got != tt.want {
+			t.Errorf("v2 service %q: got %q, want %q", tt.service, got, tt.want)
+		}
+	}
+}
+
+func TestAuthenticate_TokenSuccess(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth := r.Header.Get("Authorization")
+		ts := r.Header.Get("X-SDS-TS")
+		if strings.HasPrefix(auth, "SDS ") && ts != "" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`[]`))
+			return
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	s := New()
+	client := srv.Client()
+	mode, err := s.authenticate(context.Background(), srv.URL, "token", "legacy", "", "", "tid", "sec", client)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if mode != "token" {
+		t.Fatalf("expected token, got %q", mode)
+	}
+}
+
+func TestAuthenticate_TokenFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	s := New()
+	client := srv.Client()
+	_, err := s.authenticate(context.Background(), srv.URL, "token", "legacy", "", "", "tid", "badsec", client)
+	if err == nil {
+		t.Fatal("expected error for token auth failure")
 	}
 }
 
@@ -139,7 +246,7 @@ func TestPagination(t *testing.T) {
 
 	s := New()
 	client := srv.Client()
-	count, _, err := s.countService(context.Background(), srv.URL, "basic", "admin", "secret", client, "test_list", "", false)
+	count, _, err := s.countService(context.Background(), srv.URL, "basic", "legacy", "admin", "secret", "", "", client, "test_list", "", false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -176,7 +283,7 @@ func TestDNSCounting(t *testing.T) {
 
 	s := New()
 	client := srv.Client()
-	rows, err := s.collectDNS(context.Background(), srv.URL, "basic", "admin", "secret", client, "", func(scanner.Event) {})
+	rows, err := s.collectDNS(context.Background(), srv.URL, "basic", "legacy", "admin", "secret", "", "", client, "", func(scanner.Event) {})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -228,7 +335,7 @@ func TestIPAMDHCPCounting(t *testing.T) {
 
 	s := New()
 	client := srv.Client()
-	rows, err := s.collectIPAMDHCP(context.Background(), srv.URL, "basic", "admin", "secret", client, "", func(scanner.Event) {})
+	rows, err := s.collectIPAMDHCP(context.Background(), srv.URL, "basic", "legacy", "admin", "secret", "", "", client, "", func(scanner.Event) {})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -268,7 +375,7 @@ func TestSiteFiltering(t *testing.T) {
 	s := New()
 	client := srv.Client()
 	whereClause := s.siteWhereClause([]string{"10", "20"})
-	_, _, err := s.countService(context.Background(), srv.URL, "basic", "admin", "secret", client, "ip_subnet_list", whereClause, false)
+	_, _, err := s.countService(context.Background(), srv.URL, "basic", "legacy", "admin", "secret", "", "", client, "ip_subnet_list", whereClause, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -430,5 +537,61 @@ func TestFindingRowMapping(t *testing.T) {
 		if r.Region != "" {
 			t.Errorf("region: got %q, want empty", r.Region)
 		}
+	}
+}
+
+// --- TestScan_TokenAuth: full Scan with token auth ---
+
+func TestScan_TokenAuth(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// All endpoints require SDS token auth
+		auth := r.Header.Get("Authorization")
+		ts := r.Header.Get("X-SDS-TS")
+		if !strings.HasPrefix(auth, "SDS tid:") || ts == "" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		path := r.URL.Path
+		switch {
+		case strings.Contains(path, "member_list") || strings.Contains(path, "node/list"):
+			_ = json.NewEncoder(w).Encode([]map[string]string{{"name": "node1"}})
+		case strings.Contains(path, "dns_view_list") || strings.Contains(path, "dns/view/list"):
+			_ = json.NewEncoder(w).Encode([]map[string]string{{"name": "default"}})
+		case strings.Contains(path, "dns_zone_list") || strings.Contains(path, "dns/zone/list"):
+			_ = json.NewEncoder(w).Encode([]map[string]string{{"name": "example.com"}})
+		case strings.Contains(path, "dns_rr_list") || strings.Contains(path, "dns/rr/list"):
+			_ = json.NewEncoder(w).Encode([]map[string]string{{"rr_type": "A"}, {"rr_type": "AAAA"}})
+		default:
+			_ = json.NewEncoder(w).Encode([]map[string]string{})
+		}
+	}))
+	defer srv.Close()
+
+	s := New()
+	req := scanner.ScanRequest{
+		Provider: "efficientip",
+		Credentials: map[string]string{
+			"efficientip_url":         srv.URL,
+			"efficientip_auth_method": "token",
+			"efficientip_token_id":    "tid",
+			"efficientip_token_secret": "sec",
+		},
+	}
+
+	rows, err := s.Scan(context.Background(), req, func(scanner.Event) {})
+	if err != nil {
+		t.Fatalf("Scan with token auth failed: %v", err)
+	}
+	if len(rows) == 0 {
+		t.Fatal("expected non-empty rows from token auth scan")
+	}
+	// Verify DNS views row is present
+	found := map[string]int{}
+	for _, r := range rows {
+		found[r.Item] = r.Count
+	}
+	if found["EfficientIP DNS Views"] != 1 {
+		t.Errorf("views: got %d, want 1", found["EfficientIP DNS Views"])
 	}
 }
