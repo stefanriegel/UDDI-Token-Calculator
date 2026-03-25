@@ -143,35 +143,72 @@ func (h *ScanHandler) HandleGetScanStatus(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// niosMaxUploadBytes is the hard cap on the total multipart request body for NIOS
+// backup uploads. NIOS Grid databases from production environments can easily
+// exceed several gigabytes, so we set a generous 10 GB limit to prevent 413
+// errors for large but legitimate backups.
+const niosMaxUploadBytes = 10 << 30 // 10 GB
+
 // HandleUploadNiosBackup handles POST /api/v1/providers/nios/upload.
 //
-// Accepts a multipart form upload with a "file" field containing a .tar.gz, .tgz, or .bak
-// NIOS backup file (max 500 MB). Parses the embedded onedb.xml to extract Grid Member
-// hostnames and service roles. Writes the file to os.TempDir and returns an opaque
+// Accepts a multipart form upload with a "file" field containing a .tar.gz, .tgz,
+// .bak, or .xml NIOS backup file (max 10 GB). Uses streaming multipart parsing
+// (r.MultipartReader) to avoid buffering the entire request body in memory — this
+// allows arbitrarily large archives to be uploaded without hitting memory pressure
+// or the body-size limit that plagued ParseMultipartForm.
+//
+// Parses the embedded onedb.xml to extract Grid Member hostnames and service roles.
+// Writes only the extracted onedb.xml to os.TempDir and returns an opaque
 // BackupToken that the frontend must pass back in the scan-start request.
 // Also creates a new session and sets the ddi_session cookie so the subsequent
 // POST /api/v1/scan can find the session (same flow as validate for other providers).
 func (h *ScanHandler) HandleUploadNiosBackup(w http.ResponseWriter, r *http.Request) {
-	// Limit the entire request body to 500 MB before parsing.
-	r.Body = http.MaxBytesReader(w, r.Body, 500<<20)
+	// Cap the raw request body to prevent runaway uploads.
+	// Use a generous 10 GB limit so production NIOS Grid databases (which can be
+	// several GB) are never rejected with 413 due to an artificially small cap.
+	r.Body = http.MaxBytesReader(w, r.Body, niosMaxUploadBytes)
 
-	if err := r.ParseMultipartForm(500 << 20); err != nil {
-		if strings.Contains(err.Error(), "request body too large") || strings.Contains(err.Error(), "http: request body too large") {
-			http.Error(w, "file too large (max 500 MB)", http.StatusRequestEntityTooLarge)
-			return
-		}
-		writeJSON(w, http.StatusBadRequest, NiosUploadResponse{Valid: false, Error: "failed to parse multipart form: " + err.Error(), Members: []NiosGridMember{}})
+	// Use MultipartReader (streaming) instead of ParseMultipartForm (buffering).
+	// ParseMultipartForm would try to read the entire file into memory (up to
+	// maxMemory bytes) before spilling to disk, causing 413 or OOM for large files.
+	// MultipartReader streams each part on-demand without any intermediate buffering.
+	mr, err := r.MultipartReader()
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, NiosUploadResponse{Valid: false, Error: "failed to parse multipart request: " + err.Error(), Members: []NiosGridMember{}})
 		return
 	}
 
-	file, header, err := r.FormFile("file")
-	if err != nil {
+	// Iterate over parts until we find the "file" field.
+	var filePart io.Reader
+	var filename string
+	for {
+		part, err := mr.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			if strings.Contains(err.Error(), "request body too large") || strings.Contains(err.Error(), "http: request body too large") {
+				writeJSON(w, http.StatusRequestEntityTooLarge, NiosUploadResponse{Valid: false, Error: fmt.Sprintf("file too large (max %d GB)", niosMaxUploadBytes>>30), Members: []NiosGridMember{}})
+				return
+			}
+			writeJSON(w, http.StatusBadRequest, NiosUploadResponse{Valid: false, Error: "error reading multipart stream: " + err.Error(), Members: []NiosGridMember{}})
+			return
+		}
+		if part.FormName() == "file" {
+			filePart = part
+			filename = part.FileName()
+			break
+		}
+		// Skip non-file parts (e.g. other form fields).
+		io.Copy(io.Discard, part) //nolint:errcheck
+	}
+
+	if filePart == nil {
 		writeJSON(w, http.StatusBadRequest, NiosUploadResponse{Valid: false, Error: "missing file field", Members: []NiosGridMember{}})
 		return
 	}
-	defer file.Close()
 
-	name := strings.ToLower(header.Filename)
+	name := strings.ToLower(filename)
 	isXML := strings.HasSuffix(name, ".xml")
 	isArchive := strings.HasSuffix(name, ".tar.gz") || strings.HasSuffix(name, ".tgz") || strings.HasSuffix(name, ".bak")
 	if !isXML && !isArchive {
@@ -180,7 +217,7 @@ func (h *ScanHandler) HandleUploadNiosBackup(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Write onedb.xml to a temp file while parsing members simultaneously.
-	// For archives: extract onedb.xml from gzip+tar (single decompression).
+	// For archives: extract onedb.xml from gzip+tar (single streaming pass).
 	// For raw .xml: copy directly (no decompression needed).
 	tmp, err := os.CreateTemp("", "nios-onedb-*.xml")
 	if err != nil {
@@ -194,14 +231,14 @@ func (h *ScanHandler) HandleUploadNiosBackup(w http.ResponseWriter, r *http.Requ
 	if isXML {
 		// Raw onedb.xml upload — TeeReader to temp + parse in one pass.
 		bw := bufio.NewWriterSize(tmp, 256<<10)
-		tee := io.TeeReader(file, bw)
+		tee := io.TeeReader(filePart, bw)
 		members, parseErr = parseOneDBXML(tee)
 		if flushErr := bw.Flush(); flushErr != nil && parseErr == nil {
 			parseErr = flushErr
 		}
 	} else {
 		// Archive upload — decompress, find onedb.xml, extract + parse.
-		gz, gzErr := gzip.NewReader(file)
+		gz, gzErr := gzip.NewReader(filePart)
 		if gzErr != nil {
 			tmp.Close()
 			os.Remove(tmp.Name())
