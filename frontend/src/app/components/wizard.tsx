@@ -78,7 +78,7 @@ import {
   type ConsolidatedXaasInstance,
 } from './mock-data';
 import { calcEstimator, calcReportingTokens, computeEstimatorWarnings, REPORTING_DESTINATIONS, EstimatorDefaults, type EstimatorInputs, type ReportingDestinationInput, type ReportingDestinationResult, type ServerEntry, type ServerTokenDetail } from './estimator-calc';
-import { exportSession } from './session-io';
+import { exportSession, importSession, type SessionSnapshot } from './session-io';
 type Step = 'providers' | 'credentials' | 'sources' | 'scanning' | 'results';
 type SortColumn = 'provider' | 'source' | 'category' | 'item' | 'count' | 'managementTokens';
 type SortDir = 'asc' | 'desc';
@@ -353,6 +353,8 @@ export function Wizard() {
   });
   const [deviceCodeMessage, setDeviceCodeMessage] = useState<string>('');
   const [scanError, setScanError] = useState<string>('');
+  const [importError, setImportError] = useState<string>('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const scanIntervalsRef = useRef<ReturnType<typeof setInterval>[]>([]);
   const [showSecrets, setShowSecrets] = useState<Record<string, boolean>>({});
   const [selectedAuthMethod, setSelectedAuthMethod] = useState<Record<ProviderType, string>>({
@@ -1508,6 +1510,27 @@ export function Wizard() {
     downloadFile(json, `ddi-session-${date}.json`, 'application/json');
   };
 
+  const restoreSession = (snapshot: SessionSnapshot) => {
+    restart();
+    setSelectedProviders(snapshot.selectedProviders);
+    setFindings(snapshot.findings);
+    setCountOverrides(snapshot.countOverrides);
+    setNiosMigrationMap(new Map(Object.entries(snapshot.niosMigrationMap)));
+    setAdMigrationMap(new Map(Object.entries(snapshot.adMigrationMap)));
+    setNiosServerMetrics(snapshot.niosServerMetrics);
+    setAdServerMetrics(snapshot.adServerMetrics);
+    setEstimatorAnswers(snapshot.estimatorAnswers);
+    setGrowthBufferPct(snapshot.growthBufferPct);
+    setReportingDestEnabled(snapshot.reportingDestEnabled);
+    setReportingDestEvents(snapshot.reportingDestEvents);
+    // Recompute derived estimator state so server tokens display correctly
+    const out = calcEstimator(snapshot.estimatorAnswers);
+    setEstimatorMonthlyLogVolume(out.monthlyLogVolume);
+    setEstimatorServerTokens(out.serverTokens);
+    setEstimatorServerDetails(out.serverTokenDetails);
+    setCurrentStep('results');
+  };
+
   const downloadFile = (content: string, filename: string, type: string) => {
     const blob = new Blob([content], { type });
     const url = URL.createObjectURL(blob);
@@ -1716,6 +1739,41 @@ export function Wizard() {
                     </button>
                   );
                 })}
+              </div>
+              {/* Load Session */}
+              <div className="mt-4">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".json"
+                  className="hidden"
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    e.target.value = '';
+                    try {
+                      const snapshot = await importSession(file);
+                      setImportError('');
+                      restoreSession(snapshot);
+                    } catch (err) {
+                      setImportError(err instanceof Error ? err.message : 'Failed to load session file.');
+                    }
+                  }}
+                />
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex items-center gap-2 px-4 py-2.5 text-[13px] rounded-xl border border-[var(--border)] bg-white hover:bg-gray-50 transition-colors"
+                  style={{ fontWeight: 500 }}
+                >
+                  <Upload className="w-4 h-4" />
+                  Load Session
+                </button>
+                {importError && (
+                  <div className="mt-2 flex items-start gap-2 p-3 bg-red-50 rounded-lg border border-red-200">
+                    <AlertCircle className="w-4 h-4 text-red-500 mt-0.5 shrink-0" />
+                    <p className="text-[13px] text-red-700">{importError}</p>
+                  </div>
+                )}
               </div>
             </div>
           )}
