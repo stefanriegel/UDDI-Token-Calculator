@@ -1139,12 +1139,16 @@ export function Wizard() {
     hybridMgmt += effectiveFindings.filter(f => f.provider !== 'nios').reduce((s, f) => s + f.managementTokens, 0);
     if (hasNiosSelections) {
       const nf = effectiveFindings.filter(f => f.provider === 'nios');
-      // Migrating members → UDDI management tokens
-      hybridMgmt += nf.filter(f => niosMigrationMap.has(f.source)).reduce((s, f) => s + f.managementTokens, 0);
+      // Migrating members → UDDI native rates (25/13/3), recalculated from raw counts
+      hybridMgmt += nf
+        .filter(f => niosMigrationMap.has(f.source))
+        .reduce((s, f) => s + Math.ceil(f.count / TOKEN_RATES[f.category as keyof typeof TOKEN_RATES || 'DDI Object']), 0);
       // Staying members → NIOS licensing (no UDDI mgmt tokens)
     } else if (selectedProviders.includes('nios')) {
-      // No NIOS selections → treat all NIOS as migrated (full universal DDI baseline)
-      hybridMgmt += effectiveFindings.filter(f => f.provider === 'nios').reduce((s, f) => s + f.managementTokens, 0);
+      // No NIOS selections → treat all NIOS as migrated (full universal DDI baseline at native rates)
+      hybridMgmt += effectiveFindings
+        .filter(f => f.provider === 'nios')
+        .reduce((s, f) => s + Math.ceil(f.count / (TOKEN_RATES[f.category as keyof typeof TOKEN_RATES] ?? 25)), 0);
     }
 
     // ── Server tokens ──────────────────────────────────────────────────────
@@ -1256,7 +1260,7 @@ export function Wizard() {
       const nf = effectiveFindings.filter((f) => f.provider === 'nios');
       const nonNios = effectiveFindings.filter((f) => f.provider !== 'nios').reduce((s, f) => s + f.managementTokens, 0);
       const allNios = calcNiosTokens(nf);
-      const migrating = nf.filter((f) => niosMigrationMap.has(f.source)).reduce((s, f) => s + f.managementTokens, 0);
+      const migrating = nf.filter((f) => niosMigrationMap.has(f.source)).reduce((s, f) => s + Math.ceil(f.count / (TOKEN_RATES[f.category as keyof typeof TOKEN_RATES] ?? 25)), 0);
       const stayingNios = calcNiosTokens(nf.filter((f) => !niosMigrationMap.has(f.source)));
       summary += `\n\nNIOS-X Migration Planner`;
       summary += `\nScenario,UDDI Tokens,NIOS Licensing Tokens`;
@@ -1376,7 +1380,7 @@ export function Wizard() {
       const nf = effectiveFindings.filter((f) => f.provider === 'nios');
       const nonNios = effectiveFindings.filter((f) => f.provider !== 'nios').reduce((s, f) => s + f.managementTokens, 0);
       const allNios = calcNiosTokens(nf);
-      const migrating = nf.filter((f) => niosMigrationMap.has(f.source)).reduce((s, f) => s + f.managementTokens, 0);
+      const migrating = nf.filter((f) => niosMigrationMap.has(f.source)).reduce((s, f) => s + Math.ceil(f.count / (TOKEN_RATES[f.category as keyof typeof TOKEN_RATES] ?? 25)), 0);
       const stayingNios = calcNiosTokens(nf.filter((f) => !niosMigrationMap.has(f.source)));
       html += '<br/><h3>NIOS-X Migration Planner</h3>';
       html += '<table border="1" cellpadding="4" cellspacing="0">';
@@ -4028,15 +4032,15 @@ export function Wizard() {
                 const nonNiosTokens = effectiveFindings.filter((f) => f.provider !== 'nios').reduce((s, f) => s + f.managementTokens, 0);
                 // NIOS Licensing column uses NIOS ratios (50/25/13), not UDDI ratios
                 const allNiosTokens = calcNiosTokens(niosFindings);
-                // UDDI tokens for all NIOS findings (used in Full Migration scenario)
-                const allNiosUddiTokens = niosFindings.reduce((s, f) => s + f.managementTokens, 0);
+                // UDDI tokens for all NIOS findings (used in Full Migration scenario) — native rates
+                const allNiosUddiTokens = niosFindings.reduce((s, f) => s + Math.ceil(f.count / (TOKEN_RATES[f.category as keyof typeof TOKEN_RATES] ?? 25)), 0);
 
                 const stayingFindings = niosFindings.filter((f) => !niosMigrationMap.has(f.source));
                 const stayingTokens = calcNiosTokens(stayingFindings);
-                // Migrating tokens use UDDI ratios (they move to UDDI licensing)
+                // Migrating tokens use UDDI native rates (they move to UDDI licensing)
                 const migratingTokens = niosFindings
                   .filter((f) => niosMigrationMap.has(f.source))
-                  .reduce((s, f) => s + f.managementTokens, 0);
+                  .reduce((s, f) => s + Math.ceil(f.count / (TOKEN_RATES[f.category as keyof typeof TOKEN_RATES] ?? 25)), 0);
 
                 const niosXCount = Array.from(niosMigrationMap.values()).filter(v => v === 'nios-x').length;
                 const xaasCount = Array.from(niosMigrationMap.values()).filter(v => v === 'nios-xaas').length;
