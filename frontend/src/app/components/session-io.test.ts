@@ -3,11 +3,13 @@ import {
   exportSession,
   importSession,
   validateSessionSchema,
+  mergeFindings,
   SESSION_FORMAT_VERSION,
   type SessionExportInput,
   type SessionSnapshot,
 } from './session-io';
 import { EstimatorDefaults } from './estimator-calc';
+import type { ProviderType, FindingRow } from './mock-data';
 
 // Minimal base input shared across tests.
 const baseInput: SessionExportInput = {
@@ -152,5 +154,55 @@ describe('importSession', () => {
   it('rejects with "File is not valid JSON." for non-JSON content', async () => {
     const file = makeFile('this is not JSON {{ broken');
     await expect(importSession(file)).rejects.toThrow('File is not valid JSON.');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// mergeFindings
+// ---------------------------------------------------------------------------
+
+describe('mergeFindings', () => {
+  // Minimal fixture factory — only provider and item matter for merge logic.
+  const row = (provider: ProviderType, item = 'test-item'): FindingRow => ({
+    provider,
+    source: 'test-source',
+    category: 'DDI Object',
+    item,
+    count: 1,
+    tokensPerUnit: 1,
+    managementTokens: 1,
+  });
+
+  it('retains imported provider rows and appends live rows from a different provider', () => {
+    const imported = [row('nios', 'nios-item')];
+    const live = [row('aws', 'aws-item')];
+    const result = mergeFindings(imported, new Set(['nios']), live, ['aws']);
+    expect(result).toHaveLength(2);
+    expect(result.some(r => r.provider === 'nios' && r.item === 'nios-item')).toBe(true);
+    expect(result.some(r => r.provider === 'aws' && r.item === 'aws-item')).toBe(true);
+  });
+
+  it('replaces imported findings when the same provider is live-scanned', () => {
+    const imported = [row('nios', 'old-item')];
+    const live = [row('nios', 'new-item')];
+    const result = mergeFindings(imported, new Set(['nios']), live, ['nios']);
+    expect(result).toHaveLength(1);
+    expect(result[0].item).toBe('new-item');
+  });
+
+  it('returns liveFindings unchanged when importedProviders is empty', () => {
+    const live = [row('aws', 'aws-item'), row('gcp', 'gcp-item')];
+    const result = mergeFindings([], new Set(), live, ['aws', 'gcp']);
+    expect(result).toEqual(live);
+  });
+
+  it('retains non-scanned imported providers when only one imported provider is re-scanned', () => {
+    const imported = [row('nios', 'nios-item'), row('azure', 'azure-item')];
+    const live = [row('nios', 'nios-fresh')];
+    const result = mergeFindings(imported, new Set(['nios', 'azure']), live, ['nios']);
+    expect(result).toHaveLength(2);
+    expect(result.some(r => r.provider === 'azure' && r.item === 'azure-item')).toBe(true);
+    expect(result.some(r => r.provider === 'nios' && r.item === 'nios-fresh')).toBe(true);
+    expect(result.every(r => r.item !== 'nios-item')).toBe(true);
   });
 });
