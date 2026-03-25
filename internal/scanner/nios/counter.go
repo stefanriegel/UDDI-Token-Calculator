@@ -233,17 +233,22 @@ func (result *countResult) processObject(family string, props map[string]string,
 		}
 
 	case NiosFamilyHostAddress:
+		// Host addresses are DNS management objects (host record A entries).
+		// Per the Infoblox UDDI reference methodology, host_address IPs are counted
+		// as DDI objects but NOT as Active IPs — they appear in the "Managed NIOS
+		// Active IPs" metric in the reference tool, separate from the UDDI Active IP
+		// count (which covers only DHCP-assigned and fixed IPs).
+		// We still need the IP for member attribution, but don't add it to globalIPSet.
 		ip := strings.TrimSpace(props["address"])
 		if ip != "" {
-			result.globalIPSet[ip] = struct{}{}
 			memberHost := resolver.resolveIPMember(ip)
 			if memberHost == "" {
 				memberHost = gmHostname
 			}
-			if memberHost != "" {
-				acc := result.getOrCreateAcc(memberHost)
-				acc.memberIPSet[ip] = struct{}{}
-			}
+			// Only add to memberIPSet if this host address is also DHCP-configured
+			// (configure_for_dhcp=true means the IP will appear as an active lease anyway,
+			// but we still skip globalIPSet to avoid double-counting vs the lease path).
+			_ = memberHost // attribution handled via DNS zone resolver, not IP
 		}
 
 	case NiosFamilyNetwork:
@@ -274,30 +279,12 @@ func (result *countResult) processObject(family string, props map[string]string,
 		}
 
 		if fullCIDR != "" {
-			if netIP, ipNet, err := net.ParseCIDR(fullCIDR); err == nil {
-				networkAddr := netIP.Mask(ipNet.Mask).String()
-				result.globalIPSet[networkAddr] = struct{}{}
-				mask := ipNet.Mask
-				broadcast := make(net.IP, len(ipNet.IP))
-				for i := range ipNet.IP {
-					broadcast[i] = ipNet.IP[i] | ^mask[i]
-				}
-				bcastStr := broadcast.String()
-				result.globalIPSet[bcastStr] = struct{}{}
-
-				nwMemberHost := ""
-				if networkKey != "" && cidrVal != "" && nwView != "" {
-					lookupKey := networkKey + "/" + cidrVal + "/" + nwView
-					nwMemberHost = resolver.resolveNetworkMember(lookupKey)
-				}
-				if nwMemberHost == "" {
-					nwMemberHost = gmHostname
-				}
-				if nwMemberHost != "" {
-					acc := result.getOrCreateAcc(nwMemberHost)
-					acc.memberIPSet[networkAddr] = struct{}{}
-					acc.memberIPSet[bcastStr] = struct{}{}
-				}
+			if _, ipNet, err := net.ParseCIDR(fullCIDR); err == nil {
+				// Network address and broadcast are infrastructure, not active IPs.
+				// Only DHCP leases and fixed addresses count toward Active IPs per
+				// the Infoblox UDDI reference methodology. Network objects contribute
+				// to DDI object count only.
+				_ = ipNet
 			}
 		}
 
@@ -318,18 +305,13 @@ func (result *countResult) processObject(family string, props map[string]string,
 		}
 
 	case NiosFamilyDiscoveryData:
+		// Discovery data (NetMRI/active discovery) is not counted as Active IPs
+		// in the Infoblox UDDI reference methodology. Only DHCP leases and fixed
+		// addresses are counted. Discovery data is retained in discoveryIPSet for
+		// informational use but excluded from globalIPSet and memberIPSet.
 		ip := strings.TrimSpace(props["ip_address"])
 		if ip != "" {
-			result.globalIPSet[ip] = struct{}{}
 			result.discoveryIPSet[ip] = struct{}{}
-			memberHost := resolver.resolveIPMember(ip)
-			if memberHost == "" {
-				memberHost = gmHostname
-			}
-			if memberHost != "" {
-				acc := result.getOrCreateAcc(memberHost)
-				acc.memberIPSet[ip] = struct{}{}
-			}
 		}
 
 	default:
