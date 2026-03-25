@@ -15,6 +15,10 @@ const (
 	NiosFamilyDNSRecordSOA     = "dns_record_soa"
 	NiosFamilyDNSRecordSRV     = "dns_record_srv"
 	NiosFamilyDNSRecordTXT     = "dns_record_txt"
+	NiosFamilyDNSRecordCAA     = "dns_record_caa"
+	NiosFamilyDNSRecordNAPTR   = "dns_record_naptr"
+	NiosFamilyDNSRecordHTTPS   = "dns_record_https"
+	NiosFamilyDNSRecordSVCB    = "dns_record_svcb"
 	NiosFamilyHostAddress      = "host_address"
 	NiosFamilyHostObject       = "host_object"
 	NiosFamilyHostAlias        = "host_alias"
@@ -49,6 +53,10 @@ var XMLTypeToFamily = map[string]string{
 	".com.infoblox.dns.bind_aaaa":         NiosFamilyDNSRecordAAAA,
 	".com.infoblox.dns.bind_mx":           NiosFamilyDNSRecordMX,
 	".com.infoblox.dns.bind_ns":           NiosFamilyDNSRecordNS,
+	".com.infoblox.dns.bind_caa":          NiosFamilyDNSRecordCAA,
+	".com.infoblox.dns.bind_naptr":        NiosFamilyDNSRecordNAPTR,
+	".com.infoblox.dns.bind_https":        NiosFamilyDNSRecordHTTPS,
+	".com.infoblox.dns.bind_svcb":         NiosFamilyDNSRecordSVCB,
 	".com.infoblox.dns.host_address":      NiosFamilyHostAddress,
 	".com.infoblox.dns.host":              NiosFamilyHostObject,
 	".com.infoblox.dns.network":           NiosFamilyNetwork,
@@ -128,6 +136,10 @@ var DDIFamilies = map[string]struct{}{
 	NiosFamilyDNSRecordSOA:     {},
 	NiosFamilyDNSRecordSRV:     {},
 	NiosFamilyDNSRecordTXT:     {},
+	NiosFamilyDNSRecordCAA:     {},
+	NiosFamilyDNSRecordNAPTR:   {},
+	NiosFamilyDNSRecordHTTPS:   {},
+	NiosFamilyDNSRecordSVCB:    {},
 	NiosFamilyHostObject:       {},
 	NiosFamilyHostAlias:        {},
 	NiosFamilyDNSZone:          {},
