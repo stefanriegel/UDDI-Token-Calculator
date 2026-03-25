@@ -78,6 +78,7 @@ import {
   type ConsolidatedXaasInstance,
 } from './mock-data';
 import { calcEstimator, calcReportingTokens, computeEstimatorWarnings, REPORTING_DESTINATIONS, EstimatorDefaults, type EstimatorInputs, type ReportingDestinationInput, type ReportingDestinationResult, type ServerEntry, type ServerTokenDetail } from './estimator-calc';
+import { exportSession } from './session-io';
 type Step = 'providers' | 'credentials' | 'sources' | 'scanning' | 'results';
 type SortColumn = 'provider' | 'source' | 'category' | 'item' | 'count' | 'managementTokens';
 type SortDir = 'asc' | 'desc';
@@ -1484,6 +1485,27 @@ export function Wizard() {
 
     html += '</body></html>';
     downloadFile(html, 'ddi-token-assessment.xls', 'application/vnd.ms-excel');
+  };
+
+  const saveSession = () => {
+    const date = new Date().toISOString().slice(0, 10);
+    const json = exportSession(
+      {
+        selectedProviders,
+        findings,
+        countOverrides,
+        niosMigrationMap,
+        adMigrationMap,
+        niosServerMetrics,
+        adServerMetrics,
+        estimatorAnswers,
+        growthBufferPct,
+        reportingDestEnabled,
+        reportingDestEvents,
+      },
+      backend.health?.version ?? 'dev'
+    );
+    downloadFile(json, `ddi-session-${date}.json`, 'application/json');
   };
 
   const downloadFile = (content: string, filename: string, type: string) => {
@@ -5572,6 +5594,14 @@ export function Wizard() {
                 >
                   <FileSpreadsheet className="w-4 h-4" />
                   Download XLSX
+                </button>
+                <button
+                  onClick={saveSession}
+                  className="flex items-center justify-center gap-2 px-5 py-3 bg-[var(--infoblox-navy)] text-white rounded-xl hover:bg-[var(--infoblox-navy)]/90 transition-colors opacity-80"
+                  style={{ fontWeight: 500 }}
+                >
+                  <Download className="w-4 h-4" />
+                  Save Session
                 </button>
                 <button
                   onClick={restart}
