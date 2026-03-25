@@ -316,8 +316,8 @@ func TestIPAMDHCPCounting(t *testing.T) {
 		items := []map[string]string{{"id": "1"}, {"id": "2"}, {"id": "3"}}
 		switch {
 		case strings.Contains(path, "ip_site_list"),
-			strings.Contains(path, "ip_subnet_list") && !strings.Contains(path, "ip_subnet6"),
-			strings.Contains(path, "ip_subnet6_list"),
+			strings.Contains(path, "ip_block_subnet_list") && !strings.Contains(path, "ip_subnet6"),
+			strings.Contains(path, "ip_block_subnet6_list"),
 			strings.Contains(path, "ip_pool_list") && !strings.Contains(path, "ip_pool6"),
 			strings.Contains(path, "ip_pool6_list"),
 			strings.Contains(path, "ip_address_list") && !strings.Contains(path, "ip_address6"),
@@ -375,7 +375,7 @@ func TestSiteFiltering(t *testing.T) {
 	s := New()
 	client := srv.Client()
 	whereClause := s.siteWhereClause([]string{"10", "20"})
-	_, _, err := s.countService(context.Background(), srv.URL, "basic", "legacy", "admin", "secret", "", "", client, "ip_subnet_list", whereClause, false)
+	_, _, err := s.countService(context.Background(), srv.URL, "basic", "legacy", "admin", "secret", "", "", client, "ip_block_subnet_list", whereClause, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -421,9 +421,9 @@ func TestScan_FullIntegration(t *testing.T) {
 			_ = json.NewEncoder(w).Encode([]map[string]string{{"rr_type": "A"}, {"rr_type": "TXT"}, {"rr_type": "BOGUS"}})
 		case strings.Contains(path, "ip_site_list"):
 			_ = json.NewEncoder(w).Encode([]map[string]string{{"id": "1"}})
-		case strings.Contains(path, "ip_subnet_list") && !strings.Contains(path, "ip_subnet6"):
+		case strings.Contains(path, "ip_block_subnet_list") && !strings.Contains(path, "ip_subnet6"):
 			_ = json.NewEncoder(w).Encode([]map[string]string{{"id": "1"}, {"id": "2"}})
-		case strings.Contains(path, "ip_subnet6_list"):
+		case strings.Contains(path, "ip_block_subnet6_list"):
 			_ = json.NewEncoder(w).Encode([]map[string]string{{"id": "1"}})
 		default:
 			_ = json.NewEncoder(w).Encode([]map[string]string{})
@@ -605,8 +605,8 @@ func TestBuildEndpointURL_V2_IPAMPaths(t *testing.T) {
 		wantSuffix string
 	}{
 		{"ip_site_list", "ipam/space/list"},
-		{"ip_subnet_list", "ipam/network/list"},
-		{"ip_subnet6_list", "ipam/network6/list"},
+		{"ip_block_subnet_list", "ipam/network/list"},
+		{"ip_block_subnet6_list", "ipam/network6/list"},
 	}
 	for _, tc := range cases {
 		got := buildEndpointURL("https://host", "v2", tc.service)

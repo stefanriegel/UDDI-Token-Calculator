@@ -45,21 +45,21 @@ var retryStatuses = map[int]struct{}{
 
 // v2Paths maps legacy EfficientIP service names to their API v2.0 path segments.
 var v2Paths = map[string]string{
-	"member_list":      "app/node/list",
-	"dns_view_list":    "dns/view/list",
-	"dns_zone_list":    "dns/zone/list",
-	"dns_rr_list":      "dns/rr/list",
-	"ip_site_list":     "ipam/space/list",
-	"ip_subnet_list":   "ipam/network/list",
-	"ip_subnet6_list":  "ipam/network6/list",
-	"ip_pool_list":     "ipam/pool/list",
-	"ip_pool6_list":    "ipam/pool6/list",
-	"ip_address_list":  "ipam/address/list",
-	"ip_address6_list": "ipam/address6/list",
-	"dhcp_scope_list":  "dhcp/scope/list",
-	"dhcp_scope6_list": "dhcp/scope6/list",
-	"dhcp_range_list":  "dhcp/range/list",
-	"dhcp_range6_list": "dhcp/range6/list",
+	"member_list":           "app/node/list",
+	"dns_view_list":         "dns/view/list",
+	"dns_zone_list":         "dns/zone/list",
+	"dns_rr_list":           "dns/rr/list",
+	"ip_site_list":          "ipam/space/list",
+	"ip_block_subnet_list":  "ipam/network/list",
+	"ip_block_subnet6_list": "ipam/network6/list",
+	"ip_pool_list":          "ipam/pool/list",
+	"ip_pool6_list":         "ipam/pool6/list",
+	"ip_address_list":       "ipam/address/list",
+	"ip_address6_list":      "ipam/address6/list",
+	"dhcp_scope_list":       "dhcp/scope/list",
+	"dhcp_scope6_list":      "dhcp/scope6/list",
+	"dhcp_range_list":       "dhcp/range/list",
+	"dhcp_range6_list":      "dhcp/range6/list",
 }
 
 // Scanner implements scanner.Scanner for EfficientIP SOLIDserver.
@@ -184,7 +184,14 @@ func setTokenAuth(req *http.Request, tokenID, tokenSecret, fullURL string) {
 func (s *Scanner) authenticate(ctx context.Context, baseURL, authMode, apiVersion, username, password, tokenID, tokenSecret string, client *http.Client) (string, error) {
 	if authMode == "token" {
 		// Token auth: probe with SHA3 signature, skip basic/native.
-		probeURL := buildEndpointURL(baseURL, apiVersion, "member_list") + "limit=1&offset=0"
+		// For v2, route member_list through buildEndpointURL (maps to app/node/list).
+		// For legacy, probe /rest/member_list directly — app/node/list is v2-only.
+		var probeURL string
+		if apiVersion == "v2" {
+			probeURL = buildEndpointURL(baseURL, apiVersion, "member_list") + "limit=1&offset=0"
+		} else {
+			probeURL = baseURL + "/rest/member_list?limit=1&offset=0"
+		}
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, probeURL, nil)
 		if err != nil {
 			return "", err
@@ -310,6 +317,12 @@ func (s *Scanner) countService(
 
 		body, err := s.doWithRetry(client, req)
 		if err != nil {
+			// A 400 with "unknown service" means this endpoint does not exist on this
+			// SOLIDserver version (common for IPv6 endpoints on older deployments).
+			// Treat it as an empty result rather than a hard failure.
+			if isUnknownService(err) {
+				return 0, nil, nil
+			}
 			return 0, nil, err
 		}
 
@@ -373,11 +386,19 @@ func (s *Scanner) doWithRetry(client *http.Client, req *http.Request) ([]byte, e
 		}
 
 		if resp.StatusCode >= 400 {
-			return nil, fmt.Errorf("HTTP %d from %s", resp.StatusCode, req.URL.Path)
+			return nil, fmt.Errorf("HTTP %d from %s: %s", resp.StatusCode, req.URL.Path, strings.TrimSpace(string(body)))
 		}
 		return body, nil
 	}
 	return nil, fmt.Errorf("request failed after %d retries: %w", maxRetries, lastErr)
+}
+
+// isUnknownService reports whether an error from doWithRetry is a 400 response
+// with the SOLIDserver "unknown service" body. These endpoints simply do not exist
+// on the deployed SOLIDserver version (common for IPv6 services on older installs)
+// and should be treated as a count of zero rather than a fatal scan error.
+func isUnknownService(err error) bool {
+	return err != nil && strings.Contains(err.Error(), `"unknown service"`)
 }
 
 func parseRetryAfter(val string) int {
@@ -471,8 +492,8 @@ func (s *Scanner) collectIPAMDHCP(
 	}
 	resources := []resource{
 		{"EfficientIP IP Sites", "ip_site_list", "ip_sites"},
-		{"EfficientIP IP4 Subnets", "ip_subnet_list", "ip4_subnets"},
-		{"EfficientIP IP6 Subnets", "ip_subnet6_list", "ip6_subnets"},
+		{"EfficientIP IP4 Subnets", "ip_block_subnet_list", "ip4_subnets"},
+		{"EfficientIP IP6 Subnets", "ip_block_subnet6_list", "ip6_subnets"},
 		{"EfficientIP IP4 Pools", "ip_pool_list", "ip4_pools"},
 		{"EfficientIP IP6 Pools", "ip_pool6_list", "ip6_pools"},
 		{"EfficientIP IP4 Addresses", "ip_address_list", "ip4_addresses"},
