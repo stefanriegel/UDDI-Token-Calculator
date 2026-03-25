@@ -138,3 +138,29 @@ export async function importSession(file: File): Promise<SessionSnapshot> {
   }
   return parsed as SessionSnapshot;
 }
+
+/**
+ * Merge imported findings with live scan findings using a live-wins-per-provider strategy.
+ *
+ * Retained rows: imported findings whose provider is in `importedProviders` AND
+ * whose provider is NOT in `liveProviders` (i.e., the provider was not re-scanned live).
+ * All live findings are always included.
+ *
+ * @param importedFindings - All findings from the previously imported session.
+ * @param importedProviders - Set of provider IDs that came from the imported session.
+ * @param liveFindings - Findings produced by the most recent live scan.
+ * @param liveProviders - Provider IDs that participated in the most recent live scan.
+ * @returns Merged findings: retained imported rows first, then all live rows.
+ */
+export function mergeFindings(
+  importedFindings: FindingRow[],
+  importedProviders: Set<ProviderType>,
+  liveFindings: FindingRow[],
+  liveProviders: ProviderType[]
+): FindingRow[] {
+  const liveSet = new Set(liveProviders);
+  const retained = importedFindings.filter(
+    (f) => importedProviders.has(f.provider) && !liveSet.has(f.provider)
+  );
+  return [...retained, ...liveFindings];
+}

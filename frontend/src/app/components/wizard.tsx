@@ -78,7 +78,7 @@ import {
   type ConsolidatedXaasInstance,
 } from './mock-data';
 import { calcEstimator, calcReportingTokens, computeEstimatorWarnings, REPORTING_DESTINATIONS, EstimatorDefaults, type EstimatorInputs, type ReportingDestinationInput, type ReportingDestinationResult, type ServerEntry, type ServerTokenDetail } from './estimator-calc';
-import { exportSession, importSession, type SessionSnapshot } from './session-io';
+import { exportSession, importSession, mergeFindings, type SessionSnapshot } from './session-io';
 type Step = 'providers' | 'credentials' | 'sources' | 'scanning' | 'results';
 type SortColumn = 'provider' | 'source' | 'category' | 'item' | 'count' | 'managementTokens';
 type SortDir = 'asc' | 'desc';
@@ -354,6 +354,8 @@ export function Wizard() {
   const [deviceCodeMessage, setDeviceCodeMessage] = useState<string>('');
   const [scanError, setScanError] = useState<string>('');
   const [importError, setImportError] = useState<string>('');
+  const [importedProviders, setImportedProviders] = useState<Set<ProviderType>>(new Set());
+  const [liveScannedProviders, setLiveScannedProviders] = useState<Set<ProviderType>>(new Set());
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scanIntervalsRef = useRef<ReturnType<typeof setInterval>[]>([]);
   const [showSecrets, setShowSecrets] = useState<Record<string, boolean>>({});
@@ -544,6 +546,8 @@ export function Wizard() {
     setProviderScanProgress({ aws: 0, azure: 0, gcp: 0, microsoft: 0, nios: 0, bluecat: 0, efficientip: 0, estimator: 0 });
     setFindings([]);
     setCountOverrides({});
+    setImportedProviders(new Set());
+    setLiveScannedProviders(new Set());
     setCredentialError({ aws: '', azure: '', gcp: '', microsoft: '', nios: '', bluecat: '', efficientip: '', estimator: '' });
     setScanError('');
     setSourceSearch({ aws: '', azure: '', gcp: '', microsoft: '', nios: '', bluecat: '', efficientip: '', estimator: '' });
@@ -821,7 +825,17 @@ export function Wizard() {
     const initProgress: Record<ProviderType, number> = { aws: 0, azure: 0, gcp: 0, microsoft: 0, nios: 0, bluecat: 0, efficientip: 0, estimator: 0 };
     setProviderScanProgress(initProgress);
     setFindings([]);
-    setCountOverrides({});
+    setCountOverrides((prev) => {
+      const liveSet = new Set(selectedProviders);
+      const next: Record<string, number> = {};
+      for (const [key, val] of Object.entries(prev)) {
+        const keyProvider = key.split('::')[0] as ProviderType;
+        if (importedProviders.has(keyProvider) && !liveSet.has(keyProvider)) {
+          next[key] = val;
+        }
+      }
+      return next;
+    });
 
     // ── Manual Estimator short-circuit (no API call) ───────────────────────
     if (selectedProviders.includes('estimator')) {
@@ -842,7 +856,8 @@ export function Wizard() {
         category: 'Asset', item: 'Estimated Assets', count: out.discoveredAssets,
         tokensPerUnit: TOKEN_RATES['Asset'], managementTokens: Math.ceil(out.discoveredAssets / TOKEN_RATES['Asset']),
       });
-      setFindings(estimatorFindings);
+      setFindings(mergeFindings(findings, importedProviders, estimatorFindings, ['estimator']));
+      setLiveScannedProviders(new Set<ProviderType>(['estimator']));
       setEstimatorMonthlyLogVolume(out.monthlyLogVolume);
       setEstimatorServerTokens(out.serverTokens);
       setEstimatorServerDetails(out.serverTokenDetails);
@@ -885,7 +900,8 @@ export function Wizard() {
             selectedProviders.forEach((p) => {
               if (providerFindings[p]) merged.push(...providerFindings[p]);
             });
-            setFindings(merged);
+            setFindings(mergeFindings(findings, importedProviders, merged, selectedProviders));
+            setLiveScannedProviders(new Set(selectedProviders));
             setScanProgress(100);
           }
         }, tickMs);
@@ -972,7 +988,8 @@ export function Wizard() {
                 tokensPerUnit: f.tokensPerUnit,
                 managementTokens: f.managementTokens,
               }));
-              setFindings(mapped);
+              setFindings(mergeFindings(findings, importedProviders, mapped, selectedProviders));
+              setLiveScannedProviders(new Set(selectedProviders));
               setScanProgress(100);
               // Store NIOS server metrics from live scan results
               if (results.niosServerMetrics && results.niosServerMetrics.length > 0) {
@@ -1001,7 +1018,7 @@ export function Wizard() {
         setScanError(err?.message || 'Failed to start scan');
       }
     })();
-  }, [backend.isDemo, selectedProviders, selectedAuthMethod, credentials, selectionMode, clearScanIntervals, getEffectiveSelected, backupToken, subscriptions]);
+  }, [backend.isDemo, selectedProviders, selectedAuthMethod, credentials, selectionMode, clearScanIntervals, getEffectiveSelected, backupToken, subscriptions, findings, importedProviders]);
 
   // ── Manual count overrides ─────────────────────────────────────────────────
   // Build a unique key for each finding row to identify it in the overrides map.
@@ -1513,6 +1530,7 @@ export function Wizard() {
   const restoreSession = (snapshot: SessionSnapshot) => {
     restart();
     setSelectedProviders(snapshot.selectedProviders);
+    setImportedProviders(new Set(snapshot.selectedProviders));
     setFindings(snapshot.findings);
     setCountOverrides(snapshot.countOverrides);
     setNiosMigrationMap(new Map(Object.entries(snapshot.niosMigrationMap)));
@@ -5509,6 +5527,11 @@ export function Wizard() {
                                 }}
                               />
                               {PROVIDERS.find((p) => p.id === f.provider)?.name}
+                              {importedProviders.has(f.provider) && !liveScannedProviders.has(f.provider) && (
+                                <span className="ml-1 px-1 py-0.5 text-[10px] rounded bg-blue-50 text-blue-600 border border-blue-200 align-middle">
+                                  imported
+                                </span>
+                              )}
                             </td>
                             <td className="px-4 py-2.5 text-[var(--muted-foreground)] max-w-[200px] truncate" title={f.source}>{f.source}</td>
                             <td className="px-4 py-2.5">
