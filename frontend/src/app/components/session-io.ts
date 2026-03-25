@@ -73,3 +73,68 @@ export function exportSession(input: SessionExportInput, toolVersion: string): s
   };
   return JSON.stringify(snapshot, null, 2);
 }
+
+// ---------------------------------------------------------------------------
+// Import-side: validation and deserialization
+// ---------------------------------------------------------------------------
+
+/**
+ * Result of a schema validation check.
+ * `valid: true` means the data can safely be cast to SessionSnapshot.
+ * `valid: false` carries a user-readable `error` string suitable for display in the UI.
+ */
+export interface ValidationResult {
+  valid: boolean;
+  error?: string;
+}
+
+/**
+ * Validate that `data` conforms to the SessionSnapshot schema.
+ *
+ * Checks are ordered from coarse (type) to fine (field presence/type) so the
+ * first failing check produces the most actionable error message.
+ */
+export function validateSessionSchema(data: unknown): ValidationResult {
+  if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+    return { valid: false, error: 'Not a valid session file.' };
+  }
+  const d = data as Record<string, unknown>;
+  if (typeof d.version !== 'number') {
+    return { valid: false, error: 'Session file is missing a version field.' };
+  }
+  if (d.version !== SESSION_FORMAT_VERSION) {
+    return { valid: false, error: 'Incompatible session version. Please export a new session from the current tool version.' };
+  }
+  if (!Array.isArray(d.findings)) {
+    return { valid: false, error: 'Session file is missing findings data.' };
+  }
+  if (!Array.isArray(d.selectedProviders)) {
+    return { valid: false, error: 'Session file is missing provider list.' };
+  }
+  if (typeof d.estimatorAnswers !== 'object' || d.estimatorAnswers === null || Array.isArray(d.estimatorAnswers)) {
+    return { valid: false, error: 'Session file is missing estimator configuration.' };
+  }
+  return { valid: true };
+}
+
+/**
+ * Read a `.json` File, parse it, validate its schema, and return the
+ * deserialized SessionSnapshot — or reject with a user-readable error.
+ *
+ * Uses the modern `file.text()` API (Node 20+ / all current browsers).
+ * Does NOT use FileReader.
+ */
+export async function importSession(file: File): Promise<SessionSnapshot> {
+  let parsed: unknown;
+  try {
+    const text = await file.text();
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error('File is not valid JSON.');
+  }
+  const result = validateSessionSchema(parsed);
+  if (!result.valid) {
+    throw new Error(result.error);
+  }
+  return parsed as SessionSnapshot;
+}

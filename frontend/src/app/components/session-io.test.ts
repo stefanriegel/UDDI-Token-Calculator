@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { exportSession, SESSION_FORMAT_VERSION, type SessionExportInput } from './session-io';
+import {
+  exportSession,
+  importSession,
+  validateSessionSchema,
+  SESSION_FORMAT_VERSION,
+  type SessionExportInput,
+  type SessionSnapshot,
+} from './session-io';
 import { EstimatorDefaults } from './estimator-calc';
 
 // Minimal base input shared across tests.
@@ -58,5 +65,92 @@ describe('exportSession', () => {
       const result = exportSession({ ...baseInput }, 'dev');
       JSON.parse(result);
     }).not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// validateSessionSchema
+// ---------------------------------------------------------------------------
+
+describe('validateSessionSchema', () => {
+  // Helper: build a valid snapshot object from exportSession output.
+  const validSnapshot = (): SessionSnapshot =>
+    JSON.parse(exportSession({ ...baseInput }, '1.0.0')) as SessionSnapshot;
+
+  it('returns { valid: true } for a well-formed snapshot', () => {
+    const result = validateSessionSchema(validSnapshot());
+    expect(result).toEqual({ valid: true });
+  });
+
+  it('returns { valid: false } with "Not a valid session file." for null', () => {
+    const result = validateSessionSchema(null);
+    expect(result.valid).toBe(false);
+    expect(result.error).toBe('Not a valid session file.');
+  });
+
+  it('returns { valid: false } with "Not a valid session file." for an array', () => {
+    const result = validateSessionSchema([1, 2, 3]);
+    expect(result.valid).toBe(false);
+    expect(result.error).toBe('Not a valid session file.');
+  });
+
+  it('returns { valid: false } with missing-version error when version field is absent', () => {
+    const snapshot = validSnapshot();
+    const { version: _removed, ...withoutVersion } = snapshot;
+    const result = validateSessionSchema(withoutVersion);
+    expect(result.valid).toBe(false);
+    expect(result.error).toBe('Session file is missing a version field.');
+  });
+
+  it('returns { valid: false } with incompatibility message for a wrong version number', () => {
+    const snapshot = { ...validSnapshot(), version: SESSION_FORMAT_VERSION + 1 };
+    const result = validateSessionSchema(snapshot);
+    expect(result.valid).toBe(false);
+    expect(result.error).toContain('Incompatible session version');
+  });
+
+  it('returns { valid: false } with missing-findings error when findings is not an array', () => {
+    const snapshot = { ...validSnapshot(), findings: 'oops' };
+    const result = validateSessionSchema(snapshot);
+    expect(result.valid).toBe(false);
+    expect(result.error).toBe('Session file is missing findings data.');
+  });
+
+  it('returns { valid: false } with missing-providers error when selectedProviders is not an array', () => {
+    const snapshot = { ...validSnapshot(), selectedProviders: null };
+    const result = validateSessionSchema(snapshot);
+    expect(result.valid).toBe(false);
+    expect(result.error).toBe('Session file is missing provider list.');
+  });
+
+  it('returns { valid: false } with missing-estimator error when estimatorAnswers is not an object', () => {
+    const snapshot = { ...validSnapshot(), estimatorAnswers: 'bad' };
+    const result = validateSessionSchema(snapshot);
+    expect(result.valid).toBe(false);
+    expect(result.error).toBe('Session file is missing estimator configuration.');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// importSession
+// ---------------------------------------------------------------------------
+
+describe('importSession', () => {
+  // Node 20+ ships File globally; no jsdom needed.
+  const makeFile = (content: string) =>
+    new File([content], 'test.json', { type: 'application/json' });
+
+  it('resolves with a valid SessionSnapshot for a round-tripped exportSession output', async () => {
+    const jsonString = exportSession({ ...baseInput }, '1.0.0');
+    const file = makeFile(jsonString);
+    const result = await importSession(file);
+    expect(result.version).toBe(SESSION_FORMAT_VERSION);
+    expect(Array.isArray(result.findings)).toBe(true);
+    expect(Array.isArray(result.selectedProviders)).toBe(true);
+  });
+
+  it('rejects with "File is not valid JSON." for non-JSON content', async () => {
+    const file = makeFile('this is not JSON {{ broken');
+    await expect(importSession(file)).rejects.toThrow('File is not valid JSON.');
   });
 });
