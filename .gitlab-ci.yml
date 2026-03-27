@@ -12,6 +12,15 @@ include:
     ref: main
     file: '/templates/release.yml'
 
+# Merge all stages from base + docker + release
+stages:
+  - .pre
+  - lint
+  - test
+  - build
+  - docker-build
+  - release
+
 # ── Frontend build (provides artifacts for Go embed) ──────────────────
 build-frontend:
   stage: .pre
