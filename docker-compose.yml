@@ -1,0 +1,6 @@
+services:
+  uddi-token-calculator:
+    image: ghcr.io/stefanriegel/uddi-token-calculator:latest
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
