@@ -1,0 +1,36 @@
+# Source code
+cmd/
+internal/
+server/
+frontend/
+scripts/
+
+# Root Go files
+main.go
+embed.go
+go.mod
+go.sum
+Makefile
+
+# GoReleaser (needed for GitHub Actions releases)
+.goreleaser.yaml
+.goreleaser-dev.yaml
+
+# GitHub workflows + release notes (needed for GitHub Actions)
+.github/
+
+# Docker
+Dockerfile
+.dockerignore
+docker-compose.yml
+
+# Documentation
+README.md
+docs/
+gpg-public-key.asc
+
+# BG Shell manifest
+.bg-shell/
+
+# Config
+.gitignore
