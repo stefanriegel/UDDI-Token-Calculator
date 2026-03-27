@@ -5,6 +5,14 @@
 //   - Active IPs:  1 token per 13 IPs (ceiling division)
 //   - Managed Assets: 1 token per 3 assets (ceiling division)
 //   - Grand total = max(DDITokens, IPTokens, AssetTokens)
+//
+// NIOS Grid uses different (more generous) ratios because NIOS licensing
+// covers multiple management domains per token:
+//   - DDI Objects: 1 token per 50 objects
+//   - Active IPs:  1 token per 25 IPs
+//   - Managed Assets: 1 token per 13 assets
+// NIOS rates apply to the current-state NIOS token count. When members
+// migrate to NIOS-X (UDDI native), the native rates above apply instead.
 package calculator
 
 const (
@@ -12,9 +20,17 @@ const (
 	CategoryActiveIPs     = "Active IPs"
 	CategoryManagedAssets = "Managed Assets"
 
+	// Native UDDI rates (AWS, Azure, GCP, NIOS-X, BlueCat, EfficientIP).
 	TokensPerDDIObject    = 25
 	TokensPerActiveIP     = 13
 	TokensPerManagedAsset = 3
+
+	// NIOS Grid rates — for counting objects managed by an existing NIOS Grid.
+	// These apply to FindingRows emitted by the NIOS scanner for current-state
+	// token estimation. Migration Planner uses native rates for migrated members.
+	NIOSTokensPerDDIObject    = 50
+	NIOSTokensPerActiveIP     = 25
+	NIOSTokensPerManagedAsset = 13
 )
 
 // FindingRow is the universal currency between all scanner phases and the results display.

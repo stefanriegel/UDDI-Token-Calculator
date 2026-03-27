@@ -15,6 +15,10 @@ const (
 	NiosFamilyDNSRecordSOA     = "dns_record_soa"
 	NiosFamilyDNSRecordSRV     = "dns_record_srv"
 	NiosFamilyDNSRecordTXT     = "dns_record_txt"
+	NiosFamilyDNSRecordCAA     = "dns_record_caa"
+	NiosFamilyDNSRecordNAPTR   = "dns_record_naptr"
+	NiosFamilyDNSRecordHTTPS   = "dns_record_https"
+	NiosFamilyDNSRecordSVCB    = "dns_record_svcb"
 	NiosFamilyHostAddress      = "host_address"
 	NiosFamilyHostObject       = "host_object"
 	NiosFamilyHostAlias        = "host_alias"
@@ -49,6 +53,10 @@ var XMLTypeToFamily = map[string]string{
 	".com.infoblox.dns.bind_aaaa":         NiosFamilyDNSRecordAAAA,
 	".com.infoblox.dns.bind_mx":           NiosFamilyDNSRecordMX,
 	".com.infoblox.dns.bind_ns":           NiosFamilyDNSRecordNS,
+	".com.infoblox.dns.bind_caa":          NiosFamilyDNSRecordCAA,
+	".com.infoblox.dns.bind_naptr":        NiosFamilyDNSRecordNAPTR,
+	".com.infoblox.dns.bind_https":        NiosFamilyDNSRecordHTTPS,
+	".com.infoblox.dns.bind_svcb":         NiosFamilyDNSRecordSVCB,
 	".com.infoblox.dns.host_address":      NiosFamilyHostAddress,
 	".com.infoblox.dns.host":              NiosFamilyHostObject,
 	".com.infoblox.dns.network":           NiosFamilyNetwork,
@@ -94,18 +102,19 @@ var XMLTypeToFamily = map[string]string{
 	".com.infoblox.one.idns_server":         NiosFamilyDTCServer,
 	".com.infoblox.one.idns_topology_label": NiosFamilyDTCTopology,
 	".com.infoblox.one.idns_topology_rule":  NiosFamilyDTCTopology,
-	".com.infoblox.one.idns_monitor_http":   NiosFamilyDTCMonitor,
-	".com.infoblox.one.idns_monitor_icmp":   NiosFamilyDTCMonitor,
-	".com.infoblox.one.idns_monitor_tcp":    NiosFamilyDTCMonitor,
+	// idns_monitor_* (one.* and dns.*) are health-check template definitions, not
+	// per-pool monitor instances. The reference tool counts only idns_pool_monitor
+	// as LBDN_Server_Monitor. Template types excluded here.
 	// Also support dns.idns_* prefix variant.
 	".com.infoblox.dns.idns_lbdn":           NiosFamilyDTCLBDN,
 	".com.infoblox.dns.idns_pool":           NiosFamilyDTCPool,
 	".com.infoblox.dns.idns_server":         NiosFamilyDTCServer,
 	".com.infoblox.dns.idns_topology_label": NiosFamilyDTCTopology,
-	".com.infoblox.dns.idns_topology_rule":  NiosFamilyDTCTopology,
-	".com.infoblox.dns.idns_monitor_http":   NiosFamilyDTCMonitor,
-	".com.infoblox.dns.idns_monitor_icmp":   NiosFamilyDTCMonitor,
-	".com.infoblox.dns.idns_monitor_tcp":    NiosFamilyDTCMonitor,
+	".com.infoblox.dns.idns_topology_rule":    NiosFamilyDTCTopology,
+	".com.infoblox.dns.idns_pool_monitor":     NiosFamilyDTCMonitor,
+	// Note: idns_monitor_http/tcp/icmp/pdp/sip/snmp/auth_parent are DTC health-check
+	// template definitions, not per-pool monitor instances. The reference XLS counts
+	// only idns_pool_monitor as LBDN_Server_Monitor. These template types are excluded.
 }
 
 // MemberXMLTypes is the set of __type values that identify Grid Member objects
@@ -127,6 +136,10 @@ var DDIFamilies = map[string]struct{}{
 	NiosFamilyDNSRecordSOA:     {},
 	NiosFamilyDNSRecordSRV:     {},
 	NiosFamilyDNSRecordTXT:     {},
+	NiosFamilyDNSRecordCAA:     {},
+	NiosFamilyDNSRecordNAPTR:   {},
+	NiosFamilyDNSRecordHTTPS:   {},
+	NiosFamilyDNSRecordSVCB:    {},
 	NiosFamilyHostObject:       {},
 	NiosFamilyHostAlias:        {},
 	NiosFamilyDNSZone:          {},

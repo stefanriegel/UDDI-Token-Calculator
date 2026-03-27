@@ -112,10 +112,15 @@ export interface EfficientipValidateResponse {
 }
 
 export async function validateEfficientip(credentials: Record<string, string>): Promise<EfficientipValidateResponse> {
+  const { authMethod, api_version, ...rest } = credentials;
   const res = await fetch(apiUrl('/providers/efficientip/validate'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ authMethod: 'credentials', credentials }),
+    body: JSON.stringify({
+      authMethod: authMethod || 'credentials',
+      api_version: api_version || 'legacy',
+      credentials: rest,
+    }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));

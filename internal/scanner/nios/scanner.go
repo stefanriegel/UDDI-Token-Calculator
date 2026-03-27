@@ -298,8 +298,8 @@ func (s *Scanner) Scan(_ context.Context, req scanner.ScanRequest, publish func(
 				Category:         calculator.CategoryDDIObjects,
 				Item:             displayName,
 				Count:            count,
-				TokensPerUnit:    calculator.TokensPerDDIObject,
-				ManagementTokens: ceilDiv(count, calculator.TokensPerDDIObject),
+				TokensPerUnit:    calculator.NIOSTokensPerDDIObject,
+				ManagementTokens: ceilDiv(count, calculator.NIOSTokensPerDDIObject),
 			})
 		}
 	}
@@ -316,8 +316,8 @@ func (s *Scanner) Scan(_ context.Context, req scanner.ScanRequest, publish func(
 			Category:         calculator.CategoryDDIObjects,
 			Item:             displayName,
 			Count:            count,
-			TokensPerUnit:    calculator.TokensPerDDIObject,
-			ManagementTokens: ceilDiv(count, calculator.TokensPerDDIObject),
+			TokensPerUnit:    calculator.NIOSTokensPerDDIObject,
+			ManagementTokens: ceilDiv(count, calculator.NIOSTokensPerDDIObject),
 		})
 	}
 
@@ -332,8 +332,8 @@ func (s *Scanner) Scan(_ context.Context, req scanner.ScanRequest, publish func(
 				Category:         calculator.CategoryActiveIPs,
 				Item:             "Active IPs",
 				Count:            len(acc.memberIPSet),
-				TokensPerUnit:    calculator.TokensPerActiveIP,
-				ManagementTokens: ceilDiv(len(acc.memberIPSet), calculator.TokensPerActiveIP),
+				TokensPerUnit:    calculator.NIOSTokensPerActiveIP,
+				ManagementTokens: ceilDiv(len(acc.memberIPSet), calculator.NIOSTokensPerActiveIP),
 			})
 		}
 	}
@@ -420,6 +420,10 @@ var familyDisplayNames = map[string]string{
 	NiosFamilyDNSRecordSOA:    "DNS SOA Records",
 	NiosFamilyDNSRecordSRV:    "DNS SRV Records",
 	NiosFamilyDNSRecordTXT:    "DNS TXT Records",
+	NiosFamilyDNSRecordCAA:    "DNS CAA Records",
+	NiosFamilyDNSRecordNAPTR:  "DNS NAPTR Records",
+	NiosFamilyDNSRecordHTTPS:  "DNS HTTPS Records",
+	NiosFamilyDNSRecordSVCB:   "DNS SVCB Records",
 	NiosFamilyNetwork:         "DHCP Networks",
 	NiosFamilyHostObject:      "Host Records",
 	NiosFamilyHostAlias:       "Host Aliases",

@@ -78,6 +78,7 @@ import {
   type ConsolidatedXaasInstance,
 } from './mock-data';
 import { calcEstimator, calcReportingTokens, computeEstimatorWarnings, REPORTING_DESTINATIONS, EstimatorDefaults, type EstimatorInputs, type ReportingDestinationInput, type ReportingDestinationResult, type ServerEntry, type ServerTokenDetail } from './estimator-calc';
+import { exportSession, importSession, mergeFindings, type SessionSnapshot } from './session-io';
 type Step = 'providers' | 'credentials' | 'sources' | 'scanning' | 'results';
 type SortColumn = 'provider' | 'source' | 'category' | 'item' | 'count' | 'managementTokens';
 type SortDir = 'asc' | 'desc';
@@ -352,6 +353,10 @@ export function Wizard() {
   });
   const [deviceCodeMessage, setDeviceCodeMessage] = useState<string>('');
   const [scanError, setScanError] = useState<string>('');
+  const [importError, setImportError] = useState<string>('');
+  const [importedProviders, setImportedProviders] = useState<Set<ProviderType>>(new Set());
+  const [liveScannedProviders, setLiveScannedProviders] = useState<Set<ProviderType>>(new Set());
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const scanIntervalsRef = useRef<ReturnType<typeof setInterval>[]>([]);
   const [showSecrets, setShowSecrets] = useState<Record<string, boolean>>({});
   const [selectedAuthMethod, setSelectedAuthMethod] = useState<Record<ProviderType, string>>({
@@ -410,6 +415,7 @@ export function Wizard() {
   const [bomCopied, setBomCopied] = useState(false);
 
   // NIOS-specific state
+  const [efficientipAPIVersion, setEfficientipAPIVersion] = useState<'legacy' | 'v2'>('legacy');
   const [niosMode, setNiosMode] = useState<'backup' | 'wapi'>('backup');
   const [niosUploadedFile, setNiosUploadedFile] = useState<File | null>(null);
   const [niosDragOver, setNiosDragOver] = useState(false);
@@ -540,6 +546,8 @@ export function Wizard() {
     setProviderScanProgress({ aws: 0, azure: 0, gcp: 0, microsoft: 0, nios: 0, bluecat: 0, efficientip: 0, estimator: 0 });
     setFindings([]);
     setCountOverrides({});
+    setImportedProviders(new Set());
+    setLiveScannedProviders(new Set());
     setCredentialError({ aws: '', azure: '', gcp: '', microsoft: '', nios: '', bluecat: '', efficientip: '', estimator: '' });
     setScanError('');
     setSourceSearch({ aws: '', azure: '', gcp: '', microsoft: '', nios: '', bluecat: '', efficientip: '', estimator: '' });
@@ -686,7 +694,12 @@ export function Wizard() {
         }
       } else if (providerId === 'efficientip') {
         // EfficientIP API
-        const creds = credentials.efficientip || {};
+        const authMethod = selectedAuthMethod['efficientip'] || 'credentials';
+        const creds = {
+          ...(credentials.efficientip || {}),
+          authMethod,
+          api_version: efficientipAPIVersion,
+        };
         const result = await apiValidateEfficientip(creds);
         if (result.valid) {
           setCredentialStatus((prev) => ({ ...prev, efficientip: 'valid' }));
@@ -812,7 +825,17 @@ export function Wizard() {
     const initProgress: Record<ProviderType, number> = { aws: 0, azure: 0, gcp: 0, microsoft: 0, nios: 0, bluecat: 0, efficientip: 0, estimator: 0 };
     setProviderScanProgress(initProgress);
     setFindings([]);
-    setCountOverrides({});
+    setCountOverrides((prev) => {
+      const liveSet = new Set(selectedProviders);
+      const next: Record<string, number> = {};
+      for (const [key, val] of Object.entries(prev)) {
+        const keyProvider = key.split('::')[0] as ProviderType;
+        if (importedProviders.has(keyProvider) && !liveSet.has(keyProvider)) {
+          next[key] = val;
+        }
+      }
+      return next;
+    });
 
     // ── Manual Estimator short-circuit (no API call) ───────────────────────
     if (selectedProviders.includes('estimator')) {
@@ -833,7 +856,8 @@ export function Wizard() {
         category: 'Asset', item: 'Estimated Assets', count: out.discoveredAssets,
         tokensPerUnit: TOKEN_RATES['Asset'], managementTokens: Math.ceil(out.discoveredAssets / TOKEN_RATES['Asset']),
       });
-      setFindings(estimatorFindings);
+      setFindings(mergeFindings(findings, importedProviders, estimatorFindings, ['estimator']));
+      setLiveScannedProviders(new Set<ProviderType>(['estimator']));
       setEstimatorMonthlyLogVolume(out.monthlyLogVolume);
       setEstimatorServerTokens(out.serverTokens);
       setEstimatorServerDetails(out.serverTokenDetails);
@@ -876,7 +900,8 @@ export function Wizard() {
             selectedProviders.forEach((p) => {
               if (providerFindings[p]) merged.push(...providerFindings[p]);
             });
-            setFindings(merged);
+            setFindings(mergeFindings(findings, importedProviders, merged, selectedProviders));
+            setLiveScannedProviders(new Set(selectedProviders));
             setScanProgress(100);
           }
         }, tickMs);
@@ -963,7 +988,8 @@ export function Wizard() {
                 tokensPerUnit: f.tokensPerUnit,
                 managementTokens: f.managementTokens,
               }));
-              setFindings(mapped);
+              setFindings(mergeFindings(findings, importedProviders, mapped, selectedProviders));
+              setLiveScannedProviders(new Set(selectedProviders));
               setScanProgress(100);
               // Store NIOS server metrics from live scan results
               if (results.niosServerMetrics && results.niosServerMetrics.length > 0) {
@@ -992,7 +1018,7 @@ export function Wizard() {
         setScanError(err?.message || 'Failed to start scan');
       }
     })();
-  }, [backend.isDemo, selectedProviders, selectedAuthMethod, credentials, selectionMode, clearScanIntervals, getEffectiveSelected, backupToken, subscriptions]);
+  }, [backend.isDemo, selectedProviders, selectedAuthMethod, credentials, selectionMode, clearScanIntervals, getEffectiveSelected, backupToken, subscriptions, findings, importedProviders]);
 
   // ── Manual count overrides ─────────────────────────────────────────────────
   // Build a unique key for each finding row to identify it in the overrides map.
@@ -1133,12 +1159,16 @@ export function Wizard() {
     hybridMgmt += effectiveFindings.filter(f => f.provider !== 'nios').reduce((s, f) => s + f.managementTokens, 0);
     if (hasNiosSelections) {
       const nf = effectiveFindings.filter(f => f.provider === 'nios');
-      // Migrating members → UDDI management tokens
-      hybridMgmt += nf.filter(f => niosMigrationMap.has(f.source)).reduce((s, f) => s + f.managementTokens, 0);
+      // Migrating members → UDDI native rates (25/13/3), recalculated from raw counts
+      hybridMgmt += nf
+        .filter(f => niosMigrationMap.has(f.source))
+        .reduce((s, f) => s + Math.ceil(f.count / TOKEN_RATES[f.category as keyof typeof TOKEN_RATES || 'DDI Object']), 0);
       // Staying members → NIOS licensing (no UDDI mgmt tokens)
     } else if (selectedProviders.includes('nios')) {
-      // No NIOS selections → treat all NIOS as migrated (full universal DDI baseline)
-      hybridMgmt += effectiveFindings.filter(f => f.provider === 'nios').reduce((s, f) => s + f.managementTokens, 0);
+      // No NIOS selections → treat all NIOS as migrated (full universal DDI baseline at native rates)
+      hybridMgmt += effectiveFindings
+        .filter(f => f.provider === 'nios')
+        .reduce((s, f) => s + Math.ceil(f.count / (TOKEN_RATES[f.category as keyof typeof TOKEN_RATES] ?? 25)), 0);
     }
 
     // ── Server tokens ──────────────────────────────────────────────────────
@@ -1250,7 +1280,7 @@ export function Wizard() {
       const nf = effectiveFindings.filter((f) => f.provider === 'nios');
       const nonNios = effectiveFindings.filter((f) => f.provider !== 'nios').reduce((s, f) => s + f.managementTokens, 0);
       const allNios = calcNiosTokens(nf);
-      const migrating = nf.filter((f) => niosMigrationMap.has(f.source)).reduce((s, f) => s + f.managementTokens, 0);
+      const migrating = nf.filter((f) => niosMigrationMap.has(f.source)).reduce((s, f) => s + Math.ceil(f.count / (TOKEN_RATES[f.category as keyof typeof TOKEN_RATES] ?? 25)), 0);
       const stayingNios = calcNiosTokens(nf.filter((f) => !niosMigrationMap.has(f.source)));
       summary += `\n\nNIOS-X Migration Planner`;
       summary += `\nScenario,UDDI Tokens,NIOS Licensing Tokens`;
@@ -1370,7 +1400,7 @@ export function Wizard() {
       const nf = effectiveFindings.filter((f) => f.provider === 'nios');
       const nonNios = effectiveFindings.filter((f) => f.provider !== 'nios').reduce((s, f) => s + f.managementTokens, 0);
       const allNios = calcNiosTokens(nf);
-      const migrating = nf.filter((f) => niosMigrationMap.has(f.source)).reduce((s, f) => s + f.managementTokens, 0);
+      const migrating = nf.filter((f) => niosMigrationMap.has(f.source)).reduce((s, f) => s + Math.ceil(f.count / (TOKEN_RATES[f.category as keyof typeof TOKEN_RATES] ?? 25)), 0);
       const stayingNios = calcNiosTokens(nf.filter((f) => !niosMigrationMap.has(f.source)));
       html += '<br/><h3>NIOS-X Migration Planner</h3>';
       html += '<table border="1" cellpadding="4" cellspacing="0">';
@@ -1474,6 +1504,49 @@ export function Wizard() {
 
     html += '</body></html>';
     downloadFile(html, 'ddi-token-assessment.xls', 'application/vnd.ms-excel');
+  };
+
+  const saveSession = () => {
+    const date = new Date().toISOString().slice(0, 10);
+    const json = exportSession(
+      {
+        selectedProviders,
+        findings,
+        countOverrides,
+        niosMigrationMap,
+        adMigrationMap,
+        niosServerMetrics,
+        adServerMetrics,
+        estimatorAnswers,
+        growthBufferPct,
+        reportingDestEnabled,
+        reportingDestEvents,
+      },
+      backend.health?.version ?? 'dev'
+    );
+    downloadFile(json, `ddi-session-${date}.json`, 'application/json');
+  };
+
+  const restoreSession = (snapshot: SessionSnapshot) => {
+    restart();
+    setSelectedProviders(snapshot.selectedProviders);
+    setImportedProviders(new Set(snapshot.selectedProviders));
+    setFindings(snapshot.findings);
+    setCountOverrides(snapshot.countOverrides);
+    setNiosMigrationMap(new Map(Object.entries(snapshot.niosMigrationMap)));
+    setAdMigrationMap(new Map(Object.entries(snapshot.adMigrationMap)));
+    setNiosServerMetrics(snapshot.niosServerMetrics);
+    setAdServerMetrics(snapshot.adServerMetrics);
+    setEstimatorAnswers(snapshot.estimatorAnswers);
+    setGrowthBufferPct(snapshot.growthBufferPct);
+    setReportingDestEnabled(snapshot.reportingDestEnabled);
+    setReportingDestEvents(snapshot.reportingDestEvents);
+    // Recompute derived estimator state so server tokens display correctly
+    const out = calcEstimator(snapshot.estimatorAnswers);
+    setEstimatorMonthlyLogVolume(out.monthlyLogVolume);
+    setEstimatorServerTokens(out.serverTokens);
+    setEstimatorServerDetails(out.serverTokenDetails);
+    setCurrentStep('results');
   };
 
   const downloadFile = (content: string, filename: string, type: string) => {
@@ -1684,6 +1757,41 @@ export function Wizard() {
                     </button>
                   );
                 })}
+              </div>
+              {/* Load Session */}
+              <div className="mt-4">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".json"
+                  className="hidden"
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    e.target.value = '';
+                    try {
+                      const snapshot = await importSession(file);
+                      setImportError('');
+                      restoreSession(snapshot);
+                    } catch (err) {
+                      setImportError(err instanceof Error ? err.message : 'Failed to load session file.');
+                    }
+                  }}
+                />
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex items-center gap-2 px-4 py-2.5 text-[13px] rounded-xl border border-[var(--border)] bg-white hover:bg-gray-50 transition-colors"
+                  style={{ fontWeight: 500 }}
+                >
+                  <Upload className="w-4 h-4" />
+                  Load Session
+                </button>
+                {importError && (
+                  <div className="mt-2 flex items-start gap-2 p-3 bg-red-50 rounded-lg border border-red-200">
+                    <AlertCircle className="w-4 h-4 text-red-500 mt-0.5 shrink-0" />
+                    <p className="text-[13px] text-red-700">{importError}</p>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -2490,6 +2598,26 @@ export function Wizard() {
                                   />
                                   <p className="text-[11px] text-[var(--muted-foreground)] mt-1">
                                     Comma-separated list of site IDs to restrict scanning scope
+                                  </p>
+                                  <label className="block text-[12px] text-[var(--muted-foreground)] mb-1 mt-3">
+                                    API Version
+                                  </label>
+                                  <div className="flex gap-3">
+                                    {(['legacy', 'v2'] as const).map((v) => (
+                                      <label key={v} className="flex items-center gap-1.5 text-[12px] cursor-pointer">
+                                        <input
+                                          type="radio"
+                                          name="efficientip-api-version"
+                                          value={v}
+                                          checked={efficientipAPIVersion === v}
+                                          onChange={() => setEfficientipAPIVersion(v)}
+                                        />
+                                        {v === 'legacy' ? 'Legacy (/rest/)' : 'API v2.0 (/api/v2.0/)'}
+                                      </label>
+                                    ))}
+                                  </div>
+                                  <p className="text-[11px] text-[var(--muted-foreground)] mt-1">
+                                    Choose the API version that matches your SOLIDserver deployment
                                   </p>
                                 </div>
                               </details>
@@ -4002,15 +4130,15 @@ export function Wizard() {
                 const nonNiosTokens = effectiveFindings.filter((f) => f.provider !== 'nios').reduce((s, f) => s + f.managementTokens, 0);
                 // NIOS Licensing column uses NIOS ratios (50/25/13), not UDDI ratios
                 const allNiosTokens = calcNiosTokens(niosFindings);
-                // UDDI tokens for all NIOS findings (used in Full Migration scenario)
-                const allNiosUddiTokens = niosFindings.reduce((s, f) => s + f.managementTokens, 0);
+                // UDDI tokens for all NIOS findings (used in Full Migration scenario) — native rates
+                const allNiosUddiTokens = niosFindings.reduce((s, f) => s + Math.ceil(f.count / (TOKEN_RATES[f.category as keyof typeof TOKEN_RATES] ?? 25)), 0);
 
                 const stayingFindings = niosFindings.filter((f) => !niosMigrationMap.has(f.source));
                 const stayingTokens = calcNiosTokens(stayingFindings);
-                // Migrating tokens use UDDI ratios (they move to UDDI licensing)
+                // Migrating tokens use UDDI native rates (they move to UDDI licensing)
                 const migratingTokens = niosFindings
                   .filter((f) => niosMigrationMap.has(f.source))
-                  .reduce((s, f) => s + f.managementTokens, 0);
+                  .reduce((s, f) => s + Math.ceil(f.count / (TOKEN_RATES[f.category as keyof typeof TOKEN_RATES] ?? 25)), 0);
 
                 const niosXCount = Array.from(niosMigrationMap.values()).filter(v => v === 'nios-x').length;
                 const xaasCount = Array.from(niosMigrationMap.values()).filter(v => v === 'nios-xaas').length;
@@ -5399,6 +5527,11 @@ export function Wizard() {
                                 }}
                               />
                               {PROVIDERS.find((p) => p.id === f.provider)?.name}
+                              {importedProviders.has(f.provider) && !liveScannedProviders.has(f.provider) && (
+                                <span className="ml-1 px-1 py-0.5 text-[10px] rounded bg-blue-50 text-blue-600 border border-blue-200 align-middle">
+                                  imported
+                                </span>
+                              )}
                             </td>
                             <td className="px-4 py-2.5 text-[var(--muted-foreground)] max-w-[200px] truncate" title={f.source}>{f.source}</td>
                             <td className="px-4 py-2.5">
@@ -5542,6 +5675,14 @@ export function Wizard() {
                 >
                   <FileSpreadsheet className="w-4 h-4" />
                   Download XLSX
+                </button>
+                <button
+                  onClick={saveSession}
+                  className="flex items-center justify-center gap-2 px-5 py-3 bg-[var(--infoblox-navy)] text-white rounded-xl hover:bg-[var(--infoblox-navy)]/90 transition-colors opacity-80"
+                  style={{ fontWeight: 500 }}
+                >
+                  <Download className="w-4 h-4" />
+                  Save Session
                 </button>
                 <button
                   onClick={restart}

@@ -376,6 +376,12 @@ func buildScanRequest(p ScanProviderRequest, sess *session.Session) scanner.Scan
 			if len(sess.EfficientIP.SiteIDs) > 0 {
 				req.Credentials["site_ids"] = strings.Join(sess.EfficientIP.SiteIDs, ",")
 			}
+			req.Credentials["efficientip_auth_method"] = sess.EfficientIP.AuthMethod
+			req.Credentials["efficientip_api_version"] = sess.EfficientIP.APIVersion
+			if sess.EfficientIP.AuthMethod == "token" {
+				req.Credentials["efficientip_token_id"] = sess.EfficientIP.TokenID
+				req.Credentials["efficientip_token_secret"] = sess.EfficientIP.TokenSecret
+			}
 		}
 	}
 

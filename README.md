@@ -1,4 +1,4 @@
-# UDDI Token Calculator
+# Universal DDI Token Assessment
 
 ![Go](https://img.shields.io/badge/Go-1.24+-00ADD8?logo=go&logoColor=white)
 ![License](https://img.shields.io/badge/License-Proprietary-red)

@@ -347,6 +347,16 @@ export const PROVIDERS: ProviderOption[] = [
           { key: 'efficientip_password', label: 'Password', placeholder: '', secret: true },
         ],
       },
+      {
+        id: 'token',
+        name: 'API Token',
+        description: 'Token-based authentication with SHA3-256 signature (recommended for production)',
+        fields: [
+          { key: 'efficientip_url', label: 'SOLIDserver URL', placeholder: 'https://solidserver.example.com' },
+          { key: 'efficientip_token_id', label: 'Token ID', placeholder: 'your-token-id' },
+          { key: 'efficientip_token_secret', label: 'Token Secret', placeholder: '', secret: true },
+        ],
+      },
     ],
   },
   {

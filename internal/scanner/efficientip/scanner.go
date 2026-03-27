@@ -1,7 +1,8 @@
 // Package efficientip implements scanner.Scanner for EfficientIP SOLIDserver DDI.
 // It authenticates via HTTP Basic first, falling back to native X-IPM headers with
-// base64-encoded credentials. Resources are collected from REST API endpoints with
-// pagination and optional site ID filtering.
+// base64-encoded credentials, or via SHA3-256 HMAC-like token auth (SDS scheme).
+// Resources are collected from REST API endpoints with pagination and optional
+// site ID filtering. API version "v2" routes requests through /api/v2.0/ paths.
 package efficientip
 
 import (
@@ -16,6 +17,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"golang.org/x/crypto/sha3"
 
 	"github.com/stefanriegel/UDDI-Token-Calculator/internal/calculator"
 	"github.com/stefanriegel/UDDI-Token-Calculator/internal/scanner"
@@ -40,6 +43,25 @@ var retryStatuses = map[int]struct{}{
 	429: {}, 500: {}, 502: {}, 503: {}, 504: {},
 }
 
+// v2Paths maps legacy EfficientIP service names to their API v2.0 path segments.
+var v2Paths = map[string]string{
+	"member_list":           "app/node/list",
+	"dns_view_list":         "dns/view/list",
+	"dns_zone_list":         "dns/zone/list",
+	"dns_rr_list":           "dns/rr/list",
+	"ip_site_list":          "ipam/space/list",
+	"ip_block_subnet_list":  "ipam/network/list",
+	"ip_block_subnet6_list": "ipam/network6/list",
+	"ip_pool_list":          "ipam/pool/list",
+	"ip_pool6_list":         "ipam/pool6/list",
+	"ip_address_list":       "ipam/address/list",
+	"ip_address6_list":      "ipam/address6/list",
+	"dhcp_scope_list":       "dhcp/scope/list",
+	"dhcp_scope6_list":      "dhcp/scope6/list",
+	"dhcp_range_list":       "dhcp/range/list",
+	"dhcp_range6_list":      "dhcp/range6/list",
+}
+
 // Scanner implements scanner.Scanner for EfficientIP SOLIDserver.
 type Scanner struct{}
 
@@ -54,8 +76,28 @@ func (s *Scanner) Scan(ctx context.Context, req scanner.ScanRequest, publish fun
 	password := req.Credentials["efficientip_password"]
 	skipTLS := req.Credentials["skip_tls"] == "true"
 
-	if baseURL == "" || username == "" || password == "" {
-		return nil, fmt.Errorf("efficientip: url, username, and password are required")
+	authMethod := req.Credentials["efficientip_auth_method"]
+	if authMethod == "" {
+		authMethod = "credentials"
+	}
+	tokenID := req.Credentials["efficientip_token_id"]
+	tokenSecret := req.Credentials["efficientip_token_secret"]
+	apiVersion := req.Credentials["efficientip_api_version"]
+	if apiVersion == "" {
+		apiVersion = "legacy"
+	}
+
+	if baseURL == "" {
+		return nil, fmt.Errorf("efficientip: url is required")
+	}
+	if authMethod == "token" {
+		if tokenID == "" || tokenSecret == "" {
+			return nil, fmt.Errorf("efficientip: token_id and token_secret are required for token auth")
+		}
+	} else {
+		if username == "" || password == "" {
+			return nil, fmt.Errorf("efficientip: url, username, and password are required")
+		}
 	}
 
 	// Parse site IDs from comma-separated string
@@ -73,7 +115,7 @@ func (s *Scanner) Scan(ctx context.Context, req scanner.ScanRequest, publish fun
 
 	// Authenticate
 	publish(scanner.Event{Type: "resource_progress", Provider: "efficientip", Resource: "auth", Status: "in_progress", Message: "Authenticating"})
-	authMode, err := s.authenticate(ctx, baseURL, username, password, client)
+	authMode, err := s.authenticate(ctx, baseURL, authMethod, apiVersion, username, password, tokenID, tokenSecret, client)
 	if err != nil {
 		publish(scanner.Event{Type: "error", Provider: "efficientip", Resource: "auth", Status: "error", Message: err.Error()})
 		return nil, fmt.Errorf("efficientip: authentication failed: %w", err)
@@ -83,13 +125,13 @@ func (s *Scanner) Scan(ctx context.Context, req scanner.ScanRequest, publish fun
 	whereClause := s.siteWhereClause(siteIDs)
 
 	// Collect DNS
-	dnsRows, err := s.collectDNS(ctx, baseURL, authMode, username, password, client, whereClause, publish)
+	dnsRows, err := s.collectDNS(ctx, baseURL, authMode, apiVersion, username, password, tokenID, tokenSecret, client, whereClause, publish)
 	if err != nil {
 		return nil, err
 	}
 
 	// Collect IPAM + DHCP
-	ipamRows, err := s.collectIPAMDHCP(ctx, baseURL, authMode, username, password, client, whereClause, publish)
+	ipamRows, err := s.collectIPAMDHCP(ctx, baseURL, authMode, apiVersion, username, password, tokenID, tokenSecret, client, whereClause, publish)
 	if err != nil {
 		return nil, err
 	}
@@ -111,8 +153,63 @@ func (s *Scanner) buildHTTPClient(skipTLS bool) *http.Client {
 	return client
 }
 
-// authenticate tries HTTP Basic auth first, then falls back to native X-IPM headers.
-func (s *Scanner) authenticate(ctx context.Context, baseURL, username, password string, client *http.Client) (string, error) {
+// buildEndpointURL returns the full base URL for a given service and API version.
+// For apiVersion == "v2" and a known service, returns baseURL + "/api/v2.0/" + <path> + "?".
+// Otherwise returns baseURL + "/rest/" + service + "?".
+// The trailing "?" lets callers concatenate params.Encode() directly.
+func buildEndpointURL(baseURL, apiVersion, service string) string {
+	if apiVersion == "v2" {
+		if v2Path, ok := v2Paths[service]; ok {
+			return baseURL + "/api/v2.0/" + v2Path + "?"
+		}
+	}
+	return baseURL + "/rest/" + service + "?"
+}
+
+// setTokenAuth computes a SHA3-256 HMAC-like signature over the request method
+// and full URL (including query parameters) and sets the SDS Authorization header.
+// The signature input is: "<tokenSecret>\n<unixTimestamp>\n<METHOD>\n<fullURL>".
+// Call this AFTER the request URL (including query params) is fully constructed.
+func setTokenAuth(req *http.Request, tokenID, tokenSecret, fullURL string) {
+	ts := time.Now().Unix()
+	s := fmt.Sprintf("%s\n%d\n%s\n%s", tokenSecret, ts, req.Method, fullURL)
+	sum := sha3.Sum256([]byte(s))
+	req.Header.Set("Authorization", fmt.Sprintf("SDS %s:%x", tokenID, sum))
+	req.Header.Set("X-SDS-TS", fmt.Sprintf("%d", ts))
+	req.Header.Set("Accept", "application/json")
+}
+
+// authenticate tries HTTP Basic auth first, then falls back to native X-IPM headers,
+// or uses token auth (SDS scheme) when authMode is "token".
+func (s *Scanner) authenticate(ctx context.Context, baseURL, authMode, apiVersion, username, password, tokenID, tokenSecret string, client *http.Client) (string, error) {
+	if authMode == "token" {
+		// Token auth: probe with SHA3 signature, skip basic/native.
+		// For v2, route member_list through buildEndpointURL (maps to app/node/list).
+		// For legacy, probe /rest/member_list directly — app/node/list is v2-only.
+		var probeURL string
+		if apiVersion == "v2" {
+			probeURL = buildEndpointURL(baseURL, apiVersion, "member_list") + "limit=1&offset=0"
+		} else {
+			probeURL = baseURL + "/rest/member_list?limit=1&offset=0"
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, probeURL, nil)
+		if err != nil {
+			return "", err
+		}
+		setTokenAuth(req, tokenID, tokenSecret, req.URL.String())
+		resp, err := client.Do(req)
+		if err != nil {
+			return "", fmt.Errorf("token auth probe failed: %w", err)
+		}
+		_, _ = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode < 400 {
+			return "token", nil
+		}
+		return "", fmt.Errorf("token auth probe returned HTTP %d", resp.StatusCode)
+	}
+
+	// Credentials auth: try Basic first, then native X-IPM headers.
 	probeURL := baseURL + "/rest/member_list?limit=1&offset=0"
 
 	// Try Basic auth
@@ -161,11 +258,14 @@ func (s *Scanner) setNativeHeaders(req *http.Request, username, password string)
 }
 
 // setAuth applies the appropriate auth headers/credentials to a request.
-func (s *Scanner) setAuth(req *http.Request, authMode, username, password string) {
-	if authMode == "basic" {
+func (s *Scanner) setAuth(req *http.Request, authMode, username, password, tokenID, tokenSecret string) {
+	switch authMode {
+	case "token":
+		setTokenAuth(req, tokenID, tokenSecret, req.URL.String())
+	case "basic":
 		req.SetBasicAuth(username, password)
 		req.Header.Set("Accept", "application/json")
-	} else {
+	default:
 		s.setNativeHeaders(req, username, password)
 	}
 }
@@ -191,7 +291,7 @@ func (s *Scanner) siteWhereClause(siteIDs []string) string {
 // Returns total count, collected rows (if includeRows), and any error.
 func (s *Scanner) countService(
 	ctx context.Context,
-	baseURL, authMode, username, password string,
+	baseURL, authMode, apiVersion, username, password, tokenID, tokenSecret string,
 	client *http.Client,
 	service, whereClause string,
 	includeRows bool,
@@ -208,15 +308,21 @@ func (s *Scanner) countService(
 			params.Set("WHERE", whereClause)
 		}
 
-		reqURL := fmt.Sprintf("%s/rest/%s?%s", baseURL, service, params.Encode())
+		reqURL := buildEndpointURL(baseURL, apiVersion, service) + params.Encode()
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 		if err != nil {
 			return 0, nil, err
 		}
-		s.setAuth(req, authMode, username, password)
+		s.setAuth(req, authMode, username, password, tokenID, tokenSecret)
 
 		body, err := s.doWithRetry(client, req)
 		if err != nil {
+			// A 400 with "unknown service" means this endpoint does not exist on this
+			// SOLIDserver version (common for IPv6 endpoints on older deployments).
+			// Treat it as an empty result rather than a hard failure.
+			if isUnknownService(err) {
+				return 0, nil, nil
+			}
 			return 0, nil, err
 		}
 
@@ -280,11 +386,19 @@ func (s *Scanner) doWithRetry(client *http.Client, req *http.Request) ([]byte, e
 		}
 
 		if resp.StatusCode >= 400 {
-			return nil, fmt.Errorf("HTTP %d from %s", resp.StatusCode, req.URL.Path)
+			return nil, fmt.Errorf("HTTP %d from %s: %s", resp.StatusCode, req.URL.Path, strings.TrimSpace(string(body)))
 		}
 		return body, nil
 	}
 	return nil, fmt.Errorf("request failed after %d retries: %w", maxRetries, lastErr)
+}
+
+// isUnknownService reports whether an error from doWithRetry is a 400 response
+// with the SOLIDserver "unknown service" body. These endpoints simply do not exist
+// on the deployed SOLIDserver version (common for IPv6 services on older installs)
+// and should be treated as a count of zero rather than a fatal scan error.
+func isUnknownService(err error) bool {
+	return err != nil && strings.Contains(err.Error(), `"unknown service"`)
 }
 
 func parseRetryAfter(val string) int {
@@ -298,7 +412,7 @@ func parseRetryAfter(val string) int {
 // collectDNS collects DNS views, zones, and records with supported/unsupported split.
 func (s *Scanner) collectDNS(
 	ctx context.Context,
-	baseURL, authMode, username, password string,
+	baseURL, authMode, apiVersion, username, password, tokenID, tokenSecret string,
 	client *http.Client,
 	whereClause string,
 	publish func(scanner.Event),
@@ -307,7 +421,7 @@ func (s *Scanner) collectDNS(
 	start := time.Now()
 
 	// DNS Views
-	views, _, err := s.countService(ctx, baseURL, authMode, username, password, client, "dns_view_list", whereClause, false)
+	views, _, err := s.countService(ctx, baseURL, authMode, apiVersion, username, password, tokenID, tokenSecret, client, "dns_view_list", whereClause, false)
 	if err != nil {
 		return nil, fmt.Errorf("dns_view_list: %w", err)
 	}
@@ -316,7 +430,7 @@ func (s *Scanner) collectDNS(
 
 	// DNS Zones
 	start = time.Now()
-	zones, _, err := s.countService(ctx, baseURL, authMode, username, password, client, "dns_zone_list", whereClause, false)
+	zones, _, err := s.countService(ctx, baseURL, authMode, apiVersion, username, password, tokenID, tokenSecret, client, "dns_zone_list", whereClause, false)
 	if err != nil {
 		return nil, fmt.Errorf("dns_zone_list: %w", err)
 	}
@@ -325,7 +439,7 @@ func (s *Scanner) collectDNS(
 
 	// DNS Records (need rows for type split)
 	start = time.Now()
-	_, records, err := s.countService(ctx, baseURL, authMode, username, password, client, "dns_rr_list", whereClause, true)
+	_, records, err := s.countService(ctx, baseURL, authMode, apiVersion, username, password, tokenID, tokenSecret, client, "dns_rr_list", whereClause, true)
 	if err != nil {
 		return nil, fmt.Errorf("dns_rr_list: %w", err)
 	}
@@ -366,7 +480,7 @@ func splitDNSRecords(records []map[string]interface{}) (supported, unsupported i
 // collectIPAMDHCP collects IPAM and DHCP resources.
 func (s *Scanner) collectIPAMDHCP(
 	ctx context.Context,
-	baseURL, authMode, username, password string,
+	baseURL, authMode, apiVersion, username, password, tokenID, tokenSecret string,
 	client *http.Client,
 	whereClause string,
 	publish func(scanner.Event),
@@ -378,8 +492,8 @@ func (s *Scanner) collectIPAMDHCP(
 	}
 	resources := []resource{
 		{"EfficientIP IP Sites", "ip_site_list", "ip_sites"},
-		{"EfficientIP IP4 Subnets", "ip_subnet_list", "ip4_subnets"},
-		{"EfficientIP IP6 Subnets", "ip_subnet6_list", "ip6_subnets"},
+		{"EfficientIP IP4 Subnets", "ip_block_subnet_list", "ip4_subnets"},
+		{"EfficientIP IP6 Subnets", "ip_block_subnet6_list", "ip6_subnets"},
 		{"EfficientIP IP4 Pools", "ip_pool_list", "ip4_pools"},
 		{"EfficientIP IP6 Pools", "ip_pool6_list", "ip6_pools"},
 		{"EfficientIP IP4 Addresses", "ip_address_list", "ip4_addresses"},
@@ -393,7 +507,7 @@ func (s *Scanner) collectIPAMDHCP(
 	var rows []calculator.FindingRow
 	for _, res := range resources {
 		start := time.Now()
-		count, _, err := s.countService(ctx, baseURL, authMode, username, password, client, res.service, whereClause, false)
+		count, _, err := s.countService(ctx, baseURL, authMode, apiVersion, username, password, tokenID, tokenSecret, client, res.service, whereClause, false)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", res.service, err)
 		}
