@@ -21,6 +21,12 @@ stages:
   - docker-build
   - release
 
+# Go compile parallelism and GC tuning — large AWS/Azure/GCP SDKs
+# cause OOM kills at default settings in memory-limited containers
+variables:
+  GOFLAGS: "-p=2"
+  GOGC: "50"
+
 # ── Frontend build (provides artifacts for Go embed) ──────────────────
 build-frontend:
   stage: .pre
