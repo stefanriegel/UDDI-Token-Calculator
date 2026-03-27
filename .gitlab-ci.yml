@@ -12,7 +12,6 @@ include:
     ref: main
     file: '/templates/release.yml'
 
-# Merge all stages from base + docker + release
 stages:
   - .pre
   - lint
@@ -21,14 +20,12 @@ stages:
   - docker-build
   - release
 
-# Go compile parallelism and GC tuning — large AWS/Azure/GCP SDKs
-# cause OOM kills at default settings in memory-limited containers
+# Go compile tuning — large AWS/Azure/GCP SDKs cause OOM at defaults
 variables:
   GOFLAGS: "-p=2"
   GOGC: "50"
   GOMODCACHE: "${CI_PROJECT_DIR}/.go-mod-cache"
 
-# Shared Go cache definition
 .go-cache:
   cache:
     key:
@@ -37,7 +34,7 @@ variables:
     paths:
       - .go-mod-cache/
 
-# ── Frontend build (provides artifacts for Go embed) ──────────────────
+# ── Frontend build (artifacts for go:embed) ───────────────────────────
 build-frontend:
   stage: .pre
   image: node:22-alpine
@@ -58,7 +55,7 @@ build-frontend:
     paths:
       - frontend/node_modules/
 
-# ── Go vet + test combined (sequential to avoid OOM) ──────────────────
+# ── Go vet + test (single job to avoid OOM from parallel builds) ──────
 go-vet-test:
   stage: test
   image: golang:1.25-alpine
@@ -94,12 +91,12 @@ frontend-test:
     paths:
       - frontend/node_modules/
 
-# ── Go build (verify it compiles) ────────────────────────────────────
+# ── Go build (verify compilation) ────────────────────────────────────
 go-build:
   stage: build
   image: golang:1.25-alpine
   extends: .go-cache
-  needs: ["go-vet-test"]
+  needs: ["build-frontend", "go-vet-test"]
   script:
     - CGO_ENABLED=0 go build -o /dev/null .
   rules:
