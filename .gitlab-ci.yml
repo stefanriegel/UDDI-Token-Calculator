@@ -26,6 +26,16 @@ stages:
 variables:
   GOFLAGS: "-p=2"
   GOGC: "50"
+  GOMODCACHE: "${CI_PROJECT_DIR}/.go-mod-cache"
+
+# Shared Go cache definition
+.go-cache:
+  cache:
+    key:
+      files:
+        - go.sum
+    paths:
+      - .go-mod-cache/
 
 # ── Frontend build (provides artifacts for Go embed) ──────────────────
 build-frontend:
@@ -48,41 +58,19 @@ build-frontend:
     paths:
       - frontend/node_modules/
 
-# ── Go lint ───────────────────────────────────────────────────────────
-go-lint:
-  stage: lint
+# ── Go vet + test combined (sequential to avoid OOM) ──────────────────
+go-vet-test:
+  stage: test
   image: golang:1.25-alpine
+  extends: .go-cache
   needs: ["build-frontend"]
   script:
     - go vet ./...
-  rules:
-    - if: '$SKIP_LINT == "true"'
-      when: never
-    - when: on_success
-  cache:
-    key:
-      files:
-        - go.sum
-    paths:
-      - /go/pkg/mod/
-
-# ── Go test ───────────────────────────────────────────────────────────
-go-test:
-  stage: test
-  image: golang:1.25-alpine
-  needs: ["build-frontend"]
-  script:
     - go test ./... -count=1
   rules:
     - if: '$SKIP_TEST == "true"'
       when: never
     - when: on_success
-  cache:
-    key:
-      files:
-        - go.sum
-    paths:
-      - /go/pkg/mod/
 
 # ── Frontend tests ────────────────────────────────────────────────────
 frontend-test:
@@ -110,16 +98,11 @@ frontend-test:
 go-build:
   stage: build
   image: golang:1.25-alpine
-  needs: ["build-frontend"]
+  extends: .go-cache
+  needs: ["go-vet-test"]
   script:
     - CGO_ENABLED=0 go build -o /dev/null .
   rules:
     - if: '$SKIP_BUILD == "true"'
       when: never
     - when: on_success
-  cache:
-    key:
-      files:
-        - go.sum
-    paths:
-      - /go/pkg/mod/
