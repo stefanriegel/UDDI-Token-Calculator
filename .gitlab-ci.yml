@@ -1,9 +1,12 @@
 # UDDI-Token-Calculator CI/CD configuration
 # Uses shared Go, Docker, and release templates from ci-templates repo
 #
-# NOTE: This repo also defines a `build-frontend` job (React build for go:embed).
-# The Go jobs below add needs: to wait for build-frontend artifacts before running.
-# All other Go job config (image, script, cache) is inherited from templates/go.yml.
+# Project-specific jobs:
+#   build-frontend — React build producing frontend/dist/ for go:embed
+#   frontend-test  — Vitest runner for frontend unit tests
+#
+# The Go jobs from go.yml add needs: ["build-frontend"] so they wait for
+# embed artifacts before compiling.
 
 include:
   - project: 'stefanriegel/ci-templates'
@@ -16,6 +19,50 @@ include:
     ref: main
     file: '/templates/release.yml'
 
+# ── Frontend build (artifacts for go:embed) ───────────────────────────
+build-frontend:
+  stage: .pre
+  image: node:22-alpine
+  script:
+    - cd frontend
+    - corepack enable
+    - corepack prepare pnpm@latest --activate
+    - pnpm install --frozen-lockfile
+    - pnpm build
+  artifacts:
+    paths:
+      - frontend/dist/
+    expire_in: 1 hour
+  cache:
+    key:
+      files:
+        - frontend/pnpm-lock.yaml
+    paths:
+      - frontend/node_modules/
+
+# ── Frontend tests ────────────────────────────────────────────────────
+frontend-test:
+  stage: test
+  image: node:22-alpine
+  needs: ["build-frontend"]
+  script:
+    - cd frontend
+    - corepack enable
+    - corepack prepare pnpm@latest --activate
+    - pnpm install --frozen-lockfile
+    - npx vitest run
+  rules:
+    - if: '$SKIP_TEST == "true"'
+      when: never
+    - when: on_success
+  cache:
+    key:
+      files:
+        - frontend/pnpm-lock.yaml
+    paths:
+      - frontend/node_modules/
+
+# ── Wire Go template jobs to wait for frontend artifacts ──────────────
 go-lint:
   needs: ["build-frontend"]
 
