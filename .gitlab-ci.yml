@@ -1,10 +1,14 @@
-# GitLab CI/CD for UDDI-Token-Calculator
-# Go + embedded frontend (go:embed) → Docker → GitHub release
+# UDDI-Token-Calculator CI/CD configuration
+# Uses shared Go, Docker, and release templates from ci-templates repo
+#
+# NOTE: This repo also defines a `build-frontend` job (React build for go:embed).
+# The Go jobs below add needs: to wait for build-frontend artifacts before running.
+# All other Go job config (image, script, cache) is inherited from templates/go.yml.
 
 include:
   - project: 'stefanriegel/ci-templates'
     ref: main
-    file: '/templates/base.yml'
+    file: '/templates/go.yml'
   - project: 'stefanriegel/ci-templates'
     ref: main
     file: '/templates/docker.yml'
@@ -12,94 +16,11 @@ include:
     ref: main
     file: '/templates/release.yml'
 
-stages:
-  - .pre
-  - lint
-  - test
-  - build
-  - docker-build
-  - release
-
-# Go compile tuning — large AWS/Azure/GCP SDKs cause OOM at defaults
-variables:
-  GOFLAGS: "-p=2"
-  GOGC: "50"
-  GOMODCACHE: "${CI_PROJECT_DIR}/.go-mod-cache"
-
-.go-cache:
-  cache:
-    key:
-      files:
-        - go.sum
-    paths:
-      - .go-mod-cache/
-
-# ── Frontend build (artifacts for go:embed) ───────────────────────────
-build-frontend:
-  stage: .pre
-  image: node:22-alpine
-  script:
-    - cd frontend
-    - corepack enable
-    - corepack prepare pnpm@latest --activate
-    - pnpm install --frozen-lockfile
-    - pnpm build
-  artifacts:
-    paths:
-      - frontend/dist/
-    expire_in: 1 hour
-  cache:
-    key:
-      files:
-        - frontend/pnpm-lock.yaml
-    paths:
-      - frontend/node_modules/
-
-# ── Go vet + test (single job to avoid OOM from parallel builds) ──────
-go-vet-test:
-  stage: test
-  image: golang:1.25-alpine
-  extends: .go-cache
+go-lint:
   needs: ["build-frontend"]
-  script:
-    - go vet ./...
-    - go test ./... -count=1
-  rules:
-    - if: '$SKIP_TEST == "true"'
-      when: never
-    - when: on_success
 
-# ── Frontend tests ────────────────────────────────────────────────────
-frontend-test:
-  stage: test
-  image: node:22-alpine
+go-test:
   needs: ["build-frontend"]
-  script:
-    - cd frontend
-    - corepack enable
-    - corepack prepare pnpm@latest --activate
-    - pnpm install --frozen-lockfile
-    - npx vitest run
-  rules:
-    - if: '$SKIP_TEST == "true"'
-      when: never
-    - when: on_success
-  cache:
-    key:
-      files:
-        - frontend/pnpm-lock.yaml
-    paths:
-      - frontend/node_modules/
 
-# ── Go build (verify compilation) ────────────────────────────────────
 go-build:
-  stage: build
-  image: golang:1.25-alpine
-  extends: .go-cache
-  needs: ["build-frontend", "go-vet-test"]
-  script:
-    - CGO_ENABLED=0 go build -o /dev/null .
-  rules:
-    - if: '$SKIP_BUILD == "true"'
-      when: never
-    - when: on_success
+  needs: ["build-frontend", "go-test"]
