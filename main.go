@@ -66,6 +66,7 @@ func main() {
 		"nios-wapi":                 niosscanner.NewWAPI(),
 		scanner.ProviderBluecat:     bluecatscanner.New(),
 		scanner.ProviderEfficientIP: efficientipscanner.New(),
+		"efficientip-backup":        efficientipscanner.NewBackup(),
 	})
 
 	// 4. Build the chi router (health endpoint + scan lifecycle + static fallback).

@@ -107,9 +107,13 @@ func (o *Orchestrator) Run(ctx context.Context, sess *session.Session, providers
 		// Determine which scanner key to use. NIOS with mode="wapi" uses
 		// the "nios-wapi" key to dispatch to WAPIScanner instead of the
 		// backup-based scanner registered under "nios".
+		// EfficientIP with mode="backup" uses the "efficientip-backup" key.
 		scannerKey := p.Provider
 		if p.Provider == scanner.ProviderNIOS && p.Mode == "wapi" {
 			scannerKey = "nios-wapi"
+		}
+		if p.Provider == scanner.ProviderEfficientIP && p.Mode == "backup" {
+			scannerKey = "efficientip-backup"
 		}
 
 		s, ok := o.scanners[scannerKey]
@@ -366,7 +370,9 @@ func buildScanRequest(p ScanProviderRequest, sess *session.Session) scanner.Scan
 			}
 		}
 	case scanner.ProviderEfficientIP:
-		if sess.EfficientIP != nil {
+		if p.Mode == "backup" && p.BackupPath != "" {
+			req.Credentials["backup_path"] = p.BackupPath
+		} else if sess.EfficientIP != nil {
 			req.Credentials["efficientip_url"] = sess.EfficientIP.URL
 			req.Credentials["efficientip_username"] = sess.EfficientIP.Username
 			req.Credentials["efficientip_password"] = sess.EfficientIP.Password

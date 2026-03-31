@@ -100,6 +100,7 @@ func NewRouter(staticHandler http.Handler, store *session.Store, orch *orchestra
 			r.Get("/scan/{scanId}/export", exportHandler.HandleExport)
 			r.Post("/session/clone", scanHandler.HandleCloneSession)
 			r.Post("/providers/nios/upload", scanHandler.HandleUploadNiosBackup)
+			r.Post("/providers/efficientip/upload", scanHandler.HandleUploadEfficientipBackup)
 			r.Post("/providers/ad/discover", HandleADDiscover)
 		})
 	} else {

@@ -173,6 +173,15 @@ type NiosServerMetric struct {
 	ActiveIPCount int    `json:"activeIPCount"`
 }
 
+// EfficientIPUploadResponse is the body for POST /api/v1/providers/efficientip/upload.
+// BackupToken is the opaque token the frontend must pass back in the scan-start
+// request body as ScanProviderSpec.BackupToken.
+type EfficientIPUploadResponse struct {
+	Valid        bool   `json:"valid"`
+	Error        string `json:"error,omitempty"`
+	BackupToken  string `json:"backupToken,omitempty"`
+}
+
 // ADDiscoverRequest is the body for POST /api/v1/providers/ad/discover.
 // The seed server + credentials are re-submitted so discovery can be performed
 // immediately after the first server validates, without waiting for a scan.

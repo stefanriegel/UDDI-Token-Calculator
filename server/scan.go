@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"compress/gzip"
 	"context"
+	cryptoRand "crypto/rand"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
@@ -27,6 +28,10 @@ import (
 // niosBackupTokens maps opaque upload tokens to temp file paths.
 // Entries are removed when HandleStartScan consumes them via LoadAndDelete.
 var niosBackupTokens sync.Map
+
+// efficientipBackupTokens maps opaque upload tokens to temp file paths for EfficientIP backups.
+// Entries are removed when HandleStartScan consumes them via LoadAndDelete.
+var efficientipBackupTokens sync.Map
 
 // ScanHandler holds the dependencies required by the scan HTTP handlers.
 type ScanHandler struct {
@@ -421,6 +426,83 @@ func objectToMember(props map[string]string) (NiosGridMember, bool) {
 	return NiosGridMember{Hostname: hostname, Role: role}, true
 }
 
+// HandleUploadEfficientipBackup handles POST /api/v1/providers/efficientip/upload.
+//
+// Accepts a multipart form upload with a "file" field containing a .gz SOLIDserver
+// backup archive (max 10 GB). Writes the file to a temp path and returns an opaque
+// BackupToken the frontend must pass back in the scan-start request.
+func (h *ScanHandler) HandleUploadEfficientipBackup(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, niosMaxUploadBytes)
+
+	mr, err := r.MultipartReader()
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, EfficientIPUploadResponse{Valid: false, Error: "failed to parse multipart request: " + err.Error()})
+		return
+	}
+
+	var filePart io.Reader
+	var filename string
+	for {
+		part, err := mr.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			if strings.Contains(err.Error(), "request body too large") || strings.Contains(err.Error(), "http: request body too large") {
+				writeJSON(w, http.StatusRequestEntityTooLarge, EfficientIPUploadResponse{Valid: false, Error: fmt.Sprintf("file too large (max %d GB)", niosMaxUploadBytes>>30)})
+				return
+			}
+			writeJSON(w, http.StatusBadRequest, EfficientIPUploadResponse{Valid: false, Error: "error reading multipart stream: " + err.Error()})
+			return
+		}
+		if part.FormName() == "file" {
+			filePart = part
+			filename = part.FileName()
+			break
+		}
+		io.Copy(io.Discard, part) //nolint:errcheck
+	}
+
+	if filePart == nil {
+		writeJSON(w, http.StatusBadRequest, EfficientIPUploadResponse{Valid: false, Error: "missing file field"})
+		return
+	}
+
+	name := strings.ToLower(filename)
+	if !strings.HasSuffix(name, ".gz") {
+		writeJSON(w, http.StatusOK, EfficientIPUploadResponse{Valid: false, Error: "unsupported file type: must be .gz"})
+		return
+	}
+
+	tmp, err := os.CreateTemp("", "efficientip-backup-*.gz")
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, EfficientIPUploadResponse{Valid: false, Error: "failed to create temp file: " + err.Error()})
+		return
+	}
+
+	if _, err := io.Copy(tmp, filePart); err != nil {
+		tmp.Close()
+		os.Remove(tmp.Name())
+		writeJSON(w, http.StatusInternalServerError, EfficientIPUploadResponse{Valid: false, Error: "failed to write temp file: " + err.Error()})
+		return
+	}
+	tmp.Close()
+
+	tokenBytes := make([]byte, 16)
+	if _, err := cryptoRand.Read(tokenBytes); err != nil {
+		os.Remove(tmp.Name())
+		writeJSON(w, http.StatusInternalServerError, EfficientIPUploadResponse{Valid: false, Error: "failed to generate token: " + err.Error()})
+		return
+	}
+	token := fmt.Sprintf("%x", tokenBytes)
+	efficientipBackupTokens.Store(token, tmp.Name())
+
+	writeJSON(w, http.StatusOK, EfficientIPUploadResponse{
+		Valid:       true,
+		BackupToken: token,
+	})
+}
+
 // HandleScanResults handles GET /api/v1/scan/{scanId}/results.
 //
 // Returns 202 Accepted with status:"running" while the scan is in progress.
@@ -587,6 +669,15 @@ func toOrchestratorProviders(specs []ScanProviderSpec) []orchestrator.ScanProvid
 					}
 				}
 				req.SelectedMembers = s.SelectedMembers
+			}
+		}
+
+		// For EfficientIP provider: backup mode requires resolving the BackupToken.
+		if s.Provider == "efficientip" && s.Mode == "backup" {
+			if s.BackupToken != "" {
+				if pathVal, ok := efficientipBackupTokens.LoadAndDelete(s.BackupToken); ok {
+					req.BackupPath = pathVal.(string)
+				}
 			}
 		}
 
