@@ -2,10 +2,14 @@ package efficientip
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/calculator"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/scanner"
 )
 
 func TestOpenBackupFile(t *testing.T) {
@@ -255,5 +259,69 @@ func TestCountTableRows(t *testing.T) {
 	}
 	if got != 0 {
 		t.Errorf("missing entry row count: got %d, want 0", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// TestScanBackup_AllCounts
+// ---------------------------------------------------------------------------
+
+func TestScanBackup_AllCounts(t *testing.T) {
+	data, err := buildFullBackupFile()
+	if err != nil {
+		t.Fatalf("buildFullBackupFile: %v", err)
+	}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "full_backup.zst")
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatalf("write backup file: %v", err)
+	}
+
+	rows, err := ScanBackup(context.Background(), path, func(_ scanner.Event) {})
+	if err != nil {
+		t.Fatalf("ScanBackup: %v", err)
+	}
+
+	// Index rows by item name for easy lookup.
+	byItem := make(map[string]calculator.FindingRow, len(rows))
+	for _, r := range rows {
+		byItem[r.Item] = r
+	}
+
+	tests := []struct {
+		item  string
+		count int
+	}{
+		{"EfficientIP DNS Zones", 734},
+		{"EfficientIP DNS Records (Supported Types)", 2101},
+		{"EfficientIP IP Sites", 1},
+		{"EfficientIP IP4 Subnets", 249},
+		{"EfficientIP IP6 Subnets", 0},
+		{"EfficientIP IP4 Pools", 0},
+		{"EfficientIP IP6 Pools", 0},
+		{"EfficientIP IP4 Addresses", 1298},
+		{"EfficientIP IP6 Addresses", 0},
+		{"EfficientIP DHCP4 Scopes", 37},
+		{"EfficientIP DHCP6 Scopes", 0},
+		{"EfficientIP DHCP4 Ranges", 37},
+		{"EfficientIP DHCP6 Ranges", 0},
+	}
+
+	for _, tc := range tests {
+		r, ok := byItem[tc.item]
+		if !ok {
+			t.Errorf("missing row for item %q", tc.item)
+			continue
+		}
+		if r.Count != tc.count {
+			t.Errorf("item %q: got count %d, want %d", tc.item, r.Count, tc.count)
+		}
+		if r.Provider != "efficientip" {
+			t.Errorf("item %q: Provider=%q, want efficientip", tc.item, r.Provider)
+		}
+		if r.Source != "backup" {
+			t.Errorf("item %q: Source=%q, want backup", tc.item, r.Source)
+		}
 	}
 }

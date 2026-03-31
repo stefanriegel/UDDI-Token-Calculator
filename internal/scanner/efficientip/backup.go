@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -11,6 +12,9 @@ import (
 	"strings"
 
 	"github.com/klauspost/compress/zstd"
+
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/calculator"
+	"github.com/stefanriegel/UDDI-Token-Calculator/internal/scanner"
 )
 
 // ---------------------------------------------------------------------------
@@ -738,4 +742,155 @@ func openBackupFile(path string) (io.ReadSeeker, func(), error) {
 	zr.Close()
 	cleanup()
 	return nil, nil, fmt.Errorf("openBackupFile: db.psql not found in %q", path)
+}
+
+// ---------------------------------------------------------------------------
+// ScanBackup — public entry point for backup-mode scanning
+// ---------------------------------------------------------------------------
+
+// backupTableDef maps a pg table name to its role in the scan result.
+type backupTableDef struct {
+	table       string
+	item        string
+	category    string
+	tokensPerUnit int
+	needsRowEnabled bool
+	needsRRType     bool // filter by rr_type_id (requires rr_type lookup table)
+}
+
+// backupTables lists the 15 target tables in order of processing.
+// Two address tables (real_ip + free_ip) are summed into one FindingRow.
+var backupTables = []backupTableDef{
+	// DNS
+	{"real_dnszone",      "EfficientIP DNS Zones",                    calculator.CategoryDDIObjects, calculator.TokensPerDDIObject, true, false},
+	{"link_dnszone_rr",   "EfficientIP DNS Records (Supported Types)", calculator.CategoryDDIObjects, calculator.TokensPerDDIObject, true, true},
+	// IPAM
+	{"ip_site",           "EfficientIP IP Sites",    calculator.CategoryDDIObjects, calculator.TokensPerDDIObject, false, false},
+	{"ip_subnet",         "EfficientIP IP4 Subnets", calculator.CategoryDDIObjects, calculator.TokensPerDDIObject, true,  false},
+	{"ip_subnet6",        "EfficientIP IP6 Subnets", calculator.CategoryDDIObjects, calculator.TokensPerDDIObject, true,  false},
+	{"ip_pool",           "EfficientIP IP4 Pools",   calculator.CategoryDDIObjects, calculator.TokensPerDDIObject, true,  false},
+	{"ip_pool6",          "EfficientIP IP6 Pools",   calculator.CategoryDDIObjects, calculator.TokensPerDDIObject, true,  false},
+	// Addresses are special: real_ip + free_ip → one row (see ScanBackup)
+	{"real_ip",           "_ip4_addresses_a", calculator.CategoryActiveIPs, calculator.TokensPerActiveIP, false, false},
+	{"free_ip",           "_ip4_addresses_b", calculator.CategoryActiveIPs, calculator.TokensPerActiveIP, false, false},
+	{"real_ip6",          "_ip6_addresses_a", calculator.CategoryActiveIPs, calculator.TokensPerActiveIP, false, false},
+	{"free_ip6",          "_ip6_addresses_b", calculator.CategoryActiveIPs, calculator.TokensPerActiveIP, false, false},
+	// DHCP
+	{"dhcp_scope",        "EfficientIP DHCP4 Scopes", calculator.CategoryDDIObjects, calculator.TokensPerDDIObject, true, false},
+	{"dhcp_scope6",       "EfficientIP DHCP6 Scopes", calculator.CategoryDDIObjects, calculator.TokensPerDDIObject, true, false},
+	{"dhcp_range",        "EfficientIP DHCP4 Ranges", calculator.CategoryDDIObjects, calculator.TokensPerDDIObject, true, false},
+	{"dhcp_range6",       "EfficientIP DHCP6 Ranges", calculator.CategoryDDIObjects, calculator.TokensPerDDIObject, true, false},
+}
+
+// ScanBackup opens a SOLIDserver backup archive at path, parses the embedded
+// pg_dump file, counts rows in each of the 15 DDI tables (applying
+// row_enabled and DNS record-type filters), and returns []calculator.FindingRow
+// in the same shape as the live API scanner.
+func ScanBackup(ctx context.Context, path string, publish func(scanner.Event)) ([]calculator.FindingRow, error) {
+	publish(scanner.Event{Type: "resource_progress", Provider: "efficientip", Resource: "backup_open", Status: "in_progress", Message: "Opening backup archive"})
+
+	rs, cleanup, err := openBackupFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("ScanBackup: %w", err)
+	}
+	defer cleanup()
+
+	publish(scanner.Event{Type: "resource_progress", Provider: "efficientip", Resource: "backup_parse", Status: "in_progress", Message: "Parsing pg_dump TOC"})
+	doc, err := parsePgDump(rs)
+	if err != nil {
+		return nil, fmt.Errorf("ScanBackup: parsePgDump: %w", err)
+	}
+
+	// Index TOC entries by table name (only TABLE DATA sections).
+	tocByName := make(map[string]tocEntry)
+	for _, e := range doc.TOC {
+		if e.Desc == "TABLE DATA" {
+			tocByName[e.Tag] = e
+		}
+	}
+
+	// Build rr_type → OID map for DNS record-type filtering.
+	var rrTypeMap map[string]struct{}
+	if e, ok := tocByName["rr_type"]; ok {
+		rrTypeMap, err = buildRRTypeMap(rs, e, byte(doc.ComprAlgo))
+		if err != nil {
+			return nil, fmt.Errorf("ScanBackup: buildRRTypeMap: %w", err)
+		}
+	}
+
+	// Count each table.
+	counts := make(map[string]int, len(backupTables))
+	for _, def := range backupTables {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		entry, ok := tocByName[def.table]
+		if !ok {
+			counts[def.table] = 0
+			continue
+		}
+		var cf columnFilter
+		if def.needsRRType {
+			cf = buildColumnFilter(entry, rrTypeMap)
+		} else if def.needsRowEnabled {
+			cf = buildColumnFilter(entry, nil)
+		} else {
+			cf = noFilter()
+		}
+		n, err := countTableRows(rs, entry, byte(doc.ComprAlgo), cf)
+		if err != nil {
+			return nil, fmt.Errorf("ScanBackup: countTableRows %q: %w", def.table, err)
+		}
+		counts[def.table] = n
+		publish(scanner.Event{Type: "resource_progress", Provider: "efficientip", Resource: def.table, Count: n, Status: "done"})
+	}
+
+	// Assemble FindingRows.
+	var rows []calculator.FindingRow
+
+	// DNS Zones
+	rows = append(rows, backupFinding("EfficientIP DNS Zones", calculator.CategoryDDIObjects, calculator.TokensPerDDIObject, counts["real_dnszone"]))
+	// DNS Records (supported types only)
+	rows = append(rows, backupFinding("EfficientIP DNS Records (Supported Types)", calculator.CategoryDDIObjects, calculator.TokensPerDDIObject, counts["link_dnszone_rr"]))
+	// IP Sites
+	rows = append(rows, backupFinding("EfficientIP IP Sites", calculator.CategoryDDIObjects, calculator.TokensPerDDIObject, counts["ip_site"]))
+	// IPv4 Subnets
+	rows = append(rows, backupFinding("EfficientIP IP4 Subnets", calculator.CategoryDDIObjects, calculator.TokensPerDDIObject, counts["ip_subnet"]))
+	// IPv6 Subnets
+	rows = append(rows, backupFinding("EfficientIP IP6 Subnets", calculator.CategoryDDIObjects, calculator.TokensPerDDIObject, counts["ip_subnet6"]))
+	// IPv4 Pools
+	rows = append(rows, backupFinding("EfficientIP IP4 Pools", calculator.CategoryDDIObjects, calculator.TokensPerDDIObject, counts["ip_pool"]))
+	// IPv6 Pools
+	rows = append(rows, backupFinding("EfficientIP IP6 Pools", calculator.CategoryDDIObjects, calculator.TokensPerDDIObject, counts["ip_pool6"]))
+	// IPv4 Addresses (real_ip + free_ip combined)
+	ip4Count := counts["real_ip"] + counts["free_ip"]
+	rows = append(rows, backupFinding("EfficientIP IP4 Addresses", calculator.CategoryActiveIPs, calculator.TokensPerActiveIP, ip4Count))
+	// IPv6 Addresses (real_ip6 + free_ip6 combined)
+	ip6Count := counts["real_ip6"] + counts["free_ip6"]
+	rows = append(rows, backupFinding("EfficientIP IP6 Addresses", calculator.CategoryActiveIPs, calculator.TokensPerActiveIP, ip6Count))
+	// DHCP4 Scopes
+	rows = append(rows, backupFinding("EfficientIP DHCP4 Scopes", calculator.CategoryDDIObjects, calculator.TokensPerDDIObject, counts["dhcp_scope"]))
+	// DHCP6 Scopes
+	rows = append(rows, backupFinding("EfficientIP DHCP6 Scopes", calculator.CategoryDDIObjects, calculator.TokensPerDDIObject, counts["dhcp_scope6"]))
+	// DHCP4 Ranges
+	rows = append(rows, backupFinding("EfficientIP DHCP4 Ranges", calculator.CategoryDDIObjects, calculator.TokensPerDDIObject, counts["dhcp_range"]))
+	// DHCP6 Ranges
+	rows = append(rows, backupFinding("EfficientIP DHCP6 Ranges", calculator.CategoryDDIObjects, calculator.TokensPerDDIObject, counts["dhcp_range6"]))
+
+	publish(scanner.Event{Type: "provider_complete", Provider: "efficientip", Status: "done", Count: len(rows)})
+	return rows, nil
+}
+
+// backupFinding creates a FindingRow for a backup-mode scan result.
+func backupFinding(item, category string, tokensPerUnit, count int) calculator.FindingRow {
+	return calculator.FindingRow{
+		Provider:         "efficientip",
+		Source:           "backup",
+		Region:           "",
+		Category:         category,
+		Item:             item,
+		Count:            count,
+		TokensPerUnit:    tokensPerUnit,
+		ManagementTokens: ceilDiv(count, tokensPerUnit),
+	}
 }

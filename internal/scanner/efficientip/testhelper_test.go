@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"encoding/binary"
+	"fmt"
 
 	"github.com/klauspost/compress/zstd"
 )
@@ -15,8 +16,179 @@ type tableSpec struct {
 	Rows     []string // optional data rows (tab-separated fields, no newline)
 }
 
-// buildMinimalZstdTar creates a zstd-compressed tar archive in memory that
-// contains a single entry named "db.psql" with the provided content.
+// buildFullBackupFile generates a complete zstd-tar containing a pg_dump file
+// with all 15 target tables and the synthetic counts from the task plan:
+//   - DNS Zones: 734 (row_enabled=1)
+//   - DNS Records (filtered): 2101 supported-type, row_enabled=1
+//   - IP Sites: 1
+//   - IPv4 Subnets: 249 (row_enabled=1)
+//   - IPv6 Subnets: 0
+//   - IPv4 Pools: 0
+//   - IPv6 Pools: 0
+//   - IPv4 Addresses (real_ip+free_ip): 1298 total
+//   - IPv6 Addresses: 0
+//   - DHCP4 Scopes: 37 (row_enabled=1)
+//   - DHCP6 Scopes: 0
+//   - DHCP4 Ranges: 37 (row_enabled=1)
+//   - DHCP6 Ranges: 0
+func buildFullBackupFile() ([]byte, error) {
+	// Build rr_type rows covering all 13 supported types.
+	// OIDs 1-13 map to the 13 supported types.
+	supportedTypes := []string{
+		"A", "AAAA", "CNAME", "MX", "TXT",
+		"CAA", "SRV", "SVCB", "HTTPS", "PTR",
+		"NS", "SOA", "NAPTR",
+	}
+	var rrTypeRows []string
+	for i, typeName := range supportedTypes {
+		rrTypeRows = append(rrTypeRows, fmt.Sprintf("%d\t%s", i+1, typeName))
+	}
+	// Add one unsupported type (OID 99) to make filtering meaningful.
+	rrTypeRows = append(rrTypeRows, "99\tUNKNOWN")
+
+	// generateRowsWithEnabled generates n rows with row_enabled=1 and (extra) rows with row_enabled=0.
+	makeEnabledRows := func(n, extra int) []string {
+		rows := make([]string, 0, n+extra)
+		for i := 0; i < n; i++ {
+			rows = append(rows, fmt.Sprintf("%d\t1\tval%d", i+1, i))
+		}
+		for i := 0; i < extra; i++ {
+			rows = append(rows, fmt.Sprintf("%d\t0\tdisabled%d", n+i+1, i))
+		}
+		return rows
+	}
+
+	// DNS Records: 2101 enabled with supported rr_type_id, plus a few disabled/unsupported.
+	var dnsRRRows []string
+	id := 1
+	// 2101 enabled supported rows (distribute across OIDs 1-13)
+	for i := 0; i < 2101; i++ {
+		oid := (i % 13) + 1
+		dnsRRRows = append(dnsRRRows, fmt.Sprintf("%d\t1\t%d\trr%d.example.com", id, oid, id))
+		id++
+	}
+	// 10 enabled unsupported (OID 99)
+	for i := 0; i < 10; i++ {
+		dnsRRRows = append(dnsRRRows, fmt.Sprintf("%d\t1\t99\tbad%d.example.com", id, i))
+		id++
+	}
+	// 5 disabled
+	for i := 0; i < 5; i++ {
+		dnsRRRows = append(dnsRRRows, fmt.Sprintf("%d\t0\t1\tdisabled%d.example.com", id, i))
+		id++
+	}
+
+	// IPv4 addresses: real_ip=1000, free_ip=298 → total 1298
+	makeIPRows := func(n int) []string {
+		rows := make([]string, n)
+		for i := range rows {
+			rows[i] = fmt.Sprintf("%d\t10.0.%d.%d", i+1, (i/256)%256, i%256)
+		}
+		return rows
+	}
+
+	tables := []tableSpec{
+		// rr_type lookup
+		{
+			Name:     "rr_type",
+			CopyStmt: "COPY public.rr_type (rr_type_id, rr_type_name) FROM stdin;",
+			Rows:     rrTypeRows,
+		},
+		// DNS Zones: 734 enabled, 10 disabled
+		{
+			Name:     "real_dnszone",
+			CopyStmt: "COPY public.real_dnszone (id, row_enabled, name) FROM stdin;",
+			Rows:     makeEnabledRows(734, 10),
+		},
+		// DNS Records
+		{
+			Name:     "link_dnszone_rr",
+			CopyStmt: "COPY public.link_dnszone_rr (id, row_enabled, rr_type_id, name) FROM stdin;",
+			Rows:     dnsRRRows,
+		},
+		// IP Sites: 1 (no row_enabled)
+		{
+			Name:     "ip_site",
+			CopyStmt: "COPY public.ip_site (ip_site_id, ip_site_name) FROM stdin;",
+			Rows:     []string{"1\tdefault"},
+		},
+		// IPv4 Subnets: 249 enabled, 5 disabled
+		{
+			Name:     "ip_subnet",
+			CopyStmt: "COPY public.ip_subnet (subnet_id, row_enabled, subnet_addr) FROM stdin;",
+			Rows:     makeEnabledRows(249, 5),
+		},
+		// IPv6 Subnets: 0
+		{
+			Name:     "ip_subnet6",
+			CopyStmt: "COPY public.ip_subnet6 (subnet_id, row_enabled, subnet_addr) FROM stdin;",
+			Rows:     nil,
+		},
+		// IPv4 Pools: 0
+		{
+			Name:     "ip_pool",
+			CopyStmt: "COPY public.ip_pool (pool_id, row_enabled, pool_name) FROM stdin;",
+			Rows:     nil,
+		},
+		// IPv6 Pools: 0
+		{
+			Name:     "ip_pool6",
+			CopyStmt: "COPY public.ip_pool6 (pool_id, row_enabled, pool_name) FROM stdin;",
+			Rows:     nil,
+		},
+		// real_ip: 1000 rows
+		{
+			Name:     "real_ip",
+			CopyStmt: "COPY public.real_ip (ip_id, ip_addr) FROM stdin;",
+			Rows:     makeIPRows(1000),
+		},
+		// free_ip: 298 rows
+		{
+			Name:     "free_ip",
+			CopyStmt: "COPY public.free_ip (ip_id, ip_addr) FROM stdin;",
+			Rows:     makeIPRows(298),
+		},
+		// real_ip6: 0
+		{
+			Name:     "real_ip6",
+			CopyStmt: "COPY public.real_ip6 (ip_id, ip_addr) FROM stdin;",
+			Rows:     nil,
+		},
+		// free_ip6: 0
+		{
+			Name:     "free_ip6",
+			CopyStmt: "COPY public.free_ip6 (ip_id, ip_addr) FROM stdin;",
+			Rows:     nil,
+		},
+		// DHCP4 Scopes: 37 enabled, 3 disabled
+		{
+			Name:     "dhcp_scope",
+			CopyStmt: "COPY public.dhcp_scope (scope_id, row_enabled, scope_name) FROM stdin;",
+			Rows:     makeEnabledRows(37, 3),
+		},
+		// DHCP6 Scopes: 0
+		{
+			Name:     "dhcp_scope6",
+			CopyStmt: "COPY public.dhcp_scope6 (scope_id, row_enabled, scope_name) FROM stdin;",
+			Rows:     nil,
+		},
+		// DHCP4 Ranges: 37 enabled
+		{
+			Name:     "dhcp_range",
+			CopyStmt: "COPY public.dhcp_range (range_id, row_enabled, range_name) FROM stdin;",
+			Rows:     makeEnabledRows(37, 0),
+		},
+		// DHCP6 Ranges: 0
+		{
+			Name:     "dhcp_range6",
+			CopyStmt: "COPY public.dhcp_range6 (range_id, row_enabled, range_name) FROM stdin;",
+			Rows:     nil,
+		},
+	}
+
+	raw := buildMinimalPgDump(tables)
+	return buildMinimalZstdTar(raw)
+}
 // It is intended for use in unit tests only.
 func buildMinimalZstdTar(dbPsqlContent []byte) ([]byte, error) {
 	var buf bytes.Buffer
