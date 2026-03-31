@@ -1,6 +1,7 @@
 package efficientip
 
 import (
+	"bytes"
 	"io"
 	"os"
 	"path/filepath"
@@ -51,5 +52,50 @@ func TestOpenBackupFile_MissingEntry(t *testing.T) {
 	_, _, err := openBackupFile("/nonexistent/path/backup.zst")
 	if err == nil {
 		t.Error("expected error for non-existent file, got nil")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// TestParsePgDump
+// ---------------------------------------------------------------------------
+
+func TestParsePgDump(t *testing.T) {
+	specs := []tableSpec{
+		{Name: "ip_address", DataPos: 1024},
+		{Name: "ip_subnet", DataPos: 4096},
+		{Name: "ip_space", DataPos: 8192},
+	}
+
+	raw := buildMinimalPgDump(specs)
+	rs := bytes.NewReader(raw)
+
+	doc, err := parsePgDump(rs)
+	if err != nil {
+		t.Fatalf("parsePgDump error: %v", err)
+	}
+
+	// version sanity
+	if doc.VMaj != 1 || doc.VMin != 16 || doc.VRev != 0 {
+		t.Errorf("version: got {%d,%d,%d}, want {1,16,0}", doc.VMaj, doc.VMin, doc.VRev)
+	}
+
+	if len(doc.TOC) != len(specs) {
+		t.Fatalf("TOC length: got %d, want %d", len(doc.TOC), len(specs))
+	}
+
+	for i, spec := range specs {
+		entry := doc.TOC[i]
+		if entry.Tag != spec.Name {
+			t.Errorf("TOC[%d].Tag = %q, want %q", i, entry.Tag, spec.Name)
+		}
+		if entry.Desc != "TABLE DATA" {
+			t.Errorf("TOC[%d].Desc = %q, want TABLE DATA", i, entry.Desc)
+		}
+		if !entry.DataOffsetSet {
+			t.Errorf("TOC[%d].DataOffsetSet = false, want true", i)
+		}
+		if entry.DataOffset != spec.DataPos {
+			t.Errorf("TOC[%d].DataOffset = %d, want %d", i, entry.DataOffset, spec.DataPos)
+		}
 	}
 }
