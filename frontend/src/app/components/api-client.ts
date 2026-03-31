@@ -313,6 +313,27 @@ export async function uploadNiosBackup(file: File): Promise<NiosUploadResponse> 
   return res.json();
 }
 
+export interface EfficientIPUploadResponse {
+  valid: boolean;
+  error?: string;
+  backupToken?: string;
+}
+
+export async function uploadEfficientipBackup(file: File): Promise<EfficientIPUploadResponse> {
+  const form = new FormData();
+  form.append('file', file);
+  const res = await fetch(apiUrl('/providers/efficientip/upload'), {
+    method: 'POST',
+    body: form,
+    // no Content-Type header — browser sets multipart boundary automatically
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as { error?: string }).error || `Upload failed: ${res.status}`);
+  }
+  return res.json();
+}
+
 // ─── Update Check ─────────────────────────────────────────────────────────────
 
 export interface UpdateCheckResponse {

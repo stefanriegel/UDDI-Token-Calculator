@@ -357,6 +357,12 @@ export const PROVIDERS: ProviderOption[] = [
           { key: 'efficientip_token_secret', label: 'Token Secret', placeholder: '', secret: true },
         ],
       },
+      {
+        id: 'backup-upload',
+        name: 'Backup File',
+        description: 'Upload a SOLIDserver .gz backup export to scan offline — no network access to the appliance required',
+        fields: [],
+      },
     ],
   },
   {

@@ -41,6 +41,7 @@ import { useBackendConnection } from './use-backend';
 import {
   validateCredentials as apiValidate,
   uploadNiosBackup as apiUploadNios,
+  uploadEfficientipBackup,
   validateBluecat as apiValidateBluecat,
   validateEfficientip as apiValidateEfficientip,
   validateNiosWapi as apiValidateNiosWapi,
@@ -419,6 +420,11 @@ export function Wizard() {
   const [niosMode, setNiosMode] = useState<'backup' | 'wapi'>('backup');
   const [niosUploadedFile, setNiosUploadedFile] = useState<File | null>(null);
   const [niosDragOver, setNiosDragOver] = useState(false);
+  // EfficientIP backup mode state
+  const [efficientipMode, setEfficientipMode] = useState<'api' | 'backup'>('api');
+  const [efficientipUploadedFile, setEfficientipUploadedFile] = useState<File | null>(null);
+  const [efficientipDragOver, setEfficientipDragOver] = useState(false);
+  const [efficientipBackupToken, setEfficientipBackupToken] = useState<string>('');
   // NIOS-X migration planner: which NIOS sources (grid members) to migrate, with per-member form factor
   const [niosMigrationMap, setNiosMigrationMap] = useState<Map<string, ServerFormFactor>>(new Map());
   const [memberSearchFilter, setMemberSearchFilter] = useState('');
@@ -558,6 +564,9 @@ export function Wizard() {
     setNiosMigrationMap(new Map());
     setMemberSearchFilter('');
     setBackupToken('');
+    setEfficientipMode('api');
+    setEfficientipUploadedFile(null);
+    setEfficientipBackupToken('');
     setNiosServerMetrics([]);
     setAdDiscoveryResult(null);
     setAdDiscoveryDismissed(false);
@@ -692,6 +701,24 @@ export function Wizard() {
           setCredentialStatus((prev) => ({ ...prev, bluecat: 'error' }));
           setCredentialError((prev) => ({ ...prev, bluecat: result.error || 'Validation failed' }));
         }
+      } else if (providerId === 'efficientip' && efficientipMode === 'backup' && efficientipUploadedFile) {
+        // EfficientIP Backup upload
+        setCredentialStatus((prev) => ({ ...prev, efficientip: 'validating' }));
+        try {
+          const result = await uploadEfficientipBackup(efficientipUploadedFile);
+          if (result.backupToken) {
+            setEfficientipBackupToken(result.backupToken);
+            setSubscriptions((prev) => ({ ...prev, efficientip: [{ id: 'backup', name: 'Backup file', selected: true }] }));
+            setCredentialStatus((prev) => ({ ...prev, efficientip: 'valid' }));
+          } else {
+            setCredentialError((prev) => ({ ...prev, efficientip: result.error || 'Upload failed' }));
+            setCredentialStatus((prev) => ({ ...prev, efficientip: 'error' }));
+          }
+        } catch (err) {
+          setCredentialError((prev) => ({ ...prev, efficientip: (err as Error).message }));
+          setCredentialStatus((prev) => ({ ...prev, efficientip: 'error' }));
+        }
+        return;
       } else if (providerId === 'efficientip') {
         // EfficientIP API
         const authMethod = selectedAuthMethod['efficientip'] || 'credentials';
@@ -796,6 +823,14 @@ export function Wizard() {
       validateCredential('nios');
     }
   }, [niosUploadedFile, niosMode]);
+
+  // Auto-parse EfficientIP backup when file is selected/dropped (backup mode only)
+  useEffect(() => {
+    if (efficientipMode === 'backup' && efficientipUploadedFile &&
+        credentialStatus.efficientip !== 'validating' && credentialStatus.efficientip !== 'valid') {
+      validateCredential('efficientip');
+    }
+  }, [efficientipUploadedFile, efficientipMode]);
 
   // Toggle subscription selection
   const toggleSubscription = (providerId: ProviderType, subId: string) => {
@@ -958,6 +993,11 @@ export function Wizard() {
               entry.selectedMembers = (subscriptions.nios || [])
                 .filter((s) => s.selected)
                 .map((s) => s.name.replace(/\s*\(.*\)$/, ''));
+            }
+            // EfficientIP-specific fields
+            if (provId === 'efficientip' && efficientipMode === 'backup') {
+              entry.mode = 'backup';
+              entry.backupToken = efficientipBackupToken;
             }
             return entry;
           }),
@@ -2179,6 +2219,16 @@ export function Wizard() {
                                     setCredentialStatus((prev) => ({ ...prev, nios: 'idle' }));
                                     setCredentialError((prev) => ({ ...prev, nios: '' }));
                                   }
+                                  // EfficientIP mode toggle: clear stale state when switching between backup and API
+                                  if (provId === 'efficientip') {
+                                    const newMode = method.id === 'backup-upload' ? 'backup' : 'api';
+                                    setEfficientipMode(newMode);
+                                    setEfficientipBackupToken('');
+                                    setEfficientipUploadedFile(null);
+                                    setSubscriptions((prev) => ({ ...prev, efficientip: [] }));
+                                    setCredentialStatus((prev) => ({ ...prev, efficientip: 'idle' }));
+                                    setCredentialError((prev) => ({ ...prev, efficientip: '' }));
+                                  }
                                 }}
                                 className={`px-3 py-1.5 rounded-lg text-[12px] transition-all border ${
                                   isSelected
@@ -2317,6 +2367,120 @@ export function Wizard() {
                               )}
                             </div>
                           </div>
+                        ) : provId === 'efficientip' && efficientipMode === 'backup' ? (
+                          <div>
+                            <div
+                              onDragOver={(e) => { e.preventDefault(); setEfficientipDragOver(true); }}
+                              onDragLeave={() => setEfficientipDragOver(false)}
+                              onDrop={(e) => {
+                                e.preventDefault();
+                                setEfficientipDragOver(false);
+                                const file = e.dataTransfer.files?.[0];
+                                if (file && file.name.endsWith('.gz')) {
+                                  setEfficientipUploadedFile(file);
+                                }
+                              }}
+                              className={`relative border-2 border-dashed rounded-xl p-8 text-center transition-colors ${
+                                efficientipDragOver
+                                  ? 'border-[var(--infoblox-orange)] bg-orange-50/50'
+                                  : status === 'validating'
+                                    ? 'border-[var(--infoblox-orange)] bg-orange-50/30'
+                                    : status === 'valid'
+                                      ? 'border-green-400 bg-green-50/50'
+                                      : status === 'error'
+                                        ? 'border-red-400 bg-red-50/50'
+                                        : efficientipUploadedFile
+                                          ? 'border-[var(--infoblox-orange)] bg-orange-50/30'
+                                          : 'border-gray-300 hover:border-gray-400'
+                              }`}
+                            >
+                              {status === 'validating' && efficientipUploadedFile ? (
+                                <div className="flex flex-col items-center gap-2">
+                                  <div className="w-10 h-10 rounded-full bg-orange-100 flex items-center justify-center">
+                                    <Loader2 className="w-5 h-5 text-[var(--infoblox-orange)] animate-spin" />
+                                  </div>
+                                  <div>
+                                    <p className="text-[13px]" style={{ fontWeight: 600 }}>Parsing backup...</p>
+                                    <p className="text-[11px] text-[var(--muted-foreground)]">
+                                      {efficientipUploadedFile.name}
+                                    </p>
+                                  </div>
+                                </div>
+                              ) : status === 'valid' && efficientipUploadedFile ? (
+                                <div className="flex flex-col items-center gap-2">
+                                  <div className="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center">
+                                    <CheckCircle2 className="w-5 h-5 text-green-600" />
+                                  </div>
+                                  <div>
+                                    <p className="text-[13px]" style={{ fontWeight: 600 }}>{efficientipUploadedFile.name}</p>
+                                    <p className="text-[11px] text-[var(--muted-foreground)]">
+                                      {(efficientipUploadedFile.size / 1024 / 1024).toFixed(1)} MB &mdash; Backup ready
+                                    </p>
+                                  </div>
+                                  <button
+                                    onClick={() => {
+                                      setEfficientipUploadedFile(null);
+                                      setEfficientipBackupToken('');
+                                      setCredentialStatus((prev) => ({ ...prev, efficientip: 'idle' }));
+                                      setSubscriptions((prev) => ({ ...prev, efficientip: [] }));
+                                    }}
+                                    className="text-[12px] text-red-500 hover:text-red-700 underline"
+                                  >
+                                    Remove file
+                                  </button>
+                                </div>
+                              ) : status === 'error' && efficientipUploadedFile ? (
+                                <div className="flex flex-col items-center gap-2">
+                                  <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center">
+                                    <AlertCircle className="w-5 h-5 text-red-500" />
+                                  </div>
+                                  <div>
+                                    <p className="text-[13px]" style={{ fontWeight: 600 }}>{efficientipUploadedFile.name}</p>
+                                    <p className="text-[11px] text-red-600">
+                                      {credentialError.efficientip || 'Upload failed'}
+                                    </p>
+                                  </div>
+                                  <button
+                                    onClick={() => {
+                                      setEfficientipUploadedFile(null);
+                                      setEfficientipBackupToken('');
+                                      setCredentialStatus((prev) => ({ ...prev, efficientip: 'idle' }));
+                                      setCredentialError((prev) => ({ ...prev, efficientip: '' }));
+                                    }}
+                                    className="text-[12px] text-[var(--infoblox-orange)] hover:underline"
+                                  >
+                                    Try a different file
+                                  </button>
+                                </div>
+                              ) : (
+                                <div className="flex flex-col items-center gap-2">
+                                  <div className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center">
+                                    <Upload className="w-5 h-5 text-gray-400" />
+                                  </div>
+                                  <div>
+                                    <p className="text-[13px]" style={{ fontWeight: 500 }}>
+                                      Drop .gz backup file here or click to browse
+                                    </p>
+                                    <p className="text-[11px] text-[var(--muted-foreground)] mt-1">
+                                      Accepts SOLIDserver .gz backup export files
+                                    </p>
+                                  </div>
+                                  <label className="text-[12px] text-[var(--infoblox-orange)] hover:underline cursor-pointer">
+                                    Browse
+                                    <input
+                                      type="file"
+                                      accept=".gz"
+                                      className="hidden"
+                                      onChange={(e) => {
+                                        const file = e.target.files?.[0];
+                                        if (file) setEfficientipUploadedFile(file);
+                                      }}
+                                    />
+                                  </label>
+                                </div>
+                              )}
+                            </div>
+                          </div>
                         ) : hasFields ? (
                           <div className="space-y-3">
                             {currentAuth.fields.map((field) => {
@@ -2437,7 +2601,7 @@ export function Wizard() {
                             })}
 
                             {/* TLS skip-verify checkbox — shown for NIOS WAPI, Bluecat, EfficientIP */}
-                            {(provId === 'bluecat' || provId === 'efficientip' || (provId === 'nios' && niosMode === 'wapi')) && (
+                            {(provId === 'bluecat' || (provId === 'efficientip' && efficientipMode !== 'backup') || (provId === 'nios' && niosMode === 'wapi')) && (
                               <div className="mt-1">
                                 <label className="flex items-start gap-2 cursor-pointer">
                                   <input
@@ -2575,7 +2739,7 @@ export function Wizard() {
                             )}
 
                             {/* Advanced section — EfficientIP: Site IDs */}
-                            {provId === 'efficientip' && (
+                            {provId === 'efficientip' && efficientipMode !== 'backup' && (
                               <details className="mt-2">
                                 <summary className="text-[12px] text-[var(--muted-foreground)] cursor-pointer hover:text-[var(--foreground)] select-none" style={{ fontWeight: 500 }}>
                                   Advanced Options
