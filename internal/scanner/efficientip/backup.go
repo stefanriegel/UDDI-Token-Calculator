@@ -3,9 +3,12 @@ package efficientip
 import (
 	"archive/tar"
 	"bytes"
+	"compress/gzip"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/klauspost/compress/zstd"
 )
@@ -358,6 +361,338 @@ func parseTocEntry(r io.Reader, intSize, offSize, ver int) (*tocEntry, error) {
 	}
 
 	return te, nil
+}
+
+// ---------------------------------------------------------------------------
+// Data block reader — row counting with column filters
+// ---------------------------------------------------------------------------
+
+// columnFilter controls which rows are counted.
+type columnFilter struct {
+	// rowEnabledCol is the zero-based column index of "row_enabled".
+	// -1 means no filter.
+	rowEnabledCol int
+	// rrTypeCol is the zero-based column index of "rr_type_id".
+	// -1 means no filter.
+	rrTypeCol int
+	// allowedRRTypes is the set of rr_type_id OID strings to accept.
+	// nil means accept all.
+	allowedRRTypes map[string]struct{}
+}
+
+// noFilter returns a columnFilter that counts every row.
+func noFilter() columnFilter {
+	return columnFilter{rowEnabledCol: -1, rrTypeCol: -1}
+}
+
+// parseCopyColumns parses column names from a COPY statement like
+//
+//	COPY public.foo (col1, col2, col3) FROM stdin;
+//
+// and returns a slice of column names in declaration order.
+func parseCopyColumns(copyStmt string) []string {
+	// Find the opening and closing parentheses.
+	open := -1
+	for i, c := range copyStmt {
+		if c == '(' {
+			open = i
+			break
+		}
+	}
+	if open < 0 {
+		return nil
+	}
+	close := -1
+	for i := open + 1; i < len(copyStmt); i++ {
+		if copyStmt[i] == ')' {
+			close = i
+			break
+		}
+	}
+	if close < 0 {
+		return nil
+	}
+	inner := copyStmt[open+1 : close]
+	var cols []string
+	for _, part := range splitComma(inner) {
+		col := strings.TrimSpace(part)
+		if col != "" {
+			cols = append(cols, col)
+		}
+	}
+	return cols
+}
+
+// splitComma splits s on commas (not inside parentheses).
+func splitComma(s string) []string {
+	var parts []string
+	depth := 0
+	start := 0
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '(':
+			depth++
+		case ')':
+			depth--
+		case ',':
+			if depth == 0 {
+				parts = append(parts, s[start:i])
+				start = i + 1
+			}
+		}
+	}
+	parts = append(parts, s[start:])
+	return parts
+}
+
+// columnIndex returns the 0-based index of name in cols, or -1 if absent.
+func columnIndex(cols []string, name string) int {
+	for i, c := range cols {
+		if c == name {
+			return i
+		}
+	}
+	return -1
+}
+
+// buildColumnFilter constructs a columnFilter for entry given the COPY columns.
+func buildColumnFilter(entry tocEntry, rrTypeMap map[string]struct{}) columnFilter {
+	cols := parseCopyColumns(entry.CopyStmt)
+	cf := columnFilter{rowEnabledCol: -1, rrTypeCol: -1}
+	if idx := columnIndex(cols, "row_enabled"); idx >= 0 {
+		cf.rowEnabledCol = idx
+	}
+	if rrTypeMap != nil {
+		if idx := columnIndex(cols, "rr_type_id"); idx >= 0 {
+			cf.rrTypeCol = idx
+			cf.allowedRRTypes = rrTypeMap
+		}
+	}
+	return cf
+}
+
+// countTableRows seeks to entry.DataOffset in r, reads and decompresses the
+// data block, and returns the number of COPY rows that pass cf.
+func countTableRows(r io.ReadSeeker, entry tocEntry, globalCompression byte, cf columnFilter) (int, error) {
+	if !entry.DataOffsetSet {
+		return 0, nil
+	}
+	if _, err := r.Seek(entry.DataOffset, io.SeekStart); err != nil {
+		return 0, fmt.Errorf("countTableRows seek: %w", err)
+	}
+
+	// Block header: blockType (1 byte), dumpId (int)
+	blkType := make([]byte, 1)
+	if _, err := io.ReadFull(r, blkType); err != nil {
+		return 0, fmt.Errorf("countTableRows blockType: %w", err)
+	}
+	if blkType[0] == 3 { // EOF block
+		return 0, nil
+	}
+	if blkType[0] != 1 { // not a data block
+		return 0, fmt.Errorf("countTableRows: unexpected blockType %d", blkType[0])
+	}
+	// dumpId — 4-byte little-endian int (pg_dump writes plain int32 here)
+	dumpIDBuf := make([]byte, 4)
+	if _, err := io.ReadFull(r, dumpIDBuf); err != nil {
+		return 0, fmt.Errorf("countTableRows dumpId: %w", err)
+	}
+
+	// Determine compression: entry overrides global if set, else use global.
+	comprAlgo := entry.ComprAlgo
+	if globalCompression != 0 && comprAlgo == 0 {
+		comprAlgo = int32(globalCompression)
+	}
+
+	// Read chunks: chunkLen (4-byte int) then data; chunkLen==0 means end.
+	var plainBuf bytes.Buffer
+	chunkLenBuf := make([]byte, 4)
+	for {
+		if _, err := io.ReadFull(r, chunkLenBuf); err != nil {
+			return 0, fmt.Errorf("countTableRows chunkLen: %w", err)
+		}
+		chunkLen := int(binary.LittleEndian.Uint32(chunkLenBuf))
+		if chunkLen == 0 {
+			break
+		}
+		chunk := make([]byte, chunkLen)
+		if _, err := io.ReadFull(r, chunk); err != nil {
+			return 0, fmt.Errorf("countTableRows chunk data: %w", err)
+		}
+		switch comprAlgo {
+		case 0: // raw
+			plainBuf.Write(chunk)
+		case 1: // gzip
+			gr, err := gzip.NewReader(bytes.NewReader(chunk))
+			if err != nil {
+				return 0, fmt.Errorf("countTableRows gzip open: %w", err)
+			}
+			if _, err := io.Copy(&plainBuf, gr); err != nil {
+				return 0, fmt.Errorf("countTableRows gzip copy: %w", err)
+			}
+			gr.Close()
+		case 4: // zstd
+			zr, err := zstd.NewReader(bytes.NewReader(chunk))
+			if err != nil {
+				return 0, fmt.Errorf("countTableRows zstd open: %w", err)
+			}
+			if _, err := io.Copy(&plainBuf, zr); err != nil {
+				return 0, fmt.Errorf("countTableRows zstd copy: %w", err)
+			}
+			zr.Close()
+		default:
+			return 0, fmt.Errorf("countTableRows: unknown comprAlgo %d", comprAlgo)
+		}
+	}
+
+	// Count rows, applying column filters.
+	return countRows(plainBuf.Bytes(), cf), nil
+}
+
+// countRows counts COPY rows in plain (uncompressed) pg_dump COPY output,
+// skipping the terminator line "\." and applying cf.
+func countRows(data []byte, cf columnFilter) int {
+	count := 0
+	for len(data) > 0 {
+		// Find next newline.
+		idx := bytes.IndexByte(data, '\n')
+		var line []byte
+		if idx < 0 {
+			line = data
+			data = nil
+		} else {
+			line = data[:idx]
+			data = data[idx+1:]
+		}
+		// Skip terminator.
+		if bytes.Equal(line, []byte(`\.`)) {
+			continue
+		}
+		if len(line) == 0 {
+			continue
+		}
+		if cf.rowEnabledCol >= 0 || cf.rrTypeCol >= 0 {
+			fields := bytes.Split(line, []byte("\t"))
+			if cf.rowEnabledCol >= 0 {
+				if cf.rowEnabledCol >= len(fields) || string(fields[cf.rowEnabledCol]) != "1" {
+					continue
+				}
+			}
+			if cf.rrTypeCol >= 0 && cf.allowedRRTypes != nil {
+				if cf.rrTypeCol >= len(fields) {
+					continue
+				}
+				if _, ok := cf.allowedRRTypes[string(fields[cf.rrTypeCol])]; !ok {
+					continue
+				}
+			}
+		}
+		count++
+	}
+	return count
+}
+
+// buildRRTypeMap reads the rr_type table from r and returns the set of OID
+// values whose type name appears in supportedDNSRecordTypes (from scanner.go).
+func buildRRTypeMap(r io.ReadSeeker, entry tocEntry, globalCompression byte) (map[string]struct{}, error) {
+	if !entry.DataOffsetSet {
+		return nil, nil
+	}
+	if _, err := r.Seek(entry.DataOffset, io.SeekStart); err != nil {
+		return nil, fmt.Errorf("buildRRTypeMap seek: %w", err)
+	}
+
+	// Block header.
+	blkType := make([]byte, 1)
+	if _, err := io.ReadFull(r, blkType); err != nil {
+		return nil, fmt.Errorf("buildRRTypeMap blockType: %w", err)
+	}
+	if blkType[0] != 1 {
+		return nil, nil
+	}
+	dumpIDBuf := make([]byte, 4)
+	if _, err := io.ReadFull(r, dumpIDBuf); err != nil {
+		return nil, fmt.Errorf("buildRRTypeMap dumpId: %w", err)
+	}
+
+	comprAlgo := entry.ComprAlgo
+	if globalCompression != 0 && comprAlgo == 0 {
+		comprAlgo = int32(globalCompression)
+	}
+
+	var plainBuf bytes.Buffer
+	chunkLenBuf := make([]byte, 4)
+	for {
+		if _, err := io.ReadFull(r, chunkLenBuf); err != nil {
+			return nil, fmt.Errorf("buildRRTypeMap chunkLen: %w", err)
+		}
+		chunkLen := int(binary.LittleEndian.Uint32(chunkLenBuf))
+		if chunkLen == 0 {
+			break
+		}
+		chunk := make([]byte, chunkLen)
+		if _, err := io.ReadFull(r, chunk); err != nil {
+			return nil, fmt.Errorf("buildRRTypeMap chunk: %w", err)
+		}
+		switch comprAlgo {
+		case 0:
+			plainBuf.Write(chunk)
+		case 1:
+			gr, err := gzip.NewReader(bytes.NewReader(chunk))
+			if err != nil {
+				return nil, fmt.Errorf("buildRRTypeMap gzip: %w", err)
+			}
+			if _, err := io.Copy(&plainBuf, gr); err != nil {
+				return nil, fmt.Errorf("buildRRTypeMap gzip copy: %w", err)
+			}
+			gr.Close()
+		case 4:
+			zr, err := zstd.NewReader(bytes.NewReader(chunk))
+			if err != nil {
+				return nil, fmt.Errorf("buildRRTypeMap zstd: %w", err)
+			}
+			if _, err := io.Copy(&plainBuf, zr); err != nil {
+				return nil, fmt.Errorf("buildRRTypeMap zstd copy: %w", err)
+			}
+			zr.Close()
+		default:
+			return nil, fmt.Errorf("buildRRTypeMap: unknown comprAlgo %d", comprAlgo)
+		}
+	}
+
+	// Parse rr_type rows: columns must include "rr_type_id" (OID) and "rr_type_name".
+	cols := parseCopyColumns(entry.CopyStmt)
+	oidIdx := columnIndex(cols, "rr_type_id")
+	nameIdx := columnIndex(cols, "rr_type_name")
+	if oidIdx < 0 || nameIdx < 0 {
+		return nil, fmt.Errorf("buildRRTypeMap: rr_type table missing expected columns (have %v)", cols)
+	}
+
+	result := make(map[string]struct{})
+	data := plainBuf.Bytes()
+	for len(data) > 0 {
+		idx := bytes.IndexByte(data, '\n')
+		var line []byte
+		if idx < 0 {
+			line = data
+			data = nil
+		} else {
+			line = data[:idx]
+			data = data[idx+1:]
+		}
+		if bytes.Equal(line, []byte(`\.`)) || len(line) == 0 {
+			continue
+		}
+		fields := bytes.Split(line, []byte("\t"))
+		if nameIdx >= len(fields) || oidIdx >= len(fields) {
+			continue
+		}
+		name := string(fields[nameIdx])
+		if _, ok := supportedDNSRecordTypes[name]; ok {
+			result[string(fields[oidIdx])] = struct{}{}
+		}
+	}
+	return result, nil
 }
 
 // openBackupFile opens a zstd-compressed tar archive at path, locates the
