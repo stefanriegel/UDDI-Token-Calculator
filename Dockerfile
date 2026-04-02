@@ -17,13 +17,15 @@ COPY --from=frontend /app/frontend/dist ./frontend/dist
 ARG VERSION=dev
 ARG COMMIT=none
 ARG CHANNEL=stable
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+ARG TARGETOS=linux
+ARG TARGETARCH
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
     -ldflags="-s -w \
       -X github.com/stefanriegel/UDDI-Token-Calculator/internal/version.Version=${VERSION} \
       -X github.com/stefanriegel/UDDI-Token-Calculator/internal/version.Commit=${COMMIT} \
       -X github.com/stefanriegel/UDDI-Token-Calculator/internal/version.Channel=${CHANNEL}" \
     -o uddi-token-calculator .
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
     -ldflags="-s -w" \
     -o healthcheck ./cmd/healthcheck
 
