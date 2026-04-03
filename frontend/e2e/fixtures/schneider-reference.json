@@ -1,0 +1,422 @@
+{
+  "gridTotals": {
+    "totalDDIObjects": 394110,
+    "totalActiveIPs": 258403,
+    "totalManagementTokens": 19878,
+    "ddiTokens": 15765,
+    "ipTokens": 19878,
+    "assetTokens": 0,
+    "totalManagedAssets": 0
+  },
+  "allNiosX": {
+    "totalServerTokens": 19180,
+    "memberTiers": {
+      "sa-ruh-25104-dhcp-1.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "co-bog-10486-dhcp-1.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "co-fun-10098-dhcp-1.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "sea-az-ladzn-90138-dns-1.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "fr-mop-22183-dns-1.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "cz-psk-21303-dhcp-1.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "frc-az-90121-dns-2.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "use-az-90117-dns-1.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "tw-tpe-00192-dhcp-1.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "fr-tin-22225-dhcp-1.net.schneider-electric.com": {
+        "tier": "M",
+        "tokens": 880
+      },
+      "in-bom-00506-dns-1.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "in-bom-00506-dhcp-1.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "pe-lim-10442-dhcp-1.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "cl-scl-10431-dhcp-1.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "cn-hdn-05090-dhcp-1.net.schneider-electric.com": {
+        "tier": "XS",
+        "tokens": 250
+      },
+      "us-mo-ofl-dc1-ib02.gns.us.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "euw-dns-1.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "in-blr-00228-dhcp-1.net.schneider-electric.com": {
+        "tier": "XS",
+        "tokens": 250
+      },
+      "us-stl-dns-1.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "ph-tau-00172-dhcp-1.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "my-sgr-00233-dhcp-1.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "il-tka-23001-dhcp-1.net.schneider-electric.com": {
+        "tier": "XS",
+        "tokens": 250
+      },
+      "es-bcn-25707-dhcp-1.net.schneider-electric.com": {
+        "tier": "XS",
+        "tokens": 250
+      },
+      "rs-beg-25302-dhcp-1.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "euw3-aws-90041-dns-1-sbx.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "us-qas-10507-dns-1.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "de-fra-22491-dns.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "eus2-az-ladzn-90117-dns-1.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "ph-rso-00177-dhcp-1.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "cn-shz-05046-dns-1.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "cn-shz-05046-dhcp-1.net.schneider-electric.com": {
+        "tier": "XS",
+        "tokens": 250
+      },
+      "euw3-aws-90041-dns-1.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "euw-az-90154-dns-1-sbx.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "ncus-az-ladzn-90129-dns-2.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "inc-az-ladzn-90110-dns-2.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "ae-dxb-26612-dns-1.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "ro-buh-24916-dhcp-1.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "ke-nbo-26701-dhcp-1.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "tr-str-26309-dhcp-1.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "cr-sjo-10245-dhcp-1.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "apse1-aws-90037-dns-2.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "eus2-az-ladzn-90117-dns-2.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "za-mrd-25611-dhcp-1.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "use4-gcp-90221-dns-1.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "kr-sel-00160-dhcp-1.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "hk-hk2-00326-dhcp-1.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "us-qas-10507-dhcp-1.net.schneider-electric.com": {
+        "tier": "S",
+        "tokens": 470
+      },
+      "sg-sin-00505-dhcp-1.net.schneider-electric.com": {
+        "tier": "S",
+        "tokens": 470
+      },
+      "sg-sin-00505-dns-1.net.schneider-electric.com": {
+        "tier": "S",
+        "tokens": 470
+      },
+      "de-fra-22491-master.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "euw3-aws-90041-dns-2.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "frc-az-90121-dns-1.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "use-aws-90034-dns-1.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "use-aws-90034-dns-2.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "sea-az-ladzn-90138-dns-2.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "use4-gcp-90221-dns-2.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "th-bkk-00195-dhcp-1.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "pt-cnx-24703-dhcp-1.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "vn-hcm-00198-dhcp-1.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "id-jkt-00126-dhcp-1.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "hu-bud-22709-dhcp-1.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "au-sy4-00329-dhcp-1.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "use-az-90117-dns-2.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "fr-tin-22225-reporter.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "ch-hoe-26001-dhcp-1.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "pl-waw-24606-dhcp-1.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "ng-lag-24204-dhcp-1.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "us-ofl-10237-dhcp-1.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "fr-tin-22225-master.net.schneider-electric.com": {
+        "tier": "L",
+        "tokens": 1900
+      },
+      "apse1-aws-90037-dns-1.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "us-lui-10152-dns-ess.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "frc-az-ladzn-90121-dns-2.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "pk-khi-24504-dhcp-1.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "ua-iev-26501-dhcp-1.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "ar-bue-10537-dhcp-1.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "jp-ty6-339-dhcp-1.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "we-az-ladzn-90154-dns-1.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "ncus-az-ladzn-90129-dns-1.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "inc-az-ladzn-90110-dns-1.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "ae-dxb-26612-dhcp-1.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "gr-ath-22604-dhcp-1.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "in-ggn-00064-dhcp-1.net.schneider-electric.com": {
+        "tier": "XS",
+        "tokens": 250
+      },
+      "eg-cai-21601-dhcp-1.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "cn-hdn-05090-dns-1.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "us-anr-10008-dns-1.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "euw-dns-2.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "fr-tin-22225-dns-1.net.schneider-electric.com": {
+        "tier": "M",
+        "tokens": 880
+      },
+      "frc-az-ladzn-90121-dns-1.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "nl-hfd-26103-dhcp-1.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "at-vie-20205-dhcp-1.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "hr-zag-21003-dhcp-1.net-schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "mx-mty-10409-dhcp-1.net.schneider-electric.com": {
+        "tier": "S",
+        "tokens": 470
+      },
+      "br-sao-sp3-10433-dhcp-1.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "de-fra-22491-dhcp-1.net.schneider-electric.com": {
+        "tier": "M",
+        "tokens": 880
+      },
+      "we-az-ladzn-90154-dns-2.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "qa-doh-24804-dhcp-1.net-schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      },
+      "us-anr-10008-dhcp-1.net.schneider-electric.com": {
+        "tier": "S",
+        "tokens": 470
+      },
+      "ca-mil-10562-dhcp-1.net.schneider-electric.com": {
+        "tier": "2XS",
+        "tokens": 130
+      }
+    }
+  },
+  "allXaaS": {
+    "totalServerTokens": 9800,
+    "instances": [
+      {
+        "members": 98,
+        "tier": "XL",
+        "tokens": 9800,
+        "extraConnections": 13,
+        "totalQps": 0,
+        "totalLps": 0,
+        "totalObjects": 394110
+      }
+    ]
+  }
+}
