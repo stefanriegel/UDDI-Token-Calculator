@@ -1,0 +1,61 @@
+.planning/
+
+# Go binaries
+ddi-scanner
+ddi-scanner.exe
+uddi-token-calculator
+uddi-token-calculator.exe
+
+# Test fixtures (large)
+onedb.xml
+active_ip.txt
+cookies.txt
+
+# GoReleaser output
+dist/
+
+# Frontend build output — CI rebuilds before release, go:embed reads from disk
+frontend/dist/
+
+# Node
+frontend/node_modules/
+
+# OS
+.DS_Store
+
+# GSD agent workspace — local only, never committed
+.gsd/
+.gsd-backup-*/
+
+# Editor / IDE
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.code-workspace
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# General build artifacts
+node_modules/
+.next/
+build/
+__pycache__/
+*.pyc
+.venv/
+venv/
+target/
+vendor/
+*.log
+coverage/
+.cache/
+tmp/
+Thumbs.db
+.gsd
+
+# Caliber local state
+.caliber/
