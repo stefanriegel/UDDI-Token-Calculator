@@ -1,0 +1,98 @@
+# GoReleaser OSS v2 — macOS ARM + Windows x64 + Linux x64
+version: 2
+
+builds:
+  # macOS and Linux: pure Go, no CGO needed
+  - id: uddi-token-calculator-unix
+    env:
+      - CGO_ENABLED=0
+    targets:
+      - darwin_arm64
+      - linux_amd64
+    ldflags:
+      - -s -w
+      - -X github.com/stefanriegel/UDDI-Token-Calculator/internal/version.Version={{.Version}}
+      - -X github.com/stefanriegel/UDDI-Token-Calculator/internal/version.Commit={{.ShortCommit}}
+      - -X github.com/stefanriegel/UDDI-Token-Calculator/internal/version.Channel=stable
+    binary: uddi-token-calculator
+
+  # Windows: CGO enabled for SSPI (Windows SSO) support via mingw-w64
+  - id: uddi-token-calculator-windows
+    env:
+      - CGO_ENABLED=1
+      - CC=x86_64-w64-mingw32-gcc
+    targets:
+      - windows_amd64
+    ldflags:
+      - -s -w
+      - -X github.com/stefanriegel/UDDI-Token-Calculator/internal/version.Version={{.Version}}
+      - -X github.com/stefanriegel/UDDI-Token-Calculator/internal/version.Commit={{.ShortCommit}}
+      - -X github.com/stefanriegel/UDDI-Token-Calculator/internal/version.Channel=stable
+    binary: uddi-token-calculator
+
+archives:
+  - id: default
+    name_template: "uddi-token-calculator_{{ .Os }}_{{ .Arch }}"
+    formats: [binary]
+    ids: [uddi-token-calculator-unix, uddi-token-calculator-windows]
+  - id: homebrew
+    name_template: "uddi-token-calculator_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    ids: [uddi-token-calculator-unix]
+    files:
+      - none*
+
+checksum:
+  name_template: "checksums.txt"
+
+signs:
+  - artifacts: checksum
+    args:
+      - "--batch"
+      - "--local-user"
+      - "{{ .Env.GPG_FINGERPRINT }}"
+      - "--output"
+      - "${signature}"
+      - "--detach-sign"
+      - "${artifact}"
+
+snapshot:
+  version_template: "{{ .Summary }}"
+
+release:
+  prerelease: auto
+  name_template: "{{.ProjectName}} {{.Tag}}"
+  make_latest: true
+
+brews:
+  - ids: [homebrew]
+    repository:
+      owner: stefanriegel
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    name: uddi-token-calculator
+    homepage: "https://github.com/stefanriegel/UDDI-Token-Calculator"
+    description: "Estimates Infoblox Universal DDI management tokens from cloud infrastructure"
+    license: "Proprietary"
+    install: |
+      bin.install "uddi-token-calculator"
+    goamd64: v1
+
+changelog:
+  sort: asc
+  use: github
+  groups:
+    - title: "🚀 Features"
+      regexp: '^.*?feat(\([[:word:]]+\))??!?:.+$'
+      order: 0
+    - title: "🐛 Bug Fixes"
+      regexp: '^.*?fix(\([[:word:]]+\))??!?:.+$'
+      order: 1
+    - title: "📦 Build & CI"
+      regexp: '^.*?(build|ci)(\([[:word:]]+\))??!?:.+$'
+      order: 2
+    - title: "📝 Documentation"
+      regexp: '^.*?docs(\([[:word:]]+\))??!?:.+$'
+      order: 3
+    - title: "🔧 Other Changes"
+      order: 999
