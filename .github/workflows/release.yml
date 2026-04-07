@@ -1,0 +1,125 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+    tags: ["v*.*.*"]
+  pull_request:
+    branches: [main, dev]
+
+jobs:
+  # Job 1: Run tests on every push and PR
+  test:
+    name: Test
+    runs-on: [self-hosted, linux, x64, gsd-ubuntu]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Build frontend
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile && pnpm build
+
+      - name: Run Go tests
+        run: go test ./... -race -count=1
+
+      - name: Run Go vet
+        run: go vet ./...
+
+      - name: Run frontend tests
+        working-directory: frontend
+        run: npx vitest run
+
+      - name: Verify VNIOS_SPECS Go ↔ TS parity
+        run: make verify-vnios-specs
+
+  # Job 2a: GoReleaser stable release — only on semver tags without -dev.
+  release-stable:
+    name: Release (Stable)
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-dev.')
+    runs-on: [self-hosted, linux, x64, gsd-ubuntu]
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Build frontend
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile && pnpm build
+
+      - name: Prepare release notes
+        id: notes
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          NOTES_FILE=".github/release-notes/${TAG}.md"
+          if [ -f "$NOTES_FILE" ]; then
+            echo "file=${NOTES_FILE}" >> "$GITHUB_OUTPUT"
+          else
+            echo "file=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Import GPG key
+        uses: crazy-max/ghaction-import-gpg@v7
+        id: import_gpg
+        with:
+          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
+
+      - uses: goreleaser/goreleaser-action@v7
+        with:
+          version: "~> v2"
+          args: release --clean ${{ steps.notes.outputs.file && format('--release-notes {0}', steps.notes.outputs.file) || '' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          GPG_FINGERPRINT: ${{ steps.import_gpg.outputs.fingerprint }}
+
+  # Job 2b: GoReleaser dev release — only on semver tags with -dev.
+  release-dev:
+    name: Release (Dev)
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/v') && contains(github.ref, '-dev.')
+    runs-on: [self-hosted, linux, x64, gsd-ubuntu]
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Build frontend
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile && pnpm build
+
+      - name: Prepare release notes
+        id: notes
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          NOTES_FILE=".github/release-notes/${TAG}.md"
+          if [ -f "$NOTES_FILE" ]; then
+            echo "file=${NOTES_FILE}" >> "$GITHUB_OUTPUT"
+          else
+            echo "file=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Import GPG key
+        uses: crazy-max/ghaction-import-gpg@v7
+        id: import_gpg
+        with:
+          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
+
+      - uses: goreleaser/goreleaser-action@v7
+        with:
+          version: "~> v2"
+          args: release --clean --config .goreleaser-dev.yaml ${{ steps.notes.outputs.file && format('--release-notes {0}', steps.notes.outputs.file) || '' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GPG_FINGERPRINT: ${{ steps.import_gpg.outputs.fingerprint }}
+
+  # Docker builds are handled by GitLab CI (docker-ghcr job) which pushes
+  # multi-arch images (amd64 + arm64) to ghcr.io. No GitHub Actions compute needed.
