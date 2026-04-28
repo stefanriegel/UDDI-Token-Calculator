@@ -1,0 +1,86 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`deriveFromUsers - snapshot (SIZER-04) > returns stable output for [500, 1500, 3000, 7500, 20000] 1`] = `
+[
+  {
+    "derived": {
+      "activeIPs": 750,
+      "assets": 1000,
+      "avgLeaseDuration": 1,
+      "dhcpPct": 0.8,
+      "dhcpScopes": 2,
+      "dnsZones": 1,
+      "lps": 1,
+      "networksPerSite": 2,
+      "qps": 1600,
+      "unverifiedAssets": 780,
+      "verifiedAssets": 220,
+    },
+    "users": 500,
+  },
+  {
+    "derived": {
+      "activeIPs": 2250,
+      "assets": 3000,
+      "avgLeaseDuration": 1,
+      "dhcpPct": 0.8,
+      "dhcpScopes": 6,
+      "dnsZones": 3,
+      "lps": 1,
+      "networksPerSite": 6,
+      "qps": 4800,
+      "unverifiedAssets": 2670,
+      "verifiedAssets": 330,
+    },
+    "users": 1500,
+  },
+  {
+    "derived": {
+      "activeIPs": 4500,
+      "assets": 6000,
+      "avgLeaseDuration": 1,
+      "dhcpPct": 0.8,
+      "dhcpScopes": 12,
+      "dnsZones": 6,
+      "lps": 1,
+      "networksPerSite": 12,
+      "qps": 9600,
+      "unverifiedAssets": 3720,
+      "verifiedAssets": 2280,
+    },
+    "users": 3000,
+  },
+  {
+    "derived": {
+      "activeIPs": 11250,
+      "assets": 11250,
+      "avgLeaseDuration": 1,
+      "dhcpPct": 0.8,
+      "dhcpScopes": 30,
+      "dnsZones": 15,
+      "lps": 3,
+      "networksPerSite": 30,
+      "qps": 24000,
+      "unverifiedAssets": 9112,
+      "verifiedAssets": 2138,
+    },
+    "users": 7500,
+  },
+  {
+    "derived": {
+      "activeIPs": 30000,
+      "assets": 20000,
+      "avgLeaseDuration": 1,
+      "dhcpPct": 0.8,
+      "dhcpScopes": 80,
+      "dnsZones": 40,
+      "lps": 7,
+      "networksPerSite": 80,
+      "qps": 64000,
+      "unverifiedAssets": 16400,
+      "verifiedAssets": 3600,
+    },
+    "users": 20000,
+  },
+]
+`;
