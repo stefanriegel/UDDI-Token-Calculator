@@ -1,0 +1,44 @@
+name: CI
+
+# GoReleaser binary releases are produced by GitLab CI (`goreleaser-stable`
+# / `goreleaser-dev` jobs in .gitlab-ci.yml). The GitLab pipeline cross-
+# compiles darwin_arm64 + linux_amd64 + windows_amd64, GPG-signs the
+# checksums, uploads to the GitHub Release matching the tag, and updates
+# the Homebrew tap. Multi-arch Docker images are also produced by GitLab
+# (`docker-ghcr` job) and pushed to ghcr.io.
+#
+# This workflow keeps a lightweight `test` job for direct GitHub pushes
+# (e.g. forks or external contributors) so PRs surface failures even
+# when the GitLab pipeline isn't reachable.
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+jobs:
+  test:
+    name: Test
+    runs-on: [self-hosted, linux, x64, gsd-ubuntu]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Build frontend
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile && pnpm build
+
+      - name: Run Go tests
+        run: go test ./... -race -count=1
+
+      - name: Run Go vet
+        run: go vet ./...
+
+      - name: Run frontend tests
+        working-directory: frontend
+        run: npx vitest run
+
+      - name: Verify VNIOS_SPECS Go ↔ TS parity
+        run: make verify-vnios-specs

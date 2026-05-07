@@ -1,0 +1,89 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`ResourceSavingsTile > renders mixed fleet snapshot 1`] = `
+<div
+  class="text-card-foreground flex flex-col gap-6 rounded-xl border border-emerald-200 bg-emerald-50/40"
+  data-slot="card"
+>
+  <div
+    class="@container/card-header grid auto-rows-min grid-rows-[auto_auto] items-start gap-1.5 px-6 pt-6 has-data-[slot=card-action]:grid-cols-[1fr_auto] [.border-b]:pb-6 pb-2"
+    data-slot="card-header"
+  >
+    <h4
+      class="text-[13px] flex items-center gap-1.5"
+      data-slot="card-title"
+      style="font-weight: 600;"
+    >
+      🌱 Resource Footprint Reduction
+    </h4>
+  </div>
+  <div
+    class="px-6 [&:last-child]:pb-6 space-y-2 text-[12px]"
+    data-slot="card-content"
+  >
+    <div
+      class="flex gap-4 text-[15px] tabular-nums text-emerald-700"
+      style="font-weight: 600;"
+    >
+      <span>
+        −312 vCPU
+      </span>
+      <span>
+        −1.2 TB RAM
+      </span>
+    </div>
+    <div
+      class="border-t border-slate-200 pt-2"
+    >
+      <div
+        class="text-slate-600 text-[10px] uppercase tracking-wide"
+        style="font-weight: 600;"
+      >
+        Self-managed (NIOS-X):
+      </div>
+      <div
+        class="text-slate-700 tabular-nums"
+      >
+        −188 vCPU
+        , 
+        −820 GB RAM
+         · 
+        24
+         member
+        s
+      </div>
+    </div>
+    <div
+      class="border-t border-emerald-200 pt-2"
+    >
+      <div
+        class="text-emerald-700 text-[10px] uppercase tracking-wide"
+        style="font-weight: 600;"
+      >
+        Fully eliminated (NIOS-XaaS):
+      </div>
+      <div
+        class="text-emerald-700 tabular-nums"
+      >
+        −124 vCPU
+        , 
+        −400 GB RAM
+         · 
+        8
+         member
+        s
+      </div>
+    </div>
+    <div
+      class="border-t border-blue-200 pt-2 text-blue-700"
+      style="font-weight: 500;"
+    >
+      🏢 
+      14
+       physical unit
+      s
+       retired
+    </div>
+  </div>
+</div>
+`;

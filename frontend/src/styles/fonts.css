@@ -1,0 +1,32 @@
+/*
+ * Font configuration for offline / Go embed deployment.
+ *
+ * Uses the system UI font stack which renders natively on every OS:
+ *   - macOS / iOS:  San Francisco (via -apple-system)
+ *   - Windows:      Segoe UI
+ *   - Android:      Roboto
+ *   - Linux:        system default sans-serif
+ *
+ * These fonts look nearly identical to Inter and require zero network requests,
+ * making them ideal for air-gapped / embedded deployments.
+ *
+ * TO ADD INTER LOCALLY (optional):
+ * 1. Download Inter .woff2 from https://github.com/rsms/inter/releases
+ * 2. Place into /public/fonts/
+ * 3. Uncomment the @font-face block below:
+ *
+ *   @font-face {
+ *     font-family: 'Inter';
+ *     font-style: normal;
+ *     font-weight: 100 900;
+ *     font-display: swap;
+ *     src: url('/fonts/InterVariable.woff2') format('woff2');
+ *   }
+ *
+ * 4. Then add 'Inter' back as the first entry in the font-family below.
+ */
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, sans-serif;
+}

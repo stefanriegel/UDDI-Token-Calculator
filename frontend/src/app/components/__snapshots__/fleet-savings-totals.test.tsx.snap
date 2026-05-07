@@ -1,0 +1,87 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`FleetSavingsTotals > renders snapshot 1`] = `
+<div
+  class="mt-4 rounded-lg border border-slate-200 bg-slate-50/60 p-3"
+>
+  <div
+    class="text-[12px] text-slate-700 mb-2"
+    style="font-weight: 600;"
+  >
+    Fleet Totals (
+    38
+     member
+    s
+    )
+    <span
+      class="text-amber-700 text-[11px] ml-2"
+    >
+      · 
+      2
+       excluded
+    </span>
+  </div>
+  <div
+    class="grid grid-cols-[80px_1fr] gap-x-2 gap-y-1 text-[11px] tabular-nums text-slate-700"
+  >
+    <div
+      class="text-slate-500"
+    >
+      Old:
+    </div>
+    <div>
+      580
+       vCPU · 
+      2.4 TB RAM
+    </div>
+    <div
+      class="text-slate-500"
+    >
+      New:
+    </div>
+    <div>
+      268
+       vCPU · 
+      1.2 TB RAM
+    </div>
+    <div
+      class="text-slate-500"
+    >
+      Δ:
+    </div>
+    <div
+      class="text-emerald-700"
+      style="font-weight: 600;"
+    >
+      −312 vCPU
+       · 
+      −1.2 TB RAM
+    </div>
+  </div>
+  <div
+    class="mt-2 text-[11px] text-emerald-700"
+  >
+    <span
+      class="text-slate-500"
+    >
+      Of which fully managed (XaaS):
+    </span>
+     
+    −124 vCPU
+     · 
+    −400 GB RAM
+     · 
+    8
+     member
+    s
+  </div>
+  <div
+    class="mt-1 text-[11px] text-blue-700"
+  >
+    Physical retired: 
+    14
+     unit
+    s
+  </div>
+</div>
+`;

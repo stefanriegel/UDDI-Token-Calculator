@@ -1,0 +1,86 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`MemberResourceSavings > renders healthy NIOS-X snapshot 1`] = `
+<div
+  class="mt-2 pt-2 border-t border-slate-200"
+>
+  <div
+    class="text-[10px] text-slate-500 uppercase tracking-wide mb-1"
+    style="font-weight: 600;"
+  >
+    Resource Savings
+  </div>
+  <div
+    class="text-[11px] text-slate-700"
+  >
+    <span
+      class="text-slate-500"
+    >
+      Before:
+    </span>
+     
+    IB-V2326
+     / 
+    VMware
+     (
+    Small
+    )
+  </div>
+  <div
+    class="text-[11px] tabular-nums text-slate-700"
+    style="font-weight: 500;"
+  >
+    12
+     vCPU · 
+    128
+     GB RAM
+  </div>
+  <div
+    class="flex gap-1 mt-1 flex-wrap"
+  >
+    <button
+      class="inline-flex items-center justify-center whitespace-nowrap font-medium transition-all disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 shrink-0 [&_svg]:shrink-0 outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive bg-primary text-primary-foreground hover:bg-primary/90 rounded-md gap-1.5 has-[>svg]:px-2.5 h-6 px-2 text-[10px]"
+      data-slot="button"
+      type="button"
+    >
+      Small
+    </button>
+    <button
+      class="inline-flex items-center justify-center whitespace-nowrap font-medium transition-all disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 shrink-0 [&_svg]:shrink-0 outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive border bg-background text-foreground hover:bg-accent hover:text-accent-foreground dark:bg-input/30 dark:border-input dark:hover:bg-input/50 rounded-md gap-1.5 has-[>svg]:px-2.5 h-6 px-2 text-[10px]"
+      data-slot="button"
+      type="button"
+    >
+      Large
+    </button>
+  </div>
+  <div
+    class="text-[11px] text-slate-700 mt-1.5"
+  >
+    <span
+      class="text-slate-500"
+    >
+      After:
+    </span>
+     
+    NIOS-X 2XS
+  </div>
+  <div
+    class="text-[11px] tabular-nums text-slate-700"
+    style="font-weight: 500;"
+  >
+    3
+     vCPU · 
+    4
+     GB RAM
+  </div>
+  <div
+    class="text-[11px] tabular-nums mt-1.5 text-emerald-700"
+    style="font-weight: 600;"
+  >
+    Δ 
+    −9 vCPU
+     · 
+    −124 GB RAM
+  </div>
+</div>
+`;
