@@ -68,19 +68,19 @@
     "write-excel-file": "^4.0.6"
   },
   "devDependencies": {
-    "@playwright/test": "^1.59.1",
+    "@playwright/test": "^1.60.0",
     "@tailwindcss/vite": "4.3.0",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "6.0.1",
+    "@vitejs/plugin-react": "6.0.2",
     "jsdom": "^29.0.1",
     "tailwindcss": "4.3.0",
     "typescript": "^5.9.3",
-    "vite": "^8.0.11",
-    "vitest": "^4.1.2"
+    "vite": "^8.0.13",
+    "vitest": "^4.1.6"
   },
   "peerDependencies": {
     "react": "18.3.1",
@@ -96,7 +96,7 @@
   },
   "pnpm": {
     "overrides": {
-      "vite": "^8.0.11",
+      "vite": "^8.0.13",
       "postcss": "^8.5.10",
       "yaml": "^1.10.3"
     }
