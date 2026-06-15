@@ -20,7 +20,7 @@ on:
 jobs:
   test:
     name: Test
-    runs-on: [self-hosted, linux, x64, gsd-ubuntu]
+    runs-on: [self-hosted]
     steps:
       - uses: actions/checkout@v6
         with:
