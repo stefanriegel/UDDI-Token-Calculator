@@ -1,3 +1,11 @@
+> [!IMPORTANT]
+> ## 📦 This project has moved
+>
+> **Universal Token Assessment** now lives at
+> **[github.com/stefanriegel/Universal-Token-Assessment](https://github.com/stefanriegel/Universal-Token-Assessment)**.
+>
+> Please update your bookmarks and install from the new repository. This repo is kept only so existing installs can auto-update across to the new home, and will be archived once the migration window closes.
+
 # Universal DDI Token Assessment
 
 ![Go](https://img.shields.io/badge/Go-1.24+-00ADD8?logo=go&logoColor=white)
